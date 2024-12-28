@@ -1,0 +1,26 @@
+linters:
+  enable-all: true
+  disable:
+    - godox
+
+linters-settings:
+  cyclop:
+    # max-complexity: 10
+    max-complexity: 20
+  depguard:
+    rules:
+      Main:
+        list-mode: strict
+        allow:
+          - $gostd
+          - github.com/anttikivi
+  funlen:
+    lines: 100
+    statements: 50
+    ignore-comments: true
+  varnamelen:
+    max-distance: 30
+    min-name-length: 3
+
+run:
+  timeout: "1m"
