@@ -24,6 +24,8 @@ func NewReginaldCommand(v semver.Version) *cobra.Command {
 		Run:     runHelp,
 	}
 
+	cmd.SetVersionTemplate(version.Template(cmd))
+
 	cmd.AddCommand(version.NewVersionCommand(CommandName, v))
 
 	return cmd

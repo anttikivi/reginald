@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/anttikivi/reginald/internal/semver"
 	"github.com/spf13/cobra"
 )
+
+func Template(cmd *cobra.Command) string {
+	return strings.TrimSuffix(cmd.VersionTemplate(), "\n") + " " + runtime.GOOS + "/" + runtime.GOARCH + "\n"
+}
 
 func NewVersionCommand(n string, v semver.Version) *cobra.Command {
 	return &cobra.Command{ //nolint:exhaustruct
