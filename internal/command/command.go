@@ -6,7 +6,9 @@ import (
 
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/semver"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -16,6 +18,19 @@ const (
 )
 
 func NewReginaldCommand(v semver.Version) *cobra.Command {
+	cobra.OnInitialize(func() {
+		viper.AddConfigPath(".")
+		viper.SetConfigName("reginald")
+
+		if err := viper.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+				fmt.Fprintln(os.Stderr, color.YellowString("configuration file not found"))
+			} else {
+				panic("could not read the configuration file")
+			}
+		}
+	})
+
 	cmd := &cobra.Command{ //nolint:exhaustruct
 		Use:     CommandName + " <command> [flags]",
 		Short:   Name + " is the workstation valet",
