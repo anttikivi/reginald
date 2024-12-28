@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/anttikivi/reginald/internal/command/version"
+	"github.com/anttikivi/reginald/internal/semver"
 	"github.com/spf13/cobra"
 )
 
@@ -13,13 +15,16 @@ const (
 	ExitError   = 1
 )
 
-func NewReginaldCommand() *cobra.Command {
+func NewReginaldCommand(v semver.Version) *cobra.Command {
 	cmd := &cobra.Command{ //nolint:exhaustruct
-		Use:   CommandName + " <command> [flags]",
-		Short: Name + " is the workstation valet",
-		Long:  `Reginald is the workstation valet for managing your workstation configuration and installed tools.`,
-		Run:   runHelp,
+		Use:     CommandName + " <command> [flags]",
+		Short:   Name + " is the workstation valet",
+		Long:    `Reginald is the workstation valet for managing your workstation configuration and installed tools.`,
+		Version: v.String(),
+		Run:     runHelp,
 	}
+
+	cmd.AddCommand(version.NewVersionCommand(CommandName, v))
 
 	return cmd
 }
