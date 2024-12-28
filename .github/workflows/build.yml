@@ -58,7 +58,7 @@ jobs:
 
       - name: Determine the Go version
         id: go
-        uses: opentofu/opentofu/.github/actions/go-version@v1.8.8
+        uses: opentofu/opentofu/.github/actions/go-version@v1.9
 
       - name: Install the Go toolchain
         uses: actions/setup-go@v5.2.0
