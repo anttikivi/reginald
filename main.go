@@ -23,7 +23,11 @@ var buildVersion string //nolint:gochecknoglobals
 func main() {
 	v := parseVersion()
 
-	cmd := command.NewReginaldCommand(v)
+	cmd, err := command.NewReginaldCommand(v)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(command.ExitError)
+	}
 
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

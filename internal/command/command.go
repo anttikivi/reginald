@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -17,33 +18,72 @@ const (
 	ExitError   = 1
 )
 
-func NewReginaldCommand(v semver.Version) *cobra.Command {
-	cobra.OnInitialize(func() {
-		viper.AddConfigPath(".")
-		viper.SetConfigName("reginald")
-
-		if err := viper.ReadInConfig(); err != nil {
-			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-				fmt.Fprintln(os.Stderr, color.YellowString("configuration file not found"))
-			} else {
-				panic("could not read the configuration file")
-			}
-		}
-	})
-
+func NewReginaldCommand(ver semver.Version) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct
 		Use:     CommandName + " <command> [flags]",
 		Short:   Name + " is the workstation valet",
 		Long:    `Reginald is the workstation valet for managing your workstation configuration and installed tools.`,
-		Version: v.String(),
+		Version: ver.String(),
 		Run:     runHelp,
 	}
 
 	cmd.SetVersionTemplate(version.Template(cmd))
 
-	cmd.AddCommand(version.NewVersionCommand(CommandName, v))
+	cmd.PersistentFlags().Bool("color", false, "explicitly enable colors in the command-line output")
+	cmd.PersistentFlags().Bool("no-color", false, "disable colors in the command-line output")
+	cmd.MarkFlagsMutuallyExclusive("color", "no-color")
 
-	return cmd
+	err := cmd.PersistentFlags().MarkHidden("no-color")
+	if err != nil {
+		return nil, fmt.Errorf("failed to mark the no-color flag as hidden: %w", err)
+	}
+
+	err = viper.BindPFlag("color", cmd.PersistentFlags().Lookup("color"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to bind the flag \"color\" to config: %w", err)
+	}
+
+	cmd.AddCommand(version.NewVersionCommand(CommandName, ver))
+
+	cobra.OnInitialize(
+		func() {
+			setDefaults()
+
+			noColor, err := cmd.Flags().GetBool("no-color")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to get the value for the \"no-color\" flag: %v", err)
+				os.Exit(ExitError)
+			}
+
+			if noColor {
+				viper.Set("color", false)
+			}
+
+			viper.AddConfigPath(".")
+			viper.SetConfigName("reginald")
+
+			viper.AutomaticEnv()
+
+			if !viper.GetBool("color") {
+				color.NoColor = true
+			}
+
+			if err := viper.ReadInConfig(); err != nil {
+				var notFoundError viper.ConfigFileNotFoundError
+				if errors.As(err, &notFoundError) {
+					fmt.Fprintln(os.Stderr, color.YellowString("configuration file not found"))
+				} else {
+					fmt.Fprintf(os.Stderr, "could not read the configuration file: %v\n", err)
+					os.Exit(ExitError)
+				}
+			}
+		})
+
+	return cmd, nil
+}
+
+func setDefaults() {
+	viper.SetDefault("color", !color.NoColor)
 }
 
 func runHelp(cmd *cobra.Command, _ []string) {
