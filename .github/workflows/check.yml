@@ -1,0 +1,164 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit tests for ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.os }}
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    strategy:
+      matrix:
+        include:
+          - { goos: "linux", goarch: "386", os: "ubuntu-latest" }
+          - { goos: "linux", goarch: "amd64", os: "ubuntu-latest" }
+          # - { goos: "linux", goarch: "arm", os: "ubuntu-latest" }
+          # - { goos: "linux", goarch: "arm64", os: "ubuntu-latest" }
+          # - { goos: "windows", goarch: "386", os: "ubuntu-latest" }
+          # - { goos: "windows", goarch: "amd64", os: "ubuntu-latest" }
+          - { goos: "darwin", goarch: "amd64", os: "macos-latest" }
+          - { goos: "darwin", goarch: "arm64", os: "macos-latest" }
+      fail-fast: false
+
+    steps:
+      - name: Fetch the source code
+        uses: actions/checkout@v4.2.2
+
+      - name: Determine the Go version
+        id: go
+        uses: opentofu/opentofu/.github/actions/go-version@v1.8.8
+
+      - name: Install the Go toolchain
+        uses: actions/setup-go@v5.2.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+
+      - name: Cache the Go modules
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run the unit tests
+        run: go test ./...
+
+  race-tests:
+    name: Detect data races
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch the source code
+        uses: actions/checkout@v4.2.2
+
+      - name: Determine the Go version
+        id: go
+        uses: opentofu/opentofu/.github/actions/go-version@v1.8.8
+
+      - name: Install the Go toolchain
+        uses: actions/setup-go@v5.2.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+
+      - name: Cache the Go modules
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run the data race detector
+        run: go test -race ./...
+
+  lint:
+    name: Code linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch the source code
+        uses: actions/checkout@v4.2.2
+
+      - name: Determine the Go version
+        id: go
+        uses: opentofu/opentofu/.github/actions/go-version@v1.8.8
+
+      - name: Install the Go toolchain
+        uses: actions/setup-go@v5.2.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+
+      - name: Cache the Go modules
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Check go.mod and go.sum
+        run: |
+          go mod tidy
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo >&2 "ERROR: go.mod/go.sum are not up-to-date. Run 'go mod tidy' and then commit the updated files."
+            exit 1
+          fi
+
+      - name: Lint the code
+        uses: golangci/golangci-lint-action@v6.1.1
+        with:
+          version: v1.62.2
+
+  license-check:
+    name: License checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch the source code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install licensei
+        run: make deps
+
+      - name: Restore the cached license information
+        uses: actions/cache/restore@v4.2.0
+        with:
+          path: .licensei.cache
+          key: ${{ runner.os }}-licensei-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-licensei-
+
+      - name: Determine the Go version
+        id: go
+        uses: opentofu/opentofu/.github/actions/go-version@v1.8.8
+
+      - name: Install the Go toolchain
+        uses: actions/setup-go@v5.2.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+
+      - name: Check the dependency licenses
+        run: make license-check
+
+      - name: Save the license information to the cache
+        uses: actions/cache/save@v4.2.0
+        if: always()
+        with:
+          path: .licensei.cache
+          key: ${{ runner.os }}-licensei-${{ hashFiles('**/go.sum') }}
