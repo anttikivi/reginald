@@ -3,8 +3,10 @@ package command
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
+	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/semver"
 	"github.com/fatih/color"
@@ -43,7 +45,20 @@ func NewReginaldCommand(ver semver.Version) (*cobra.Command, error) {
 		return nil, fmt.Errorf("failed to bind the flag \"color\" to config: %w", err)
 	}
 
-	cmd.AddCommand(version.NewVersionCommand(CommandName, ver))
+	cmd.PersistentFlags().StringP("config-file", "c", "", "path to config file")
+
+	err = cmd.MarkPersistentFlagFilename("config-file", "json", "toml", "yaml", "yml")
+	if err != nil {
+		return nil, fmt.Errorf("failed to mark the \"config-file\" flag as a filename: %w", err)
+	}
+
+	err = viper.BindPFlag("config-file", cmd.PersistentFlags().Lookup("config-file"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to bind the flag \"config-file\" to config: %w", err)
+	}
+
+	cmd.AddCommand(bootstrap.NewCommand())
+	cmd.AddCommand(version.NewCommand(CommandName, ver))
 
 	cobra.OnInitialize(
 		func() {
@@ -59,31 +74,106 @@ func NewReginaldCommand(ver semver.Version) (*cobra.Command, error) {
 				viper.Set("color", false)
 			}
 
-			viper.AddConfigPath(".")
-			viper.SetConfigName("reginald")
-
+			viper.SetEnvPrefix(CommandName)
 			viper.AutomaticEnv()
+
+			// Reginald is flexible about the configuration file to use. You can
+			// use multiple types of configuration files so the extensions are
+			// omitted from the following examples.
+			configFound := false
+
+			// Before looking up the config file in the specified locations, see
+			// if the command-line flag or the environment variable is set.
+			configFile := viper.GetString("config-file")
+			if configFile != "" {
+				viper.SetConfigFile(configFile)
+				configFound = readConfig()
+			}
+
+			// First the config is looked for in the current working directory.
+			// Files that match: ./reginald
+			if !configFound {
+				viper.SetConfigName("reginald")
+				viper.AddConfigPath(".")
+
+				configFound = readConfig()
+			}
+
+			// Next the current working directory but with dot in from of the
+			// file. Files that match: ./.reginald
+			if !configFound {
+				viper.SetConfigName(".reginald")
+				viper.AddConfigPath(".")
+
+				configFound = readConfig()
+			}
+
+			// Next the XDG_CONFIG_HOME/reginald, defaulting to
+			// ~/.config/reginald.
+			// TODO: Look for config files in a directory named `reginald` in
+			// XDG_CONFIG_HOME.
+			if !configFound {
+				viper.SetConfigName("reginald")
+				viper.AddConfigPath("${XDG_CONFIG_HOME}")
+				viper.AddConfigPath("${HOME}/.config")
+
+				configFound = readConfig()
+			}
+
+			// Next the user's home directory. If for some reason the user wants
+			// to include the config file there without prefixing the filename
+			// with a dot, we'll look for that first.
+			if !configFound {
+				viper.SetConfigName("reginald")
+				viper.AddConfigPath("${HOME}")
+
+				configFound = readConfig()
+			}
+
+			// Finally the home directory but with a dot in the front.
+			if !configFound {
+				viper.SetConfigName(".reginald")
+				viper.AddConfigPath("${HOME}")
+
+				configFound = readConfig()
+			}
 
 			if !viper.GetBool("color") {
 				color.NoColor = true
 			}
 
-			if err := viper.ReadInConfig(); err != nil {
-				var notFoundError viper.ConfigFileNotFoundError
-				if errors.As(err, &notFoundError) {
-					fmt.Fprintln(os.Stderr, color.YellowString("configuration file not found"))
-				} else {
-					fmt.Fprintf(os.Stderr, "could not read the configuration file: %v\n", err)
-					os.Exit(ExitError)
-				}
+			// TODO: Initialize logging as all the values should now be read.
+			slog.Info("Running with the following settings", slog.Any("config", viper.AllSettings()))
+
+			if !configFound {
+				fmt.Fprintln(os.Stderr, color.YellowString("configuration file not found"))
+			} else {
+				fmt.Fprintf(os.Stderr, "read config from %v\n", viper.ConfigFileUsed())
 			}
 		})
 
 	return cmd, nil
 }
 
-func setDefaults() {
-	viper.SetDefault("color", !color.NoColor)
+// readConfig is a utility with side effects that reads the Viper config.
+// The necessary steps for finding the config should be done before calling this
+// function.
+// The function returns true if the config file was read, otherwise false.
+// If the config file is found but could not be read, the behavior right now is
+// to exit the program. This might be changed in the future because now the
+// program exists for invalid syntax in the config files.
+func readConfig() bool {
+	if err := viper.ReadInConfig(); err != nil {
+		var notFoundError viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFoundError) {
+			fmt.Fprintf(os.Stderr, "could not read the configuration file: %v\n", err)
+			os.Exit(ExitError)
+		}
+
+		return false
+	}
+
+	return true
 }
 
 func runHelp(cmd *cobra.Command, _ []string) {
@@ -91,4 +181,8 @@ func runHelp(cmd *cobra.Command, _ []string) {
 		fmt.Fprintln(os.Stderr, "Failed to run the help command")
 		os.Exit(ExitError)
 	}
+}
+
+func setDefaults() {
+	viper.SetDefault("color", !color.NoColor)
 }
