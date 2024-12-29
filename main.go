@@ -21,18 +21,24 @@ var rawVersion string
 var buildVersion string //nolint:gochecknoglobals
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	v := parseVersion()
 
 	cmd, err := command.NewReginaldCommand(v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(command.ExitError)
+		return command.ExitError
 	}
 
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(command.ExitError)
+		return command.ExitError
 	}
+
+	return command.ExitSuccess
 }
 
 // parseVersion parses the program version from the version data set during

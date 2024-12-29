@@ -17,6 +17,7 @@ import (
 const (
 	Name        = "Reginald"
 	CommandName = "reginald"
+	ExitSuccess = 0
 	ExitError   = 1
 )
 
