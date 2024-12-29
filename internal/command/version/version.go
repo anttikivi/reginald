@@ -17,7 +17,7 @@ func Template(cmd *cobra.Command) string {
 	return strings.TrimSuffix(cmd.VersionTemplate(), "\n") + " " + runtime.GOOS + "/" + runtime.GOARCH + "\n"
 }
 
-func NewCommand(n string, v semver.Version) *cobra.Command {
+func NewCommand(v semver.Version) *cobra.Command {
 	return &cobra.Command{ //nolint:exhaustruct
 		Use:   CmdName,
 		Short: "Print the version information of " + constants.Name,
