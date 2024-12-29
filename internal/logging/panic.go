@@ -32,7 +32,7 @@ const exitCode = 11
 
 // In case multiple goroutines panic concurrently, ensure only the first one
 // recovered by HandlePanic starts printing.
-var panicMutex sync.Mutex //nolint:gochecknoglobals
+var panicMutex sync.Mutex //nolint:gochecknoglobals // the mutex needs to be global to share it between goroutines
 
 // HandlePanic is called to recover from an internal panic in Reginald and
 // augments the standard stack trace with a helpful error message.

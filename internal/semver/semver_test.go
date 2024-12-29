@@ -6,7 +6,7 @@ import (
 	"github.com/anttikivi/reginald/internal/semver"
 )
 
-var tests = []struct { //nolint:gochecknoglobals
+var tests = []struct { //nolint:gochecknoglobals // the test cases need to be global
 	in  string
 	out string
 }{

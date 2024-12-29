@@ -7,6 +7,19 @@ linters-settings:
   cyclop:
     # max-complexity: 10
     max-complexity: 20
+  decorder:
+    dec-order:
+      - const
+      - var
+      - type
+      - func
+    ignore-underscore-vars: false
+    disable-dec-order-check: false
+    disable-init-func-first-check: false
+    disable-dec-num-check: true
+    disable-type-dec-num-check: false
+    disable-const-dec-num-check: false
+    disable-var-dec-num-check: false
   depguard:
     rules:
       Main:
@@ -21,6 +34,11 @@ linters-settings:
     lines: 100
     statements: 50
     ignore-comments: true
+  gocritic:
+    enable-all: true
+    disabled-checks:
+      - commentedOutCode
+      - unnamedResult
   varnamelen:
     max-distance: 30
     min-name-length: 3

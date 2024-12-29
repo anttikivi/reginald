@@ -9,7 +9,7 @@ import (
 )
 
 func NewCommand() *cobra.Command {
-	return &cobra.Command{ //nolint:exhaustruct
+	return &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:     "bootstrap",
 		Aliases: []string{"init", "initialise", "initialize"},
 		Short:   "Ask " + constants.Name + " to bootstrap your environment",

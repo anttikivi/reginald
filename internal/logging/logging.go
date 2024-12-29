@@ -35,7 +35,7 @@ func (h NullHandler) Enabled(_ context.Context, _ slog.Level) bool {
 	return false
 }
 
-func (h NullHandler) Handle(_ context.Context, _ slog.Record) error {
+func (h NullHandler) Handle(_ context.Context, _ slog.Record) error { //nolint:gocritic,lll // hugeParam disabled as interface implementation requires for the correct type
 	return nil
 }
 
@@ -47,22 +47,26 @@ func (h NullHandler) WithGroup(_ string) slog.Handler {
 	return h
 }
 
-func CreateHandler(w io.Writer, format string, level slog.Level) (slog.Handler, error) {
+// Handler creates an slog.Handler for the given options.
+// If the given options do not result in a valid handler, returns an error.
+func Handler(w io.Writer, format string, level slog.Level) (slog.Handler, error) {
 	if w == io.Discard {
 		return NullHandler{}, nil
 	}
 
 	switch format {
 	case "json":
-		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil //nolint:exhaustruct
+		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil //nolint:exhaustruct,lll // we want to use the default values
 	case "text":
-		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil //nolint:exhaustruct
+		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil //nolint:exhaustruct,lll // we want to use the default values
 	default:
 		return nil, fmt.Errorf("%w: %s", errInvalidLogFormat, format)
 	}
 }
 
-func GetLevel(l string) (slog.Level, error) {
+// Level returns the slog.Level that corresponds to the given string.
+// If the string is not a valid log level, returns an error.
+func Level(l string) (slog.Level, error) {
 	switch strings.ToLower(l) {
 	case "debug":
 		return slog.LevelDebug, nil
@@ -80,11 +84,11 @@ func GetLevel(l string) (slog.Level, error) {
 	}
 }
 
-// GetWriter returns the correct writer for the specified logger destination.
+// Writer returns the correct writer for the specified logger destination.
 // The filename file must be supplied if the destination dest is set to file.
 // If the destination is a file, parameter rotate controls whether Reginald
 // should take care of rotating the logs.
-func GetWriter(dest string, file string, rotate bool) (io.Writer, error) {
+func Writer(dest, file string, rotate bool) (io.Writer, error) {
 	switch dest {
 	case "stdout":
 		return os.Stdout, nil

@@ -20,18 +20,14 @@ var rawVersion string
 
 // buildVersion is the version set using linker flags build time. It is used to
 // over the value embedded from the VERSION file if set.
-var buildVersion string //nolint:gochecknoglobals
-
-func main() {
-	os.Exit(run())
-}
+var buildVersion string //nolint:gochecknoglobals // buildVersion needs to be present to set it at build time
 
 func run() int {
 	defer logging.HandlePanic()
 
 	v := parseVersion()
 
-	cmd, err := command.NewReginaldCommand(v)
+	cmd, err := command.New(&v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
@@ -71,4 +67,8 @@ func rawVersionString() string {
 	s = strings.TrimSpace(s)
 
 	return s
+}
+
+func main() {
+	os.Exit(run())
 }

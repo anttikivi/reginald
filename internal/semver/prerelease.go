@@ -11,6 +11,30 @@ type Prerelease struct {
 	identifiers []prereleaseIdentifier
 }
 
+// A prereleaseIdentifier is a single pre-release identifier separated by dots.
+type prereleaseIdentifier interface {
+	// Len returns the length of the pre-release identifier in characters.
+	Len() int
+
+	// String returns the string representation of the identifier.
+	String() string
+
+	// Value returns the Value for the identifier. If the identifier is a
+	// numeric one, the Value is returned using the first return Value and the
+	// second return Value is an empty string. If the identifier is an
+	// alphanumeric identifier, the Value is returned using the second return
+	// Value and the first return Value is -1.
+	Value() (n int, s string)
+}
+
+type numericIdentifier struct {
+	v int
+}
+
+type alphanumericIdentifier struct {
+	v string
+}
+
 func (p Prerelease) String() string {
 	var sb strings.Builder
 
@@ -39,26 +63,6 @@ func (p Prerelease) String() string {
 	return s[:len(s)-1]
 }
 
-// A prereleaseIdentifier is a single pre-release identifier separated by dots.
-type prereleaseIdentifier interface {
-	// Len returns the length of the pre-release identifier in characters.
-	Len() int
-
-	// String returns the string representation of the identifier.
-	String() string
-
-	// Value returns the Value for the identifier. If the identifier is a
-	// numeric one, the Value is returned using the first return Value and the
-	// second return Value is an empty string. If the identifier is an
-	// alphanumeric identifier, the Value is returned using the second return
-	// Value and the first return Value is -1.
-	Value() (int, string)
-}
-
-type numericIdentifier struct {
-	v int
-}
-
 func (i numericIdentifier) Len() int {
 	return countDigits(i.v)
 }
@@ -69,10 +73,6 @@ func (i numericIdentifier) String() string {
 
 func (i numericIdentifier) Value() (int, string) {
 	return i.v, ""
-}
-
-type alphanumericIdentifier struct {
-	v string
 }
 
 func (i alphanumericIdentifier) Len() int {
