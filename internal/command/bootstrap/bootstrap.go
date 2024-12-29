@@ -23,7 +23,7 @@ After bootstrapping, please use the ` + "`install`" + ` command for subsequent r
 	}
 }
 
-func run(cmd *cobra.Command, args []string) error {
+func run(_ *cobra.Command, _ []string) error {
 	fmt.Fprintln(os.Stderr, "Bootstrap")
 
 	return nil
