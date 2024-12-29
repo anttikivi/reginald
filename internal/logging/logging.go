@@ -94,11 +94,12 @@ func GetWriter(dest string, file string, rotate bool) (io.Writer, error) {
 		return io.Discard, nil
 	case "file":
 		if rotate {
-			return &lumberjack.Logger{ //nolint:exhaustruct
+			return &lumberjack.Logger{
 				Filename:   file,
 				MaxSize:    defaultLogMaxSize,
 				MaxBackups: defaultLogMaxBackups,
 				MaxAge:     defaultLogMaxAge,
+				LocalTime:  true,
 				Compress:   true,
 			}, nil
 		} else {
