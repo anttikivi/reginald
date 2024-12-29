@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/command"
+	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/semver"
 )
 
@@ -25,20 +27,24 @@ func main() {
 }
 
 func run() int {
+	defer logging.HandlePanic()
+
 	v := parseVersion()
 
 	cmd, err := command.NewReginaldCommand(v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return command.ExitError
+
+		return constants.ExitError
 	}
 
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return command.ExitError
+
+		return constants.ExitError
 	}
 
-	return command.ExitSuccess
+	return constants.ExitSuccess
 }
 
 // parseVersion parses the program version from the version data set during

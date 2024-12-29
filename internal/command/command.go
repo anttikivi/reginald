@@ -8,23 +8,17 @@ import (
 
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
+	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/semver"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-const (
-	Name        = "Reginald"
-	CommandName = "reginald"
-	ExitSuccess = 0
-	ExitError   = 1
-)
-
 func NewReginaldCommand(ver semver.Version) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct
-		Use:   CommandName + " <command> [flags]",
-		Short: Name + " is the workstation valet",
+		Use:   constants.CommandName + " <command> [flags]",
+		Short: constants.Name + " is the workstation valet",
 		Long: `Reginald is the workstation valet for managing your workstation configuration
 and installed tools.
 `,
@@ -64,7 +58,7 @@ and installed tools.
 	}
 
 	cmd.AddCommand(bootstrap.NewCommand())
-	cmd.AddCommand(version.NewCommand(CommandName, ver))
+	cmd.AddCommand(version.NewCommand(constants.CommandName, ver))
 
 	return cmd, nil
 }
@@ -118,7 +112,7 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%w", err)
 	}
 
-	viper.SetEnvPrefix(CommandName)
+	viper.SetEnvPrefix(constants.CommandName)
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 
