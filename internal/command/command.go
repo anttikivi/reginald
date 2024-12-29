@@ -9,6 +9,7 @@ import (
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/semver"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ func NewReginaldCommand(ver semver.Version) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct
 		Use:   constants.CommandName + " <command> [flags]",
 		Short: constants.Name + " is the workstation valet",
-		Long: `Reginald is the workstation valet for managing your workstation configuration
+		Long: constants.Name + ` is the workstation valet for managing your workstation configuration
 and installed tools.
 `,
 		Version:           ver.String(),
@@ -112,7 +113,8 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%w", err)
 	}
 
-	viper.SetEnvPrefix(constants.CommandName)
+	// viper.SetEnvPrefix(constants.CommandName)
+	viper.SetEnvPrefix(strings.ToLower(constants.Name))
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 
@@ -123,6 +125,13 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	configFound, err := resolveConfigFile()
 	if err != nil {
 		return fmt.Errorf("failed to resolve the config file: %w", err)
+	}
+
+	// There are some simple commands for displaying basic information.
+	// Just disable logging for those.
+	if cmd.Name() == version.CmdName {
+		logger := slog.New(logging.NullHandler{})
+		slog.SetDefault(logger)
 	}
 
 	// TODO: Initialize logging as all the values should now be read.
