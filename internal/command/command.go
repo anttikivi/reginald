@@ -53,12 +53,42 @@ func NewReginaldCommand(ver semver.Version) (*cobra.Command, error) {
 		return nil, fmt.Errorf("failed to mark the \"config-file\" flag as a filename: %w", err)
 	}
 
+	cmd.PersistentFlags().StringP("directory", "C", "", "path to the local dotfiles directory")
+
+	err = cmd.MarkPersistentFlagDirname("directory")
+	if err != nil {
+		return nil, fmt.Errorf("failed to mark the \"directory\" flag as a filename: %w", err)
+	}
+
 	cmd.AddCommand(bootstrap.NewCommand())
 	cmd.AddCommand(version.NewCommand(CommandName, ver))
 
 	cobra.OnInitialize(initConfig(cmd))
 
 	return cmd, nil
+}
+
+// bindPersistentString binds a Viper config value to a persistent flag string
+// if that string has been set by the user with a command-line argument.
+// This additional check is needed because the command-line arguments always
+// have a default value, usually an empty string, that would otherwise override
+// the Viper default or values from other sources.
+// This function also binds the values to the environment variables so that the
+// values are included in all settings if the environment variables are set.
+func bindPersistentString(cmd *cobra.Command, n string) error {
+	if cmd.Flags().Changed(n) {
+		err := viper.BindPFlag(n, cmd.PersistentFlags().Lookup(n))
+		if err != nil {
+			return fmt.Errorf("failed to bind the flag \"%s\" to config: %w", n, err)
+		}
+	}
+
+	err := viper.BindEnv(n)
+	if err != nil {
+		return fmt.Errorf("failed to bind the environment variable \"REGINALD_%s\" to config: %w", strings.ReplaceAll(strings.ToUpper(n), "-", "_"), err)
+	}
+
+	return nil
 }
 
 func initConfig(cmd *cobra.Command) func() {
@@ -75,6 +105,9 @@ func initConfig(cmd *cobra.Command) func() {
 			viper.Set("color", false)
 		}
 
+		bindPersistentString(cmd, "config-file")
+		bindPersistentString(cmd, "directory")
+
 		viper.SetEnvPrefix(CommandName)
 		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 		viper.AutomaticEnv()
@@ -86,17 +119,6 @@ func initConfig(cmd *cobra.Command) func() {
 
 		// Before looking up the config file in the specified locations, see
 		// if the command-line flag or the environment variable is set.
-		// Because the command-line options has a default value that
-		// overrides all of the other sources, start by checking if the
-		// option is actually set and then bind it to the Viper config.
-		if cmd.Flags().Changed("config-file") {
-			err = viper.BindPFlag("config-file", cmd.PersistentFlags().Lookup("config-file"))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to bind the flag \"config-file\" to config: %v\n", err)
-				os.Exit(ExitError)
-			}
-		}
-
 		configFile := viper.GetString("config-file")
 		if configFile != "" {
 			viper.SetConfigFile(configFile)
