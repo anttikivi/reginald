@@ -53,19 +53,13 @@ func IsValid(s string) bool {
 	return true
 }
 
-func countDigits(i int) int {
-	if i == 0 {
-		return 1
+func MustParse(ver string) Version {
+	v, err := Parse(ver)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse the string %q into a version: %v", ver, err))
 	}
 
-	count := 0
-
-	for i != 0 {
-		i /= 10
-		count++
-	}
-
-	return count
+	return v
 }
 
 func Parse(ver string) (Version, error) {
@@ -152,6 +146,21 @@ func Parse(ver string) (Version, error) {
 		Build:      build,
 		rawStr:     ver,
 	}, nil
+}
+
+func countDigits(i int) int {
+	if i == 0 {
+		return 1
+	}
+
+	count := 0
+
+	for i != 0 {
+		i /= 10
+		count++
+	}
+
+	return count
 }
 
 func isAlphanumericIdentifier(c rune) bool {

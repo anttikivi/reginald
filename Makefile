@@ -2,41 +2,57 @@ GCI_VERSION = 0.13.5
 GOFUMPT_VERSION = 0.7.0
 GOLANGCI_LINT_VERSION = 1.62.2
 LICENSEI_VERSION = 0.9.0
-OUTPUT_NAME=reginald
+
+OUTPUT_NAME ?= reginald
+
+CGO_CPPFLAGS ?= ${CPPFLAGS}
+export CGO_CPPFLAGS
+CGO_CFLAGS ?= ${CFLAGS}
+export CGO_CFLAGS
+CGO_LDFLAGS ?= $(filter -g -L% -l% -O%,${LDFLAGS})
+export CGO_LDFLAGS
+
+EXE =
+ifeq ($(shell go env GOOS),windows)
+EXE = .exe
+endif
 
 .PHONY: all
 all: build
 
-.PHONY: build
-build:
-ifneq ($(REGINALD_VERSION),)
-	go build -ldflags "-X 'main.buildVersion=$(REGINALD_VERSION)'" -o "$(OUTPUT_NAME)" ./main.go
+scripts/build$(EXE): scripts/build.go
+ifeq ($(EXE),)
+	GOOS= GOARCH= GOARM= GOFLAGS= CGO_ENABLED= go build -o $@ $<
 else
-	go build -o "$(OUTPUT_NAME)" ./main.go
+	go build -o $@ $<
 endif
 
-.PHONY: run
-run:
-	go run ./main.go
+.PHONY: bin/$(OUTPUT_NAME)$(EXE)
+bin/$(OUTPUT_NAME)$(EXE): scripts/build$(EXE)
+	@$< $@
 
-.PHONY: fmt
-fmt:
-	go run github.com/daixiang0/gci@v${GCI_VERSION} write . --skip-generated -s standard -s default
-	go run mvdan.cc/gofumpt@v${GOFUMPT_VERSION} -l -w .
+.PHONY: build
+build: bin/$(OUTPUT_NAME)$(EXE)
+
+.PHONY: clean
+clean: script/build$(EXE)
+	@$< $@
 
 .PHONY: test
 test:
-	go test -v ./...
+	go test ./...
 
-.PHONY: check
-check: lint license-check
+## Lint tasks
 
 .PHONY: lint
 lint: golangci-lint
 
 .PHONY: golangci-lint
 golangci-lint:
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@v${GOLANGCI_LINT_VERSION} run ./...
+	@go run github.com/golangci/golangci-lint/cmd/golangci-lint@v${GOLANGCI_LINT_VERSION} run ./...
+
+## License checks
+# These are meant to be run in the CI.
 
 .PHONY: license-check
 license-check:

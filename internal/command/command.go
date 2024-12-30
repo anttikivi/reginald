@@ -7,24 +7,26 @@ import (
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/constants"
-	"github.com/anttikivi/reginald/internal/semver"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-func New(ver *semver.Version) (*cobra.Command, error) {
+// New creates a new instance of the root command which includes the
+// subcommands.
+// The version of the command is passed in as an argument.
+func New(ver string) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:   constants.CommandName + " command [flags]",
 		Short: constants.Name + " is the workstation valet",
 		Long: constants.Name + ` is the workstation valet for managing your workstation configuration
 and installed tools.
 `,
-		Version:           ver.String(),
+		Version:           ver,
 		PersistentPreRunE: persistentPreRun,
 		RunE:              runHelp,
 	}
 
-	cmd.SetVersionTemplate(version.Template(cmd))
+	cmd.SetVersionTemplate(version.Template(ver))
 
 	cmd.PersistentFlags().Bool("color", false, "explicitly enable colors in the command-line output")
 	cmd.PersistentFlags().Bool("no-color", false, "disable colors in the command-line output")

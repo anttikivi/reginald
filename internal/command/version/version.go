@@ -13,16 +13,28 @@ import (
 
 const CmdName = "version"
 
-func Template(cmd *cobra.Command) string {
-	return strings.TrimSuffix(cmd.VersionTemplate(), "\n") + " " + runtime.GOOS + "/" + runtime.GOARCH + "\n"
+func Template(v string) string {
+	return versionString(v) + "\n"
 }
 
-func NewCommand(v *semver.Version) *cobra.Command {
+func NewCommand(v string) *cobra.Command {
+	s := versionString(v)
+
 	return &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:   CmdName,
 		Short: "Print the version information of " + constants.Name,
 		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Fprintln(os.Stdout, strings.ToLower(constants.Name)+" version "+v.String()+" "+runtime.GOOS+"/"+runtime.GOARCH)
+			fmt.Fprintln(os.Stdout, s)
 		},
 	}
+}
+
+func versionString(v string) string {
+	s := "build"
+
+	if semver.IsValid(v) {
+		s = "version"
+	}
+
+	return strings.ToLower(constants.Name) + " " + s + " " + v + " " + runtime.GOOS + "/" + runtime.GOARCH
 }

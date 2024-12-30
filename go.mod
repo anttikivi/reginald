@@ -1,6 +1,6 @@
 module github.com/anttikivi/reginald
 
-go 1.23.4
+go 1.22.9
 
 require (
 	github.com/fatih/color v1.18.0
@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/cli/safeexec v1.0.1
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
