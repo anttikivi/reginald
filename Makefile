@@ -35,7 +35,7 @@ bin/$(OUTPUT_NAME)$(EXE): scripts/build$(EXE)
 build: bin/$(OUTPUT_NAME)$(EXE)
 
 .PHONY: clean
-clean: script/build$(EXE)
+clean: scripts/build$(EXE)
 	@$< $@
 
 .PHONY: test
