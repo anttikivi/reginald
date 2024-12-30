@@ -1,4 +1,3 @@
-# This workflow is (at least for now) used for the development builds by the CI.
 name: Build
 
 on:
@@ -6,33 +5,15 @@ on:
   push:
     branches:
       - main
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  get-version:
-    name: Get Reginald version
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.get-version.outputs.version }}
-
-    steps:
-      - name: Fetch the source code
-        uses: actions/checkout@v4.2.2
-
-      - name: Get the Reginald version
-        id: get-version
-        shell: bash
-        run: |
-          version="$(<VERSION)"
-          version="$(echo "${version}" | sed 's/ //g')"
-          echo "version=${version}.${{ github.run_number }}+sha.$(echo "${{ github.sha }}" | cut -c -7)" >> "${GITHUB_OUTPUT}"
-
   build:
-    name: Build Reginald for ${{ matrix.goos }}/${{ matrix.goarch }}
+    name: Build for ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ${{ matrix.os }}
-    needs: get-version
     strategy:
       matrix:
         include:
@@ -46,8 +27,8 @@ jobs:
           - { goos: "openbsd", goarch: "386", os: "ubuntu-latest" }
           - { goos: "openbsd", goarch: "amd64", os: "ubuntu-latest" }
           - { goos: "solaris", goarch: "amd64", os: "ubuntu-latest" }
-          - { goos: "windows", goarch: "386", os: "ubuntu-latest" }
-          - { goos: "windows", goarch: "amd64", os: "ubuntu-latest" }
+          - { goos: "windows", goarch: "386", os: "windows-latest" }
+          - { goos: "windows", goarch: "amd64", os: "windows-latest" }
           - { goos: "darwin", goarch: "amd64", os: "macos-latest" }
           - { goos: "darwin", goarch: "arm64", os: "macos-latest" }
       fail-fast: false
@@ -56,33 +37,90 @@ jobs:
       - name: Fetch the source code
         uses: actions/checkout@v4.2.2
 
-      - name: Determine the Go version
-        id: go
-        uses: opentofu/opentofu/.github/actions/go-version@v1.8.8
+      - name: Install the Go toolchain
+        uses: actions/setup-go@v5.2.0
+        with:
+          go-version-file: go.mod
+
+      - name: Cache the Go modules
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Verify and download dependencies
+        run: |
+          go mod verify
+          go mod download
+
+      - name: Build Reginald
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -v .
+
+      - name: Run the version command
+        run: ./reginald version
+
+  make-build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - { goos: "freebsd", goarch: "386", os: "ubuntu-latest" }
+          - { goos: "freebsd", goarch: "amd64", os: "ubuntu-latest" }
+          - { goos: "freebsd", goarch: "arm", os: "ubuntu-latest" }
+          - { goos: "linux", goarch: "386", os: "ubuntu-latest" }
+          - { goos: "linux", goarch: "amd64", os: "ubuntu-latest" }
+          - { goos: "linux", goarch: "arm", os: "ubuntu-latest" }
+          - { goos: "linux", goarch: "arm64", os: "ubuntu-latest" }
+          - { goos: "openbsd", goarch: "386", os: "ubuntu-latest" }
+          - { goos: "openbsd", goarch: "amd64", os: "ubuntu-latest" }
+          - { goos: "solaris", goarch: "amd64", os: "ubuntu-latest" }
+          - { goos: "windows", goarch: "386", os: "windows-latest" }
+          - { goos: "windows", goarch: "amd64", os: "windows-latest" }
+          - { goos: "darwin", goarch: "amd64", os: "macos-latest" }
+          - { goos: "darwin", goarch: "arm64", os: "macos-latest" }
+      fail-fast: false
+
+    steps:
+      - name: Fetch the source code
+        uses: actions/checkout@v4.2.2
 
       - name: Install the Go toolchain
         uses: actions/setup-go@v5.2.0
         with:
-          go-version: ${{ steps.go.outputs.version }}
+          go-version-file: go.mod
 
-      # TODO: Include the version in the artifact name.
-      - name: Determine the artifact name
-        run: echo "ARTIFACT_NAME=reginald-${{ needs.get-version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}" >> $GITHUB_ENV
+      - name: Cache the Go modules
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
-      - name: Build Reginald
+      - name: Verify and download dependencies
+        run: |
+          go mod verify
+          go mod download
+
+      - name: Build
         env:
-          REGINALD_VERSION: ${{ needs.get-version.outputs.version }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: make build
 
       - name: Run the version command
-        if: ${{ (matrix.goos == 'darwin' && matrix.goarch == 'arm64') || (matrix.goos == 'linux' && matrix.goarch == 'amd64') }}
+        if: ${{ runner.os != "Windows" }}
         run: ./reginald version
 
-      - name: Upload the build artifact
-        uses: actions/upload-artifact@v4.5.0
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: reginald
-          if-no-files-found: error
+      - name: Run the version command on Windows
+        if: ${{ runner.os == "Windows" }}
+        run: .\reginald.exe version

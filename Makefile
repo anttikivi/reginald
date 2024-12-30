@@ -44,9 +44,12 @@ test:
 
 ## Formatting tasks
 
+# Is there a bit too much going on in this command?
 .PHONY: fmt
 fmt:
-	go run github.com/daixiang0/gci@v${GCI_VERSION} write . --skip-generated -s standard -s default
+	# go fmt ./...
+	go mod tidy
+	go run github.com/daixiang0/gci@v${GCI_VERSION} write . --skip-generated --skip-vendor -s standard -s default
 	go run mvdan.cc/gofumpt@v${GOFUMPT_VERSION} -l -w .
 
 ## Lint tasks
@@ -70,11 +73,9 @@ license-check:
 	rm -rf vendor/
 	git diff --exit-code
 
-deps: bin/licensei
-
-bin/licensei: bin/licensei-${LICENSEI_VERSION}
-	@ln -sf licensei-${LICENSEI_VERSION} bin/licensei
-bin/licensei-${LICENSEI_VERSION}:
+bin/licensei: bin/licensei-$(LICENSEI_VERSION)
+	@ln -sf licensei-$(LICENSEI_VERSION) bin/licensei
+bin/licensei-$(LICENSEI_VERSION):
 	@mkdir -p bin
-	curl -sfL https://git.io/licensei | bash -s v${LICENSEI_VERSION}
+	curl -sfL https://git.io/licensei | bash -s v$(LICENSEI_VERSION)
 	@mv bin/licensei $@
