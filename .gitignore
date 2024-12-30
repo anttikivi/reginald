@@ -4,11 +4,12 @@ bin/
 /scripts/build
 /scripts/build.exe
 
+.env
 /reginald
 /reggie
 go.work
 go.work.sum
-.env
+reginald.toml
 
 .licensei.cache
 

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
 
 	"github.com/anttikivi/reginald/internal/build"
 	"github.com/anttikivi/reginald/internal/command"
+	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/semver"
@@ -29,14 +31,18 @@ func run() int {
 		v = buildVersion
 	}
 
-	cmd, err := command.New(v)
+	cfg := config.New()
+
+	cmd, err := command.New(cfg, v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
 		return constants.ExitError
 	}
 
-	if err := cmd.Execute(); err != nil {
+	ctx := context.WithValue(context.Background(), config.ConfigContextKey, cfg)
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
 		return constants.ExitError

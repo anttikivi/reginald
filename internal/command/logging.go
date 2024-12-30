@@ -74,15 +74,15 @@ func normalizeLogDestination(v string) (string, error) {
 		s = logDestNone
 	}
 
-	if !slices.Contains(logDestNormalValues, s) {
+	if s != "" && !slices.Contains(logDestNormalValues, s) {
 		return "", fmt.Errorf("%w: %s", errInvalidLogDestValue, s)
 	}
 
 	return s, nil
 }
 
-func handleLogDestConfigValue(n, dest string) (string, string, error) {
-	if s := viper.GetString(n); slices.Contains(logDestValues, s) {
+func handleLogDestConfigValue(cfg *viper.Viper, n, dest string) (string, string, error) {
+	if s := cfg.GetString(n); slices.Contains(logDestValues, s) {
 		if dest != "" {
 			// We probably never end up in here as `log-destination`
 			// is first key we check, but let's keep this here for
@@ -112,8 +112,8 @@ func handleLogDestConfigValue(n, dest string) (string, string, error) {
 	return dest, "", nil
 }
 
-func handleLogFileConfigValue(n, dest, filename string) (string, string, error) {
-	if s := viper.GetString(n); s != "" {
+func handleLogFileConfigValue(cfg *viper.Viper, n, dest, filename string) (string, string, error) {
+	if s := cfg.GetString(n); s != "" {
 		switch {
 		case dest == "":
 			return logDestFile, s, nil
@@ -135,8 +135,8 @@ func handleLogFileConfigValue(n, dest, filename string) (string, string, error) 
 	return dest, filename, nil
 }
 
-func handleStderroutConfigValue(n, dest, filename string) (string, error) {
-	if b := viper.GetBool(n); b {
+func handleStderroutConfigValue(cfg *viper.Viper, n, dest, filename string) (string, error) {
+	if b := cfg.GetBool(n); b {
 		s := strings.TrimPrefix(n, "log-")
 		// The destination can be overridden if earlier steps set
 		// a filename. For example, out config may have a base case
@@ -156,7 +156,7 @@ func handleStderroutConfigValue(n, dest, filename string) (string, error) {
 // parsing the command-line flags, i.e. config files and environment variables.
 // It also returns the found file name if the logs are set to a file and a name
 // is found while going through the config options here.
-func logDestFromConfigs() (string, string, error) {
+func logDestFromConfigs(cfg *viper.Viper) (string, string, error) {
 	var err error
 
 	varName, dest, filename := "", "", ""
@@ -164,29 +164,29 @@ func logDestFromConfigs() (string, string, error) {
 	// Ensure that no duplicate keys are specified.
 	// The order of the keys are as specified in the variable.
 	for _, name := range allLogConfigNames {
-		if !viper.IsSet(name) {
+		if !cfg.IsSet(name) {
 			continue
 		}
 		// Check that the value is actually set. We don't want to throw
 		// error for empty values.
 		switch name {
 		case logDest:
-			dest, filename, err = handleLogDestConfigValue(name, dest)
+			dest, filename, err = handleLogDestConfigValue(cfg, name, dest)
 			if err != nil {
 				return "", "", fmt.Errorf("%w", err)
 			}
 		case "log-file":
-			dest, filename, err = handleLogFileConfigValue(name, dest, filename)
+			dest, filename, err = handleLogFileConfigValue(cfg, name, dest, filename)
 			if err != nil {
 				return "", "", fmt.Errorf("%w", err)
 			}
 		case "log-stderr", "log-stdout":
-			dest, err = handleStderroutConfigValue(name, dest, filename)
+			dest, err = handleStderroutConfigValue(cfg, name, dest, filename)
 			if err != nil {
 				return "", "", fmt.Errorf("%w", err)
 			}
 		case "log-none", "log-null", "disable-logs", "no-logs":
-			if b := viper.GetBool(name); b {
+			if b := cfg.GetBool(name); b {
 				// The destination can be overridden if earlier steps set
 				// a filename. For example, out config may have a base case
 				// with a log file name but we have chosen to temporarily
@@ -217,18 +217,18 @@ func logDestFromConfigs() (string, string, error) {
 // parseLogDestinationConfigs parses the log destination from the Viper sources
 // apart from command-line flags. It returns an error if more than one
 // destination value is specified.
-func parseLogDestinationConfigs() error {
-	dest, filename, err := logDestFromConfigs()
+func parseLogDestinationConfigs(cfg *viper.Viper) error {
+	dest, filename, err := logDestFromConfigs(cfg)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
 	if dest != "" {
-		viper.Set(logDest, dest)
+		cfg.Set(logDest, dest)
 	}
 
 	if filename != "" {
-		viper.Set(logFile, filename)
+		cfg.Set(logFile, filename)
 	}
 
 	return nil
@@ -237,7 +237,7 @@ func parseLogDestinationConfigs() error {
 // parseLogDestFlags parses the log destination flags, overriding the values
 // from other sources.
 // TODO: See if this functions complexity can be reduced.
-func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this function does what it needs to
+func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error { //nolint:cyclop,lll // this function does what it needs to
 	// Check the different command-line arguments and see if they are set. As
 	// command-line options override options from other sources, set the values
 	// according to them if they are set. Otherwise the other sources are used.
@@ -245,14 +245,14 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 	// ignore the case that multiple values are selected.
 	switch {
 	case cmd.Flags().Changed("log-file"):
-		viper.Set(logDest, logDestFile)
+		cfg.Set(logDest, logDestFile)
 
 		f, err := cmd.Flags().GetString("log-file")
 		if err != nil {
 			return fmt.Errorf("failed to get the value for the \"log-file\" flag: %w", err)
 		}
 
-		viper.Set(logFile, f)
+		cfg.Set(logFile, f)
 	case cmd.Flags().Changed("log-stderr"):
 		v, err := cmd.Flags().GetBool("log-stderr")
 		if err != nil {
@@ -260,7 +260,7 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 		}
 
 		if v {
-			viper.Set(logDest, "stderr")
+			cfg.Set(logDest, "stderr")
 		}
 	case cmd.Flags().Changed("log-stdout"):
 		v, err := cmd.Flags().GetBool("log-stdout")
@@ -269,7 +269,7 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 		}
 
 		if v {
-			viper.Set(logDest, "stdout")
+			cfg.Set(logDest, "stdout")
 		}
 	case cmd.Flags().Changed("log-none"):
 		v, err := cmd.Flags().GetBool("log-none")
@@ -278,7 +278,7 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 		}
 
 		if v {
-			viper.Set(logDest, logDestNone)
+			cfg.Set(logDest, logDestNone)
 		}
 	case cmd.Flags().Changed("log-null"):
 		v, err := cmd.Flags().GetBool("log-null")
@@ -287,7 +287,7 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 		}
 
 		if v {
-			viper.Set(logDest, logDestNone)
+			cfg.Set(logDest, logDestNone)
 		}
 	case cmd.Flags().Changed("disable-logs"):
 		v, err := cmd.Flags().GetBool("disable-logs")
@@ -296,7 +296,7 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 		}
 
 		if v {
-			viper.Set(logDest, logDestNone)
+			cfg.Set(logDest, logDestNone)
 		}
 	case cmd.Flags().Changed("no-logs"):
 		v, err := cmd.Flags().GetBool("no-logs")
@@ -305,7 +305,7 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 		}
 
 		if v {
-			viper.Set(logDest, logDestNone)
+			cfg.Set(logDest, logDestNone)
 		}
 	}
 
@@ -315,11 +315,11 @@ func parseLogDestFlags(cmd *cobra.Command) error { //nolint:cyclop // this funct
 // setLogDestination checks the different possible flags and environment
 // variables that can be set for `log-destination` and sets the
 // `log-destination` config value correctly.
-func setLogDestination(cmd *cobra.Command) error {
+func setLogDestination(cfg *viper.Viper, cmd *cobra.Command) error {
 	// Bind all of these to environment variables. Later we check for the
 	// command-line flags and as those override all of the other options.
 	for _, alias := range allLogConfigNames {
-		if err := viper.BindEnv(alias); err != nil {
+		if err := cfg.BindEnv(alias); err != nil {
 			return fmt.Errorf(
 				"failed to bind the environment variable \"REGINALD_%s\" to config: %w",
 				strings.ReplaceAll(strings.ToUpper(alias), "-", "_"),
@@ -328,18 +328,18 @@ func setLogDestination(cmd *cobra.Command) error {
 		}
 	}
 
-	if err := parseLogDestinationConfigs(); err != nil {
+	if err := parseLogDestinationConfigs(cfg); err != nil {
 		return fmt.Errorf("failed to parse the log destination: %w", err)
 	}
 
-	if err := parseLogDestFlags(cmd); err != nil {
+	if err := parseLogDestFlags(cfg, cmd); err != nil {
 		return fmt.Errorf("failed to parse the log destination: %w", err)
 	}
 
 	return nil
 }
 
-func initLogging(cmd *cobra.Command) error {
+func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
 	// There are some simple commands for displaying basic information.
 	// Just disable logging for those.
 	if cmd.Name() == version.CmdName {
@@ -349,24 +349,24 @@ func initLogging(cmd *cobra.Command) error {
 		return nil
 	}
 
-	if err := setLogDestination(cmd); err != nil {
+	if err := setLogDestination(cfg, cmd); err != nil {
 		return fmt.Errorf("failed to set the log destination: %w", err)
 	}
 
 	// Set the default log destination and file if they are not set.
-	if !viper.IsSet(logDest) {
-		viper.Set(logDest, logDestFile)
+	if !cfg.IsSet(logDest) {
+		cfg.Set(logDest, logDestFile)
 	}
 
-	if !viper.IsSet(logFile) {
-		viper.Set(logFile, defaultLogFile())
+	if !cfg.IsSet(logFile) {
+		cfg.Set(logFile, defaultLogFile())
 	}
 
 	// If the log level is set to `off`, the destination for log is overridden
 	// and logs will be disabled.
-	levelName := viper.GetString("log-level")
+	levelName := cfg.GetString("log-level")
 	if levelName == "off" {
-		viper.Set(logDest, logDestNone)
+		cfg.Set(logDest, logDestNone)
 	}
 
 	logLevel, err := logging.Level(levelName)
@@ -376,15 +376,15 @@ func initLogging(cmd *cobra.Command) error {
 
 	// Create the correct writer for the logs.
 	logWriter, err := logging.Writer(
-		viper.GetString(logDest),
-		viper.GetString(logFile),
-		viper.GetBool("rotate-logs"),
+		cfg.GetString(logDest),
+		cfg.GetString(logFile),
+		cfg.GetBool("rotate-logs"),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to get the log writer: %w", err)
 	}
 
-	logHandler, err := logging.Handler(logWriter, viper.GetString("log-format"), logLevel)
+	logHandler, err := logging.Handler(logWriter, cfg.GetString("log-format"), logLevel)
 	if err != nil {
 		return fmt.Errorf("failed to create the log handler: %w", err)
 	}

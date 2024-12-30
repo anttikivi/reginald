@@ -6,6 +6,7 @@ import (
 
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
+	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -13,8 +14,8 @@ import (
 
 // New creates a new instance of the root command which includes the
 // subcommands.
-// The version of the command is passed in as an argument.
-func New(ver string) (*cobra.Command, error) {
+// TODO: Thinking that maybe the context should be passed in here.
+func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:   constants.CommandName + " command [flags]",
 		Short: constants.Name + " is the workstation valet",
@@ -36,7 +37,7 @@ and installed tools.
 		return nil, fmt.Errorf("failed to mark the \"no-color\" flag as hidden: %w", err)
 	}
 
-	if err := viper.BindPFlag("color", cmd.PersistentFlags().Lookup("color")); err != nil {
+	if err := cfg.BindPFlag("color", cmd.PersistentFlags().Lookup("color")); err != nil {
 		return nil, fmt.Errorf("failed to bind the flag \"color\" to config: %w", err)
 	}
 
@@ -109,20 +110,25 @@ func runHelp(cmd *cobra.Command, _ []string) error {
 }
 
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
-	if err := initConfig(cmd); err != nil {
+	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*viper.Viper)
+	if !ok || cfg == nil {
+		return fmt.Errorf("%w", config.ErrNoConfig)
+	}
+
+	if err := initConfig(cfg, cmd); err != nil {
 		return fmt.Errorf("failed to initialize the config: %w", err)
 	}
 
 	slog.Info("Starting a new Reginald run", "command", cmd.Name())
-	slog.Info("Logging initialized", "rotate-logs", viper.GetBool("rotate-logs"))
+	slog.Info("Logging initialized", "rotate-logs", cfg.GetBool("rotate-logs"))
 
-	if configFileFound() {
-		slog.Info("Config file read", "config-file", viper.ConfigFileUsed())
+	if configFileFound(cfg) {
+		slog.Info("Config file read", "config-file", cfg.ConfigFileUsed())
 	} else {
 		slog.Warn("Config file not found")
 	}
 
-	slog.Info("Running with the following settings", slog.Any("config", viper.AllSettings()))
+	slog.Info("Running with the following settings", slog.Any("config", cfg.AllSettings()))
 
 	return nil
 }

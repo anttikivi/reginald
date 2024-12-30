@@ -21,15 +21,15 @@ func defaultLogFile() string {
 	return strings.ToLower(constants.Name) + ".log"
 }
 
-func configFileFound() bool {
-	return viper.ConfigFileUsed() != ""
+func configFileFound(cfg *viper.Viper) bool {
+	return cfg.ConfigFileUsed() != ""
 }
 
-func setDefaults() {
-	viper.SetDefault("color", !color.NoColor)
-	viper.SetDefault("log-format", defaultLogFormat)
-	viper.SetDefault("log-level", defaultLogLevel)
-	viper.SetDefault("rotate-logs", rotateLogsDefault)
+func setDefaults(cfg *viper.Viper) {
+	cfg.SetDefault("color", !color.NoColor)
+	cfg.SetDefault("log-format", defaultLogFormat)
+	cfg.SetDefault("log-level", defaultLogLevel)
+	cfg.SetDefault("rotate-logs", rotateLogsDefault)
 }
 
 // bindPersistentString binds a Viper config value to a persistent flag string
@@ -39,14 +39,14 @@ func setDefaults() {
 // the Viper default or values from other sources.
 // This function also binds the values to the environment variables so that the
 // values are included in all settings if the environment variables are set.
-func bindPersistentString(cmd *cobra.Command, n string) error {
+func bindPersistentString(cfg *viper.Viper, cmd *cobra.Command, n string) error {
 	if cmd.Flags().Changed(n) {
-		if err := viper.BindPFlag(n, cmd.PersistentFlags().Lookup(n)); err != nil {
+		if err := cfg.BindPFlag(n, cmd.PersistentFlags().Lookup(n)); err != nil {
 			return fmt.Errorf("failed to bind the flag \"%s\" to config: %w", n, err)
 		}
 	}
 
-	if err := viper.BindEnv(n); err != nil {
+	if err := cfg.BindEnv(n); err != nil {
 		return fmt.Errorf(
 			"failed to bind the environment variable \"REGINALD_%s\" to config: %w",
 			strings.ReplaceAll(strings.ToUpper(n), "-", "_"),
@@ -63,8 +63,8 @@ func bindPersistentString(cmd *cobra.Command, n string) error {
 // The function returns true if the config file was read, otherwise false.
 // If the config file is found but could not be read, the function returns false
 // and an error.
-func readConfig() (bool, error) {
-	if err := viper.ReadInConfig(); err != nil {
+func readConfig(cfg *viper.Viper) (bool, error) {
+	if err := cfg.ReadInConfig(); err != nil {
 		var notFoundError viper.ConfigFileNotFoundError
 		if !errors.As(err, &notFoundError) {
 			return false, fmt.Errorf("could not read the configuration file: %w", err)
@@ -80,7 +80,7 @@ func readConfig() (bool, error) {
 // reads the first that matches.
 // The first return value is a boolean telling whether a file was found and
 // read.
-func resolveConfigFile() (bool, error) {
+func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 	// Reginald is flexible about the configuration file to use. You can
 	// use multiple types of configuration files so the extensions are
 	// omitted from the following examples.
@@ -91,11 +91,11 @@ func resolveConfigFile() (bool, error) {
 
 	// Before looking up the config file in the specified locations, see
 	// if the command-line flag or the environment variable is set.
-	configFile := viper.GetString("config-file")
+	configFile := cfg.GetString("config-file")
 	if configFile != "" {
-		viper.SetConfigFile(configFile)
+		cfg.SetConfigFile(configFile)
 
-		configFound, err = readConfig()
+		configFound, err = readConfig(cfg)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -104,10 +104,10 @@ func resolveConfigFile() (bool, error) {
 	// First the config is looked for in the current working directory.
 	// Files that match: ./reginald
 	if !configFound {
-		viper.SetConfigName("reginald")
-		viper.AddConfigPath(".")
+		cfg.SetConfigName("reginald")
+		cfg.AddConfigPath(".")
 
-		configFound, err = readConfig()
+		configFound, err = readConfig(cfg)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -116,10 +116,10 @@ func resolveConfigFile() (bool, error) {
 	// Next the current working directory but with dot in from of the
 	// file. Files that match: ./.reginald
 	if !configFound {
-		viper.SetConfigName(".reginald")
-		viper.AddConfigPath(".")
+		cfg.SetConfigName(".reginald")
+		cfg.AddConfigPath(".")
 
-		configFound, err = readConfig()
+		configFound, err = readConfig(cfg)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -130,11 +130,11 @@ func resolveConfigFile() (bool, error) {
 	// TODO: Look for config files in a directory named `reginald` in
 	// XDG_CONFIG_HOME.
 	if !configFound {
-		viper.SetConfigName("reginald")
-		viper.AddConfigPath("${XDG_CONFIG_HOME}")
-		viper.AddConfigPath("${HOME}/.config")
+		cfg.SetConfigName("reginald")
+		cfg.AddConfigPath("${XDG_CONFIG_HOME}")
+		cfg.AddConfigPath("${HOME}/.config")
 
-		configFound, err = readConfig()
+		configFound, err = readConfig(cfg)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -144,10 +144,10 @@ func resolveConfigFile() (bool, error) {
 	// to include the config file there without prefixing the filename
 	// with a dot, we'll look for that first.
 	if !configFound {
-		viper.SetConfigName("reginald")
-		viper.AddConfigPath("${HOME}")
+		cfg.SetConfigName("reginald")
+		cfg.AddConfigPath("${HOME}")
 
-		configFound, err = readConfig()
+		configFound, err = readConfig(cfg)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -155,10 +155,10 @@ func resolveConfigFile() (bool, error) {
 
 	// Finally the home directory but with a dot in the front.
 	if !configFound {
-		viper.SetConfigName(".reginald")
-		viper.AddConfigPath("${HOME}")
+		cfg.SetConfigName(".reginald")
+		cfg.AddConfigPath("${HOME}")
 
-		configFound, err = readConfig()
+		configFound, err = readConfig(cfg)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -168,8 +168,8 @@ func resolveConfigFile() (bool, error) {
 }
 
 // initConfig initializes the configuration for the current run.
-func initConfig(cmd *cobra.Command) error {
-	setDefaults()
+func initConfig(cfg *viper.Viper, cmd *cobra.Command) error {
+	setDefaults(cfg)
 
 	noColor, err := cmd.Flags().GetBool("no-color")
 	if err != nil {
@@ -177,22 +177,22 @@ func initConfig(cmd *cobra.Command) error {
 	}
 
 	if noColor {
-		viper.Set("color", false)
+		cfg.Set("color", false)
 	}
 
-	if err := bindPersistentString(cmd, "config-file"); err != nil {
+	if err := bindPersistentString(cfg, cmd, "config-file"); err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	if err := bindPersistentString(cmd, "directory"); err != nil {
+	if err := bindPersistentString(cfg, cmd, "directory"); err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	if err := bindPersistentString(cmd, "log-format"); err != nil {
+	if err := bindPersistentString(cfg, cmd, "log-format"); err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	if err := bindPersistentString(cmd, "log-level"); err != nil {
+	if err := bindPersistentString(cfg, cmd, "log-level"); err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
@@ -209,7 +209,7 @@ func initConfig(cmd *cobra.Command) error {
 		}
 
 		if noLogRotation {
-			viper.Set("rotate-logs", false)
+			cfg.Set("rotate-logs", false)
 		}
 	}
 
@@ -220,24 +220,24 @@ func initConfig(cmd *cobra.Command) error {
 		}
 
 		if noLogRotation {
-			viper.Set("rotate-logs", false)
+			cfg.Set("rotate-logs", false)
 		}
 	}
 
-	// viper.SetEnvPrefix(constants.CommandName)
-	viper.SetEnvPrefix(strings.ToLower(constants.Name))
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	viper.AutomaticEnv()
+	// cfg.SetEnvPrefix(constants.CommandName)
+	cfg.SetEnvPrefix(strings.ToLower(constants.Name))
+	cfg.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	cfg.AutomaticEnv()
 
-	if _, err := resolveConfigFile(); err != nil {
+	if _, err := resolveConfigFile(cfg); err != nil {
 		return fmt.Errorf("failed to resolve the config file: %w", err)
 	}
 
-	if !viper.GetBool("color") {
+	if !cfg.GetBool("color") {
 		color.NoColor = true
 	}
 
-	if err := initLogging(cmd); err != nil {
+	if err := initLogging(cfg, cmd); err != nil {
 		return fmt.Errorf("failed to init logging: %w", err)
 	}
 
