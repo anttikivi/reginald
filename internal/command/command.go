@@ -53,24 +53,22 @@ and installed tools.
 	}
 
 	// Logging options.
-	cmd.PersistentFlags().String(
-		"log-destination",
-		"file",
-		"destination for the logs, possible values are: file or filename, stderr, stdout, nil, none, null, and /dev/null",
-	)
+	cmd.PersistentFlags().String("log-file", defaultLogFile(), "print logs to the specified file")
+
+	if err := cmd.MarkPersistentFlagFilename("log-file"); err != nil {
+		return nil, fmt.Errorf("failed to mark the \"log-file\" flag as a filename: %w", err)
+	}
+
 	cmd.PersistentFlags().Bool("log-stderr", false, "print logs to stderr")
 	cmd.PersistentFlags().Bool("log-stdout", false, "print logs to stdout")
+	cmd.PersistentFlags().Bool("log-none", false, "disables logging")
 	cmd.PersistentFlags().Bool("log-null", false, "disables logging")
 	cmd.PersistentFlags().Bool("disable-logs", false, "disables logging")
 	cmd.PersistentFlags().Bool("no-logs", false, "disables logging")
-	cmd.MarkFlagsMutuallyExclusive("log-destination", "log-stderr", "log-stdout", "log-null", "disable-logs", "no-logs")
+	cmd.MarkFlagsMutuallyExclusive("log-file", "log-stderr", "log-stdout", "log-null", "disable-logs", "no-logs")
 
-	if err := cmd.PersistentFlags().MarkHidden("log-stderr"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"log-stderr\" flag as hidden: %w", err)
-	}
-
-	if err := cmd.PersistentFlags().MarkHidden("log-stdout"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"log-stdout\" flag as hidden: %w", err)
+	if err := cmd.PersistentFlags().MarkHidden("log-none"); err != nil {
+		return nil, fmt.Errorf("failed to mark the \"log-none\" flag as hidden: %w", err)
 	}
 
 	if err := cmd.PersistentFlags().MarkHidden("log-null"); err != nil {
@@ -79,12 +77,6 @@ and installed tools.
 
 	if err := cmd.PersistentFlags().MarkHidden("disable-logs"); err != nil {
 		return nil, fmt.Errorf("failed to mark the \"disable-logs\" flag as hidden: %w", err)
-	}
-
-	cmd.PersistentFlags().String("log-file", defaultLogFile(), "path to the log file, if logs are output to a file")
-
-	if err := cmd.MarkPersistentFlagFilename("log-file"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"log-file\" flag as a filename: %w", err)
 	}
 
 	cmd.PersistentFlags().String(

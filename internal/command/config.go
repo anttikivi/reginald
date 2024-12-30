@@ -27,8 +27,6 @@ func configFileFound() bool {
 
 func setDefaults() {
 	viper.SetDefault("color", !color.NoColor)
-	viper.SetDefault("log-destination", "file")
-	viper.SetDefault("log-file", defaultLogFile())
 	viper.SetDefault("log-format", defaultLogFormat)
 	viper.SetDefault("log-level", defaultLogLevel)
 	viper.SetDefault("rotate-logs", rotateLogsDefault)
@@ -190,10 +188,6 @@ func initConfig(cmd *cobra.Command) error {
 		return fmt.Errorf("%w", err)
 	}
 
-	if err := bindPersistentString(cmd, "log-file"); err != nil {
-		return fmt.Errorf("%w", err)
-	}
-
 	if err := bindPersistentString(cmd, "log-format"); err != nil {
 		return fmt.Errorf("%w", err)
 	}
@@ -235,12 +229,12 @@ func initConfig(cmd *cobra.Command) error {
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 
-	if !viper.GetBool("color") {
-		color.NoColor = true
-	}
-
 	if _, err := resolveConfigFile(); err != nil {
 		return fmt.Errorf("failed to resolve the config file: %w", err)
+	}
+
+	if !viper.GetBool("color") {
+		color.NoColor = true
 	}
 
 	if err := initLogging(cmd); err != nil {
