@@ -64,6 +64,11 @@ jobs:
         run: go build -v .
 
       - name: Run the version command
+        if:
+          ${{ ((matrix.goos == 'linux' || matrix.goos == 'windows') &&
+          (matrix.goarch == '386' || matrix.goarch == 'amd64')) || (matrix.goos
+          == 'darwin' && (matrix.goarch == 'arm64' || matrix.goarch == 'amd64'))
+          }}
         run: ./reginald version
 
   make-build:
@@ -118,9 +123,15 @@ jobs:
         run: make build
 
       - name: Run the version command
-        if: ${{ runner.os != 'Windows' }}
+        if:
+          ${{ runner.os != 'Windows' && ((matrix.goos == 'linux' &&
+          (matrix.goarch == '386' || matrix.goarch == 'amd64')) || (matrix.goos
+          == 'darwin' && (matrix.goarch == 'arm64' || matrix.goarch ==
+          'amd64'))) }}
         run: ./bin/reginald version
 
       - name: Run the version command on Windows
-        if: ${{ runner.os == 'Windows' }}
+        if:
+          ${{ runner.os == 'Windows' && (matrix.goarch == '386' || matrix.goarch
+          == 'amd64') }}
         run: .\bin\reginald.exe version
