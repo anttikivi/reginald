@@ -118,9 +118,9 @@ jobs:
         run: make build
 
       - name: Run the version command
-        if: runner.os != "Windows"
+        if: ${{ runner.os != 'Windows' }}
         run: ./reginald version
 
       - name: Run the version command on Windows
-        if: runner.os == "Windows"
+        if: ${{ runner.os == 'Windows' }}
         run: .\reginald.exe version
