@@ -119,8 +119,8 @@ jobs:
 
       - name: Run the version command
         if: ${{ runner.os != 'Windows' }}
-        run: ./reginald version
+        run: ./bin/reginald version
 
       - name: Run the version command on Windows
         if: ${{ runner.os == 'Windows' }}
-        run: .\reginald.exe version
+        run: .\bin\reginald.exe version
