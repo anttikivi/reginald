@@ -42,6 +42,13 @@ clean: script/build$(EXE)
 test:
 	go test ./...
 
+## Formatting tasks
+
+.PHONY: fmt
+fmt:
+	go run github.com/daixiang0/gci@v${GCI_VERSION} write . --skip-generated -s standard -s default
+	go run mvdan.cc/gofumpt@v${GOFUMPT_VERSION} -l -w .
+
 ## Lint tasks
 
 .PHONY: lint
