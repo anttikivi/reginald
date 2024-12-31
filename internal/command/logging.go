@@ -124,7 +124,7 @@ func handleLogFileConfigValue(cfg *viper.Viper, n, dest, filename string) (strin
 	return dest, filename
 }
 
-func handleStderroutConfigValue(cfg *viper.Viper, n, dest, filename string) string {
+func handleStderroutConfigValue(cfg *viper.Viper, n, dest string) string {
 	if b := cfg.GetBool(n); b {
 		return strings.TrimPrefix(n, "log-")
 	}
@@ -162,7 +162,7 @@ func logDestFromConfigs(cfg *viper.Viper) (string, string, error) {
 		case "log-file":
 			dest, filename = handleLogFileConfigValue(cfg, name, dest, filename)
 		case "log-stderr", "log-stdout":
-			dest = handleStderroutConfigValue(cfg, name, dest, filename)
+			dest = handleStderroutConfigValue(cfg, name, dest)
 		case "log-none", "log-null", "disable-logs", "no-logs":
 			if b := cfg.GetBool(name); b {
 				switch {
