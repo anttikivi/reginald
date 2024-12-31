@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 
@@ -45,6 +46,7 @@ var (
 		"stderr",
 		"stdout",
 		"disable",
+		"disabled",
 		"nil",
 		logDestNone,
 		"null",
@@ -59,6 +61,7 @@ var (
 )
 
 var (
+	errLogDestUnexpected   = errors.New("unexpected error while parsing log destination")
 	errMultipleLogDestSrcs = errors.New("multiple log destinations specified")
 	errInvalidLogDestValue = errors.New("invalid log destination value")
 	errInvalidLogDestVar   = errors.New("invalid log destination variable")
@@ -70,7 +73,7 @@ var (
 // does the normalizing.
 func normalizeLogDestination(v string) (string, error) {
 	s := v
-	if s == "disable" || s == "nil" || s == "null" || s == "/dev/null" {
+	if s == "disable" || s == "disabled" || s == "nil" || s == "null" || s == "/dev/null" {
 		s = logDestNone
 	}
 
@@ -82,26 +85,19 @@ func normalizeLogDestination(v string) (string, error) {
 }
 
 func handleLogDestConfigValue(cfg *viper.Viper, n, dest string) (string, string, error) {
-	if s := cfg.GetString(n); slices.Contains(logDestValues, s) {
-		if dest != "" {
-			// We probably never end up in here as `log-destination`
-			// is first key we check, but let's keep this here for
-			// now for the sake of completeness.
-			return "", "", fmt.Errorf("%w: both %q and %q enabled as log destination", errMultipleLogDestSrcs, dest, s)
-		}
+	if dest != "" {
+		return "", "", fmt.Errorf("%w: the variable %q already contains a value: %q", errLogDestUnexpected, "dest", dest)
+	}
 
+	if s := cfg.GetString(n); slices.Contains(logDestValues, s) {
 		// The value for `log-destination` is within the valid values
 		// and, thus, should be considered.
 		return s, "", nil
 	} else if s != "" {
-		if dest != "" {
-			return "", "", fmt.Errorf(
-				"%w: both %q and %q (%s) enabled as log destination",
-				errMultipleLogDestSrcs,
-				dest,
-				logDestFile,
-				s,
-			)
+		// If we assume the log destination to be a file, require that the value
+		// contains a path separator.
+		if !strings.ContainsRune(s, os.PathSeparator) {
+			return "", "", fmt.Errorf("%w: %q", errInvalidLogDestValue, s)
 		}
 
 		// If the value is not a preset value, we assume it to be
@@ -112,50 +108,38 @@ func handleLogDestConfigValue(cfg *viper.Viper, n, dest string) (string, string,
 	return dest, "", nil
 }
 
-func handleLogFileConfigValue(cfg *viper.Viper, n, dest, filename string) (string, string, error) {
+func handleLogFileConfigValue(cfg *viper.Viper, n, dest, filename string) (string, string) {
 	if s := cfg.GetString(n); s != "" {
-		switch {
-		case dest == "":
-			return logDestFile, s, nil
-		case filename == "":
-			// If the filename is not set yet, we can read it from
-			// the config value. The destination should not, however, be changed.
-			return dest, s, nil
-		default:
-			return "", "", fmt.Errorf(
-				"%w: both %q and %q (%s) enabled as log destination",
-				errMultipleLogDestSrcs,
-				dest,
-				logDestFile,
-				s,
-			)
+		if dest == "" {
+			return logDestFile, s
 		}
+
+		// If the destination is already set, we can only set the filename.
+		// This way we can allow keeping the config for a custom filename
+		// while letting the user to change the destination temporarily to
+		// something else.
+		return dest, s
 	}
 
-	return dest, filename, nil
+	return dest, filename
 }
 
-func handleStderroutConfigValue(cfg *viper.Viper, n, dest, filename string) (string, error) {
+func handleStderroutConfigValue(cfg *viper.Viper, n, dest, filename string) string {
 	if b := cfg.GetBool(n); b {
-		s := strings.TrimPrefix(n, "log-")
-		// The destination can be overridden if earlier steps set
-		// a filename. For example, out config may have a base case
-		// with a log file name but we have chosen to temporarily
-		// redirect logging to stderr.
-		if dest != "" && (dest != logDestFile || filename == "") {
-			return "", fmt.Errorf("%w: both %q and %q enabled as log destination", errMultipleLogDestSrcs, dest, s)
-		}
-
-		return s, nil
+		return strings.TrimPrefix(n, "log-")
 	}
 
-	return dest, nil
+	return dest
 }
 
 // logDestFromConfigs gets the log destination from the config sources prior to
 // parsing the command-line flags, i.e. config files and environment variables.
 // It also returns the found file name if the logs are set to a file and a name
 // is found while going through the config options here.
+// If multiple values are found, the last one is overridden.
+// The values are checked in the following order:
+// log-destination -> log-file -> log-stderr -> log-stdout -> no-logs.
+// If a config value has synonyms, like no-logs, only one of those is permitted.
 func logDestFromConfigs(cfg *viper.Viper) (string, string, error) {
 	var err error
 
@@ -176,23 +160,13 @@ func logDestFromConfigs(cfg *viper.Viper) (string, string, error) {
 				return "", "", fmt.Errorf("%w", err)
 			}
 		case "log-file":
-			dest, filename, err = handleLogFileConfigValue(cfg, name, dest, filename)
-			if err != nil {
-				return "", "", fmt.Errorf("%w", err)
-			}
+			dest, filename = handleLogFileConfigValue(cfg, name, dest, filename)
 		case "log-stderr", "log-stdout":
-			dest, err = handleStderroutConfigValue(cfg, name, dest, filename)
-			if err != nil {
-				return "", "", fmt.Errorf("%w", err)
-			}
+			dest = handleStderroutConfigValue(cfg, name, dest, filename)
 		case "log-none", "log-null", "disable-logs", "no-logs":
 			if b := cfg.GetBool(name); b {
-				// The destination can be overridden if earlier steps set
-				// a filename. For example, out config may have a base case
-				// with a log file name but we have chosen to temporarily
-				// disable logging.
 				switch {
-				case varName == "" && (dest == "" || (dest == logDestFile && filename != "")):
+				case varName == "":
 					varName = name
 					dest = logDestNone
 				case dest == logDestNone:
