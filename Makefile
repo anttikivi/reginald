@@ -42,6 +42,10 @@ clean: scripts/build$(EXE)
 test:
 	go test ./...
 
+.PHONY: bench
+bench:
+	go test -bench=. ./...
+
 ## Formatting tasks
 
 # Is there a bit too much going on in this command?
