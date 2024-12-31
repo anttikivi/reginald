@@ -1,3 +1,5 @@
+github.com/anttikivi/go-semver v0.1.0 h1:cn89T9Wch/5Lh9jsIX+JHF0gGuAegGwovhNsiHhIask=
+github.com/anttikivi/go-semver v0.1.0/go.mod h1:6WtEs2uwiiSE3xYqmZEqAugMS+3Kdac1SuX8GUhG6vM=
 github.com/cli/safeexec v1.0.1 h1:e/C79PbXF4yYTN/wauC4tviMxEV13BwljGj0N9j+N00=
 github.com/cli/safeexec v1.0.1/go.mod h1:Z/D4tTN8Vs5gXYHDCbaM1S/anmEDnJb1iW0+EJ5zx3Q=
 github.com/cpuguy83/go-md2man/v2 v2.0.4/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=

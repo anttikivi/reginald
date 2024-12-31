@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/anttikivi/go-semver"
 	"github.com/anttikivi/reginald/internal/build"
 	"github.com/anttikivi/reginald/internal/command"
 	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/logging"
-	"github.com/anttikivi/reginald/internal/semver"
 )
 
 func run() int {

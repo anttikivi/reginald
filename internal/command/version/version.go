@@ -6,8 +6,8 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/anttikivi/go-semver"
 	"github.com/anttikivi/reginald/internal/constants"
-	"github.com/anttikivi/reginald/internal/semver"
 	"github.com/spf13/cobra"
 )
 
