@@ -28,35 +28,67 @@ and installed tools.
 
 	cmd.SetVersionTemplate(version.Template(ver))
 
-	cmd.PersistentFlags().Bool("color", false, "explicitly enable colors in the command-line output")
-	cmd.PersistentFlags().Bool("no-color", false, "disable colors in the command-line output")
-	cmd.MarkFlagsMutuallyExclusive("color", "no-color")
-
-	if err := cmd.PersistentFlags().MarkHidden("no-color"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"no-color\" flag as hidden: %w", err)
+	if err := addFlags(cmd); err != nil {
+		return nil, fmt.Errorf("%w", err)
 	}
 
 	if err := cfg.BindPFlag("color", cmd.PersistentFlags().Lookup("color")); err != nil {
 		return nil, fmt.Errorf("failed to bind the flag \"color\" to config: %w", err)
 	}
 
+	cmd.AddCommand(bootstrap.NewCommand())
+	cmd.AddCommand(version.NewCommand(ver))
+
+	return cmd, nil
+}
+
+// New creates a new instance of the root command for generating the documentation.
+func NewDoc(ver string) (*cobra.Command, error) {
+	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
+		Use:   constants.CommandName + " command [flags]",
+		Short: "the workstation valet",
+		Long: constants.Name + ` is the workstation valet for managing your workstation configuration
+and installed tools.
+`,
+		Version: ver,
+	}
+
+	if err := addFlags(cmd); err != nil {
+		return nil, fmt.Errorf("%w", err)
+	}
+
+	cmd.AddCommand(bootstrap.NewCommand())
+	cmd.AddCommand(version.NewCommand(ver))
+
+	return cmd, nil
+}
+
+func addFlags(cmd *cobra.Command) error {
+	cmd.PersistentFlags().Bool("color", false, "explicitly enable colors in the command-line output")
+	cmd.PersistentFlags().Bool("no-color", false, "disable colors in the command-line output")
+	cmd.MarkFlagsMutuallyExclusive("color", "no-color")
+
+	if err := cmd.PersistentFlags().MarkHidden("no-color"); err != nil {
+		return fmt.Errorf("failed to mark the \"no-color\" flag as hidden: %w", err)
+	}
+
 	cmd.PersistentFlags().StringP("config-file", "c", "", "path to config file")
 
 	if err := cmd.MarkPersistentFlagFilename("config-file", "json", "toml", "yaml", "yml"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"config-file\" flag as a filename: %w", err)
+		return fmt.Errorf("failed to mark the \"config-file\" flag as a filename: %w", err)
 	}
 
 	cmd.PersistentFlags().StringP("directory", "C", "", "path to the local dotfiles directory")
 
 	if err := cmd.MarkPersistentFlagDirname("directory"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"directory\" flag as a dirname: %w", err)
+		return fmt.Errorf("failed to mark the \"directory\" flag as a dirname: %w", err)
 	}
 
 	// Logging options.
 	cmd.PersistentFlags().String("log-file", defaultLogFile(), "print logs to the specified file")
 
 	if err := cmd.MarkPersistentFlagFilename("log-file"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"log-file\" flag as a filename: %w", err)
+		return fmt.Errorf("failed to mark the \"log-file\" flag as a filename: %w", err)
 	}
 
 	cmd.PersistentFlags().Bool("log-stderr", false, "print logs to stderr")
@@ -68,15 +100,15 @@ and installed tools.
 	cmd.MarkFlagsMutuallyExclusive("log-file", "log-stderr", "log-stdout", "log-null", "disable-logs", "no-logs")
 
 	if err := cmd.PersistentFlags().MarkHidden("log-none"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"log-none\" flag as hidden: %w", err)
+		return fmt.Errorf("failed to mark the \"log-none\" flag as hidden: %w", err)
 	}
 
 	if err := cmd.PersistentFlags().MarkHidden("log-null"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"log-null\" flag as hidden: %w", err)
+		return fmt.Errorf("failed to mark the \"log-null\" flag as hidden: %w", err)
 	}
 
 	if err := cmd.PersistentFlags().MarkHidden("disable-logs"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"disable-logs\" flag as hidden: %w", err)
+		return fmt.Errorf("failed to mark the \"disable-logs\" flag as hidden: %w", err)
 	}
 
 	cmd.PersistentFlags().String(
@@ -91,13 +123,10 @@ and installed tools.
 	cmd.MarkFlagsMutuallyExclusive("no-log-rotation", "disable-log-rotation")
 
 	if err := cmd.PersistentFlags().MarkHidden("disable-log-rotation"); err != nil {
-		return nil, fmt.Errorf("failed to mark the \"disable-log-rotation\" flag as hidden: %w", err)
+		return fmt.Errorf("failed to mark the \"disable-log-rotation\" flag as hidden: %w", err)
 	}
 
-	cmd.AddCommand(bootstrap.NewCommand())
-	cmd.AddCommand(version.NewCommand(ver))
-
-	return cmd, nil
+	return nil
 }
 
 func runHelp(cmd *cobra.Command, _ []string) error {

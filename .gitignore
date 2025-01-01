@@ -3,6 +3,7 @@
 bin/
 /scripts/build
 /scripts/build.exe
+/share/man/man1
 
 .env
 /reginald

@@ -35,6 +35,9 @@ var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks ca
 	"clean": func(_ string) error {
 		return rmrf("bin", "share")
 	},
+	"man": func(_ string) error {
+		return run("go", "run", "./cmd/docs", "--man", "--path", "./share/man/man1/")
+	},
 }
 
 var self string //nolint:gochecknoglobals // self is shared within this script

@@ -38,6 +38,10 @@ build: bin/$(OUTPUT_NAME)$(EXE)
 clean: scripts/build$(EXE)
 	@$< $@
 
+.PHONY: man
+man: scripts/build$(EXE)
+	@$< $@
+
 .PHONY: test
 test:
 	go test ./...

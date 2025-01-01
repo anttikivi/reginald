@@ -30,6 +30,7 @@ linters-settings:
           - github.com/cli/safeexec
           - github.com/fatih/color
           - github.com/spf13/cobra
+          - github.com/spf13/pflag
           - github.com/spf13/viper
   funlen:
     lines: 100
