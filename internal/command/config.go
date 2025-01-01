@@ -17,6 +17,12 @@ const (
 	rotateLogsDefault = true
 )
 
+var ErrNoConfig = errors.New("no config instance in context")
+
+func NewConfig() *viper.Viper {
+	return viper.New()
+}
+
 func defaultLogFile() string {
 	return strings.ToLower(constants.Name) + ".log"
 }

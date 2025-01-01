@@ -9,9 +9,9 @@ linters-settings:
     max-complexity: 20
   decorder:
     dec-order:
+      - type
       - const
       - var
-      - type
       - func
     ignore-underscore-vars: false
     disable-dec-order-check: false

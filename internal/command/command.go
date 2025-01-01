@@ -6,7 +6,6 @@ import (
 
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
-	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -110,9 +109,9 @@ func runHelp(cmd *cobra.Command, _ []string) error {
 }
 
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
-	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*viper.Viper)
+	cfg, ok := cmd.Context().Value(constants.ConfigContextKey).(*viper.Viper)
 	if !ok || cfg == nil {
-		return fmt.Errorf("%w", config.ErrNoConfig)
+		return fmt.Errorf("%w", ErrNoConfig)
 	}
 
 	if err := initConfig(cfg, cmd); err != nil {

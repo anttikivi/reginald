@@ -9,7 +9,6 @@ import (
 	"github.com/anttikivi/go-semver"
 	"github.com/anttikivi/reginald/internal/build"
 	"github.com/anttikivi/reginald/internal/command"
-	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/logging"
 )
@@ -31,7 +30,7 @@ func run() int {
 		v = buildVersion
 	}
 
-	cfg := config.New()
+	cfg := command.NewConfig()
 
 	cmd, err := command.New(cfg, v)
 	if err != nil {
@@ -40,7 +39,7 @@ func run() int {
 		return constants.ExitError
 	}
 
-	ctx := context.WithValue(context.Background(), config.ConfigContextKey, cfg)
+	ctx := context.WithValue(context.Background(), constants.ConfigContextKey, cfg)
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
