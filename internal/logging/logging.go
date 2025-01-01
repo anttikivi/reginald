@@ -12,6 +12,8 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+type NullHandler struct{}
+
 const (
 	defaultLogFilePerm os.FileMode = 0o644
 	logLevelOff        slog.Level  = 12
@@ -28,8 +30,6 @@ var (
 	errInvalidLogFormat      = errors.New("invalid log format")
 	errInvalidLogLevel       = errors.New("invalid log level")
 )
-
-type NullHandler struct{}
 
 func (h NullHandler) Enabled(_ context.Context, _ slog.Level) bool {
 	return false
