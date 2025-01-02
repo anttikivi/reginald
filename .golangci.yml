@@ -44,6 +44,13 @@ linters-settings:
   varnamelen:
     max-distance: 30
     min-name-length: 3
+    ignore-decls:
+      - b *testing.B
+      - err error
+      - i int
+      - sb strings.Builder
+      - T any
+      - t *testing.T
 
 run:
   timeout: "1m"

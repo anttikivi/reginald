@@ -28,8 +28,14 @@ type ManHeader struct {
 	Manual  string
 }
 
-// manualSectionName is the name of the manual section in the man page header.
-const manualSectionName = "Reginald Manual"
+const (
+	// manLineLength is the maximum line length for formatting the man page.
+	// It is used to cap the line length of synopsis.
+	manLineLength = 80
+
+	// manualSectionName is the name of the manual section in the man page header.
+	manualSectionName = "Reginald Manual"
+)
 
 // const manualSectionName = "General Commands Manual" // section 1: general commands
 
@@ -117,9 +123,9 @@ func fillHeader(header *ManHeader, name string) error {
 	return nil
 }
 
-// genMan generates the man page. Right now, it only implements `roff` syntax, but I might implement `mdoc` in the future.
-// The `roff` syntax reference I found: https://jwodder.github.io/kbits/posts/writing-manpages
-// The `mdoc` reference I found: https://man.freebsd.org/cgi/man.cgi?mdoc
+// genMan generates the man page.
+// Right now, it only implements `roff` syntax, but I might implement `mdoc` in
+// the future.
 func genMan(cmd *cobra.Command, header *ManHeader) []byte {
 	cmd.InitDefaultHelpCmd()
 	cmd.InitDefaultHelpFlag()
@@ -135,7 +141,98 @@ func genMan(cmd *cobra.Command, header *ManHeader) []byte {
 }
 
 func manPreamble(buf *bytes.Buffer, header *ManHeader, cmd *cobra.Command, dashedName string) {
-	fmt.Fprintf(buf, ".TH %s %s %q %q %q\n", header.Title, header.Section, header.Date.Format("January 2, 2006"), header.Source, header.Manual)
+	fmt.Fprintf(
+		buf,
+		".TH %q %q %q %q %q\n",
+		header.Title,
+		header.Section,
+		header.Date.Format("January 2, 2006"),
+		strings.ReplaceAll(header.Source, ".", "\\&."),
+		header.Manual,
+	)
 	buf.WriteString(".SH NAME\n")
 	fmt.Fprintf(buf, "%s \\- %s\n", dashedName, cmd.Short)
+	buf.WriteString(".SH SYNOPSIS\n.sp\n.nf\n")
+	buf.WriteString(manSynopsis(cmd))
+	buf.WriteString("\n.fi\n")
+}
+
+func manSynopsis(cmd *cobra.Command) string {
+	name := cmd.Name()
+
+	for parent := cmd; parent.HasParent(); {
+		parent = parent.Parent()
+		name = parent.Name() + " " + name
+	}
+
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("\\fI%s\\fR", name))
+
+	str := cmd.UseLine()
+	str = strings.TrimPrefix(str, name)
+	str = strings.TrimPrefix(str, " ")
+	str = strings.TrimSuffix(str, " [flags]")
+
+	parts := make([]string, 0)
+
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if i == 0 && c == '[' {
+			a := str[i : strings.IndexRune(str, ']')+1]
+			parts = append(parts, strings.ReplaceAll(a, "-", "\\-"))
+
+			continue
+		}
+
+		if i == 0 && c == '<' {
+			a := str[i : strings.IndexRune(str, '>')+1]
+			parts = append(parts, strings.ReplaceAll(a, "-", "\\-"))
+
+			continue
+		}
+
+		if i == 0 {
+			continue
+		}
+
+		if c == ' ' {
+			var a string
+
+			prev := str[i-1]
+			next := str[i+1]
+			sub := str[i+1:]
+
+			switch {
+			case (prev == ']' && next == '[') || (prev == '>' && next == '['):
+				a = sub[:strings.IndexRune(sub, ']')+1]
+			case (prev == '>' && next == '<') || (prev == ']' && next == '<'):
+				a = sub[:strings.IndexRune(sub, '>')+1]
+			default:
+				continue
+			}
+
+			parts = append(parts, strings.ReplaceAll(a, "-", "\\-"))
+			i += len(a)
+		}
+	}
+
+	ll := sb.Len()
+	p := strings.Repeat(" ", len(name)+1)
+
+	for _, s := range parts {
+		ll += len(s) + 1
+		if ll > manLineLength {
+			sb.WriteRune('\n')
+			sb.WriteString(p)
+			sb.WriteString(s)
+
+			ll = len(p) + len(s)
+		} else {
+			sb.WriteRune(' ')
+			sb.WriteString(s)
+		}
+	}
+
+	return sb.String()
 }

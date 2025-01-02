@@ -45,7 +45,7 @@ and installed tools.
 // New creates a new instance of the root command for generating the documentation.
 func NewDoc(ver string) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
-		Use:   constants.CommandName + " command [flags]",
+		Use:   constants.CommandName + " [-v | --version] [-h | --help] [--color | --no-color] [-c <path> | --config-file <path>] [-C <path> | --directory <path>] [--log-file <path> | --log-stderr | --log-stdout | --no-logs] [--log-level] [--log-format <\"json\" | \"text\">] [--no-log-rotation] <command> [<args>]", //nolint:lll // can't really make this shorter
 		Short: "the workstation valet",
 		Long: constants.Name + ` is the workstation valet for managing your workstation configuration
 and installed tools.
