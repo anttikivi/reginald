@@ -50,7 +50,7 @@ func Test_normalizeLogDestination(t *testing.T) {
 	}
 }
 
-func Test_logDestFromConfigs(t *testing.T) { //nolint:funlen,gocognit,lll,maintidx // no need to worry about this in this test
+func Test_logDestFromConfigs(t *testing.T) { //nolint:gocognit,maintidx // no need to worry about this in this test
 	tests := map[string]struct {
 		configType   string
 		configFile   string

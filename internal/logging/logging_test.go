@@ -21,7 +21,7 @@ func BenchmarkNullHandler(b *testing.B) {
 // Benchmark io.Discard with the JSON handler.
 // These benchmarks are most meaningless but I wanted to add them for fun.
 func BenchmarkDiscardJSONHandler(b *testing.B) {
-	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})) //nolint:exhaustruct,lll // ne need here
+	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})) //nolint:exhaustruct // no need here
 	for range b.N {
 		logger.Info("Random integer message", "n", rand.Int()) //nolint:gosec // this is `math/rand`
 	}
@@ -30,7 +30,7 @@ func BenchmarkDiscardJSONHandler(b *testing.B) {
 // Benchmark io.Discard with the Text handler.
 // These benchmarks are most meaningless but I wanted to add them for fun.
 func BenchmarkDiscardTextHandler(b *testing.B) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})) //nolint:exhaustruct,lll // ne need here
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})) //nolint:exhaustruct // no need here
 	for range b.N {
 		logger.Info("Random integer message", "n", rand.Int()) //nolint:gosec // this is `math/rand`
 	}

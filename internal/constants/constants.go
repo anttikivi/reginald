@@ -10,6 +10,9 @@ const (
 	// Exit code for generic errors.
 	ExitError = 1
 
+	// HelpLineLen is the maximum length of the help lines printed.
+	HelpLineLen = 80
+
 	// URL where bugs should be reported to.
 	IssuesURL = "https://github.com/anttikivi/reginald/issues"
 

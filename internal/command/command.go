@@ -7,6 +7,7 @@ import (
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -16,11 +17,9 @@ import (
 // TODO: Thinking that maybe the context should be passed in here.
 func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
-		Use:   constants.CommandName + " command [flags]",
-		Short: constants.Name + " is the workstation valet",
-		Long: constants.Name + ` is the workstation valet for managing your workstation configuration
-and installed tools.
-`,
+		Use:               constants.CommandName + " command [flags]",
+		Short:             constants.Name + " is the workstation valet",
+		Long:              strutil.Cap(description(), constants.HelpLineLen),
 		Version:           ver,
 		PersistentPreRunE: persistentPreRun,
 		RunE:              runHelp,
@@ -45,11 +44,9 @@ and installed tools.
 // New creates a new instance of the root command for generating the documentation.
 func NewDoc(ver string) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
-		Use:   constants.CommandName + " [-v | --version] [-h | --help] [--color | --no-color] [-c <path> | --config-file <path>] [-C <path> | --directory <path>] [--log-file <path> | --log-stderr | --log-stdout | --no-logs] [--log-level] [--log-format <\"json\" | \"text\">] [--no-log-rotation] <command> [<args>]", //nolint:lll // can't really make this shorter
-		Short: "the workstation valet",
-		Long: constants.Name + ` is the workstation valet for managing your workstation configuration
-and installed tools.
-`,
+		Use:     constants.CommandName + " [-v | --version] [-h | --help] [--color | --no-color] [-c <path> | --config-file <path>] [-C <path> | --directory <path>] [--log-file <path> | --log-stderr | --log-stdout | --no-logs] [--log-level] [--log-format <\"json\" | \"text\">] [--no-log-rotation] <command> [<args>]", //nolint:lll // can't really make this shorter
+		Short:   "the workstation valet",
+		Long:    description(),
 		Version: ver,
 	}
 
@@ -127,6 +124,10 @@ func addFlags(cmd *cobra.Command) error {
 	}
 
 	return nil
+}
+
+func description() string {
+	return constants.Name + ` is the workstation valet for managing your workstation configuration and installed tools.`
 }
 
 func runHelp(cmd *cobra.Command, _ []string) error {
