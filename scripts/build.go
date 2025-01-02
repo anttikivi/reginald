@@ -161,7 +161,8 @@ func sourceFilesLaterThan(t time.Time) bool { //nolint:varnamelen // t is good e
 			return nil
 		}
 
-		if path == "go.mod" || path == "go.sum" || (strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")) {
+		if path == "go.mod" || path == "go.sum" ||
+			(strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")) {
 			if info.ModTime().After(t) {
 				foundLater = true
 			}

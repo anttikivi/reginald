@@ -31,7 +31,8 @@ const (
 )
 
 var (
-	logAliases = []string{ //nolint:gochecknoglobals // needed across the functions
+	//nolint:gochecknoglobals // needed across the functions
+	logAliases = []string{
 		"log-file",
 		"log-stderr",
 		"log-stdout",
@@ -40,8 +41,10 @@ var (
 		"disable-logs",
 		"no-logs",
 	}
-	allLogConfigNames = append([]string{logDest}, logAliases...) //nolint:gochecknoglobals // needed across the functions
-	logDestValues     = []string{                                //nolint:gochecknoglobals // needed across the functions
+	//nolint:gochecknoglobals // needed across the functions
+	allLogConfigNames = append([]string{logDest}, logAliases...)
+	//nolint:gochecknoglobals // needed across the functions
+	logDestValues = []string{
 		logDestFile,
 		"stderr",
 		"stdout",
@@ -52,7 +55,8 @@ var (
 		"null",
 		"/dev/null",
 	}
-	logDestNormalValues = []string{ //nolint:gochecknoglobals // needed across the functions
+	//nolint:gochecknoglobals // needed across the functions
+	logDestNormalValues = []string{
 		logDestFile,
 		"stderr",
 		"stdout",
@@ -86,7 +90,12 @@ func normalizeLogDestination(v string) (string, error) {
 
 func handleLogDestConfigValue(cfg *viper.Viper, n, dest string) (string, string, error) {
 	if dest != "" {
-		return "", "", fmt.Errorf("%w: the variable %q already contains a value: %q", errLogDestUnexpected, "dest", dest)
+		return "", "", fmt.Errorf(
+			"%w: the variable %q already contains a value: %q",
+			errLogDestUnexpected,
+			"dest",
+			dest,
+		)
 	}
 
 	if s := cfg.GetString(n); slices.Contains(logDestValues, s) {
@@ -170,9 +179,19 @@ func logDestFromConfigs(cfg *viper.Viper) (string, string, error) {
 					varName = name
 					dest = logDestNone
 				case dest == logDestNone:
-					return "", "", fmt.Errorf("%w: both %q and %q used to set log destination", errMultipleLogDestSrcs, varName, name)
+					return "", "", fmt.Errorf(
+						"%w: both %q and %q used to set log destination",
+						errMultipleLogDestSrcs,
+						varName,
+						name,
+					)
 				default:
-					return "", "", fmt.Errorf("%w: both %q and %q enabled as log destination", errMultipleLogDestSrcs, dest, name)
+					return "", "", fmt.Errorf(
+						"%w: both %q and %q enabled as log destination",
+						errMultipleLogDestSrcs,
+						dest,
+						name,
+					)
 				}
 			}
 		default:
@@ -211,7 +230,9 @@ func parseLogDestinationConfigs(cfg *viper.Viper) error {
 // parseLogDestFlags parses the log destination flags, overriding the values
 // from other sources.
 // TODO: See if this functions complexity can be reduced.
-func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error { //nolint:cyclop,lll // this function does what it needs to
+//
+//nolint:cyclop // this function does what it needs to
+func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 	// Check the different command-line arguments and see if they are set. As
 	// command-line options override options from other sources, set the values
 	// according to them if they are set. Otherwise the other sources are used.

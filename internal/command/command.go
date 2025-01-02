@@ -113,7 +113,11 @@ func addFlags(cmd *cobra.Command) error {
 		"info",
 		"logging level to use, possible values are: debug, info, warn (or warning), error (or err), and off",
 	)
-	cmd.PersistentFlags().String("log-format", defaultLogFormat, "format for the logs, possible values are: json and text")
+	cmd.PersistentFlags().String(
+		"log-format",
+		defaultLogFormat,
+		"format for the logs, possible values are: json and text",
+	)
 
 	cmd.PersistentFlags().Bool("no-log-rotation", !rotateLogsDefault, "disable the built-in log rotation")
 	cmd.PersistentFlags().Bool("disable-log-rotation", !rotateLogsDefault, "disable the built-in log rotation")

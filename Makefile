@@ -1,6 +1,7 @@
 GCI_VERSION = 0.13.5
 GOFUMPT_VERSION = 0.7.0
 GOLANGCI_LINT_VERSION = 1.62.2
+GOLINES_VERSION = 0.12.2
 LICENSEI_VERSION = 0.9.0
 
 OUTPUT_NAME ?= reginald
@@ -57,8 +58,9 @@ bench:
 fmt:
 	# go fmt ./...
 	go mod tidy
-	go run github.com/daixiang0/gci@v${GCI_VERSION} write . --skip-generated --skip-vendor -s standard -s default
-	go run mvdan.cc/gofumpt@v${GOFUMPT_VERSION} -l -w .
+	go run github.com/daixiang0/gci@v$(GCI_VERSION) write . --skip-generated --skip-vendor -s standard -s default
+	go run github.com/segmentio/golines@v$(GOLINES_VERSION) -m 120 --no-chain-split-dots -w .
+	go run mvdan.cc/gofumpt@v$(GOFUMPT_VERSION) -extra -l -w .
 
 ## Lint tasks
 
@@ -67,7 +69,7 @@ lint: golangci-lint
 
 .PHONY: golangci-lint
 golangci-lint:
-	@go run github.com/golangci/golangci-lint/cmd/golangci-lint@v${GOLANGCI_LINT_VERSION} run ./...
+	@go run github.com/golangci/golangci-lint/cmd/golangci-lint@v$(GOLANGCI_LINT_VERSION) run ./...
 
 ## License checks
 # These are meant to be run in the CI.

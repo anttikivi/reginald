@@ -35,7 +35,8 @@ func (h NullHandler) Enabled(_ context.Context, _ slog.Level) bool {
 	return false
 }
 
-func (h NullHandler) Handle(_ context.Context, _ slog.Record) error { //nolint:gocritic,lll // hugeParam disabled as interface implementation requires for the correct type
+//nolint:gocritic // hugeParam disabled as interface implementation requires for the correct type
+func (h NullHandler) Handle(_ context.Context, _ slog.Record) error {
 	return nil
 }
 
@@ -56,9 +57,11 @@ func Handler(w io.Writer, format string, level slog.Level) (slog.Handler, error)
 
 	switch format {
 	case "json":
-		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil //nolint:exhaustruct,lll // we want to use the default values
+		//nolint:exhaustruct // we want to use the default values
+		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil
 	case "text":
-		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil //nolint:exhaustruct,lll // we want to use the default values
+		//nolint:exhaustruct // we want to use the default values
+		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", errInvalidLogFormat, format)
 	}
