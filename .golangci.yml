@@ -58,6 +58,7 @@ issues:
       linters:
         - dupword
         - funlen
+        - gochecknoglobals
         - lll
 run:
   timeout: "1m"

@@ -54,8 +54,8 @@ func NewDoc(ver string) (*cobra.Command, error) {
 		return nil, fmt.Errorf("%w", err)
 	}
 
-	cmd.AddCommand(bootstrap.NewCommand())
-	cmd.AddCommand(version.NewCommand(ver))
+	cmd.AddCommand(bootstrap.NewDocCommand())
+	cmd.AddCommand(version.NewDocCommand(ver))
 
 	return cmd, nil
 }

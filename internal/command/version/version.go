@@ -29,6 +29,10 @@ func NewCommand(v string) *cobra.Command {
 	}
 }
 
+func NewDocCommand(v string) *cobra.Command {
+	return NewCommand(v)
+}
+
 func versionString(v string) string {
 	s := "build"
 

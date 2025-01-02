@@ -36,6 +36,11 @@ var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks ca
 		return rmrf("bin", "share")
 	},
 	"man": func(_ string) error {
+		// ldflags := os.Getenv("GO_LDFLAGS")
+		// ldflags = fmt.Sprintf("-X %s/internal/build.Version=%s %s", moduleName, version(), ldflags)
+		// ldflags = fmt.Sprintf("-X %s/internal/build.Date=%s %s", moduleName, date(), ldflags)
+		//
+		// return run("go", "run", "-ldflags", ldflags, "./cmd/docs", "--man", "--path", "./share/man/man1/")
 		return run("go", "run", "./cmd/docs", "--man", "--path", "./share/man/man1/")
 	},
 }

@@ -19,11 +19,15 @@ func NewCommand() *cobra.Command {
 	}
 }
 
-func NewDocsCommand() *cobra.Command {
-	return NewCommand()
+func NewDocCommand() *cobra.Command {
+	cmd := NewCommand()
+	cmd.Long = description()
+
+	return cmd
 }
 
 func description() string {
+	//nolint:lll // The string needs to contain long lines.
 	return `Bootstrap clones the specified dotfiles directory and runs the initial installation.
 
 Bootstrapping should only be run in an environment that is not set up. The command will fail if the dotfiles directory already exists.

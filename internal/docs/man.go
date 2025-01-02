@@ -154,7 +154,20 @@ func manPreamble(buf *bytes.Buffer, header *ManHeader, cmd *cobra.Command, dashe
 	fmt.Fprintf(buf, "%s \\- %s\n", dashedName, cmd.Short)
 	buf.WriteString(".SH SYNOPSIS\n.sp\n.nf\n")
 	buf.WriteString(manSynopsis(cmd))
-	buf.WriteString("\n.fi\n")
+	buf.WriteString("\n.fi\n.sp\n")
+
+	if cmd.Long != "" && cmd.Long != cmd.Short {
+		buf.WriteString(".SH DESCRIPTION\n.sp\n")
+
+		s := cmd.Long
+
+		// It's a convention to include each sentence on its own line.
+		s = strings.ReplaceAll(s, ". ", ".\n")
+		s = strings.ReplaceAll(s, "\n\n", "\n.sp\n")
+		s = strings.ReplaceAll(s, "`", "\\(ga")
+
+		buf.WriteString(s)
+	}
 }
 
 func manSynopsis(cmd *cobra.Command) string {
