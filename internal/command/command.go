@@ -20,6 +20,7 @@ func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
 		Use:               constants.CommandName + " command [flags]",
 		Short:             constants.Name + " is the workstation valet",
 		Long:              strutil.Cap(description(), constants.HelpLineLen),
+		Annotations:       docsAnnotations(),
 		Version:           ver,
 		PersistentPreRunE: persistentPreRun,
 		RunE:              runHelp,
@@ -37,25 +38,6 @@ func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
 
 	cmd.AddCommand(bootstrap.NewCommand())
 	cmd.AddCommand(version.NewCommand(ver))
-
-	return cmd, nil
-}
-
-// New creates a new instance of the root command for generating the documentation.
-func NewDoc(ver string) (*cobra.Command, error) {
-	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
-		Use:     constants.CommandName + " [-v | --version] [-h | --help] [--color | --no-color] [-c <path> | --config-file <path>] [-C <path> | --directory <path>] [--log-file <path> | --log-stderr | --log-stdout | --no-logs] [--log-level] [--log-format <\"json\" | \"text\">] [--no-log-rotation] <command> [<args>]", //nolint:lll // can't really make this shorter
-		Short:   "the workstation valet",
-		Long:    description(),
-		Version: ver,
-	}
-
-	if err := addFlags(cmd); err != nil {
-		return nil, fmt.Errorf("%w", err)
-	}
-
-	cmd.AddCommand(bootstrap.NewDocCommand())
-	cmd.AddCommand(version.NewDocCommand(ver))
 
 	return cmd, nil
 }

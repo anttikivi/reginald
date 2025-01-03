@@ -50,7 +50,9 @@ func run() error {
 		v = buildVersion
 	}
 
-	cmd, _ := command.NewDoc(v)
+	cfg := command.NewConfig()
+
+	cmd, _ := command.New(cfg, v)
 	cmd.InitDefaultHelpCmd()
 
 	if err := os.MkdirAll(*dir, defaultDirPerm); err != nil {

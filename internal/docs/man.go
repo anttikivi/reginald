@@ -76,18 +76,21 @@ func genManTreeFromOpts(cmd *cobra.Command, opts ManTreeOptions) error {
 	}
 	defer f.Close()
 
-	return renderMan(f, cmd, &ManHeader{ //nolint:exhaustruct // the fields are filled later
+	header := &ManHeader{ //nolint:exhaustruct // the fields are filled in below
 		Section: section,
 		Source:  opts.VersionString,
 		Manual:  manualSectionName,
-	})
-}
+	}
 
-func renderMan(w io.Writer, cmd *cobra.Command, header *ManHeader) error {
-	if err := fillHeader(header, cmd.CommandPath()); err != nil {
+	header, err = fillHeader(header, cmd.CommandPath())
+	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
+	return renderMan(f, cmd, header)
+}
+
+func renderMan(w io.Writer, cmd *cobra.Command, header *ManHeader) error {
 	b := genMan(cmd, header)
 	if _, err := w.Write(b); err != nil {
 		return fmt.Errorf("%w", err)
@@ -96,7 +99,7 @@ func renderMan(w io.Writer, cmd *cobra.Command, header *ManHeader) error {
 	return nil
 }
 
-func fillHeader(header *ManHeader, name string) error {
+func fillHeader(header *ManHeader, name string) (*ManHeader, error) {
 	if header.Title == "" {
 		header.Title = strings.ToUpper(strings.ReplaceAll(name, " ", "\\-"))
 	}
@@ -111,7 +114,7 @@ func fillHeader(header *ManHeader, name string) error {
 		if epoch := os.Getenv("SOURCE_DATE_EPOCH"); epoch != "" {
 			unixEpoch, err := strconv.ParseInt(epoch, 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid SOURCE_DATE_EPOCH: %w", err)
+				return nil, fmt.Errorf("invalid SOURCE_DATE_EPOCH: %w", err)
 			}
 
 			now = time.Unix(unixEpoch, 0)
@@ -120,7 +123,7 @@ func fillHeader(header *ManHeader, name string) error {
 		header.Date = &now
 	}
 
-	return nil
+	return header, nil
 }
 
 // genMan generates the man page.
@@ -135,12 +138,13 @@ func genMan(cmd *cobra.Command, header *ManHeader) []byte {
 
 	buf := new(bytes.Buffer)
 
-	manPreamble(buf, header, cmd, dashCommandName)
+	printPreamble(buf, header, cmd, dashCommandName)
+	printOptions(buf, cmd)
 
 	return buf.Bytes()
 }
 
-func manPreamble(buf *bytes.Buffer, header *ManHeader, cmd *cobra.Command, dashedName string) {
+func printPreamble(buf *bytes.Buffer, header *ManHeader, cmd *cobra.Command, dashedName string) {
 	fmt.Fprintf(
 		buf,
 		".TH %q %q %q %q %q\n",
@@ -151,22 +155,53 @@ func manPreamble(buf *bytes.Buffer, header *ManHeader, cmd *cobra.Command, dashe
 		header.Manual,
 	)
 	buf.WriteString(".SH NAME\n")
-	fmt.Fprintf(buf, "%s \\- %s\n", dashedName, cmd.Short)
+
+	short := cmd.Short
+	if cmd.Annotations != nil {
+		if s, ok := cmd.Annotations["docs_short"]; ok {
+			short = s
+		}
+	}
+
+	fmt.Fprintf(buf, "%s \\- %s\n", dashedName, short)
 	buf.WriteString(".SH SYNOPSIS\n.sp\n.nf\n")
 	buf.WriteString(manSynopsis(cmd))
 	buf.WriteString("\n.fi\n.sp\n")
 
+	description := ""
+
 	if cmd.Long != "" && cmd.Long != cmd.Short {
+		description = cmd.Long
+	}
+
+	if cmd.Annotations != nil {
+		if s, ok := cmd.Annotations["docs_long"]; ok {
+			description = s
+		}
+
+		if s, ok := cmd.Annotations["docs_description"]; ok {
+			description = s
+		}
+	}
+
+	if description != "" {
 		buf.WriteString(".SH DESCRIPTION\n.sp\n")
 
-		s := cmd.Long
-
 		// It's a convention to include each sentence on its own line.
-		s = strings.ReplaceAll(s, ". ", ".\n")
-		s = strings.ReplaceAll(s, "\n\n", "\n.sp\n")
-		s = strings.ReplaceAll(s, "`", "\\(ga")
+		description = strings.ReplaceAll(description, ". ", ".\n")
+		description = strings.ReplaceAll(description, "\n\n", "\n.sp\n")
+		description = strings.ReplaceAll(description, "`", "\\(ga")
 
-		buf.WriteString(s)
+		buf.WriteString(description)
+		buf.WriteByte('\n')
+	}
+}
+
+func printOptions(buf *bytes.Buffer, cmd *cobra.Command) {
+	flags := cmd.NonInheritedFlags()
+	if flags.HasAvailableFlags() {
+		buf.WriteString(".SH OPTIONS\n.PP\n")
+		printFlags(buf, flags, cmd.Annotations)
 	}
 }
 
@@ -183,6 +218,12 @@ func manSynopsis(cmd *cobra.Command) string {
 	sb.WriteString(fmt.Sprintf("\\fI%s\\fR", name))
 
 	str := cmd.UseLine()
+	if cmd.Annotations != nil {
+		if s, ok := cmd.Annotations["docs_usage"]; ok {
+			str = s
+		}
+	}
+
 	str = strings.TrimPrefix(str, name)
 	str = strings.TrimPrefix(str, " ")
 	str = strings.TrimSuffix(str, " [flags]")

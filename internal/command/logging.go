@@ -9,25 +9,10 @@ import (
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/command/version"
+	"github.com/anttikivi/reginald/internal/constants/config"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-)
-
-const (
-	// logDest is the config name for the string that specifies the destination
-	// for logs. If it is set to `file`, the `log-file` must also be set.
-	logDest = "log-destination"
-
-	// logFile is the config name for the log file path if log destination is
-	// set to a file.
-	logFile = "log-file"
-
-	// logDestFile is the log destination value when the destination is file.
-	logDestFile = "file"
-
-	// logDestNone is the log destination value when logging is disabled.
-	logDestNone = "none"
 )
 
 var (
@@ -42,25 +27,22 @@ var (
 		"no-logs",
 	}
 	//nolint:gochecknoglobals // needed across the functions
-	allLogConfigNames = append([]string{logDest}, logAliases...)
+	allLogConfigNames = append([]string{config.LogDestinationKey}, logAliases...)
 	//nolint:gochecknoglobals // needed across the functions
-	logDestValues = []string{
-		logDestFile,
-		"stderr",
-		"stdout",
-		"disable",
-		"disabled",
-		"nil",
-		logDestNone,
-		"null",
-		"/dev/null",
-	}
+	logDestValues = append(
+		[]string{
+			config.LogDestinationValueFile,
+			config.LogDestinationValueStderr,
+			config.LogDestinationValueStdout,
+			config.LogDestinationValueNone,
+		},
+		config.LogDestinationValueNoneAliases...,
+	)
 	//nolint:gochecknoglobals // needed across the functions
 	logDestNormalValues = []string{
-		logDestFile,
-		"stderr",
-		"stdout",
-		logDestNone,
+		config.LogDestinationValueFile,
+		config.LogDestinationValueStderr, config.LogDestinationValueStdout,
+		config.LogDestinationValueNone,
 	}
 )
 
@@ -78,7 +60,7 @@ var (
 func normalizeLogDestination(v string) (string, error) {
 	s := v
 	if s == "disable" || s == "disabled" || s == "nil" || s == "null" || s == "/dev/null" {
-		s = logDestNone
+		s = config.LogDestinationValueNone
 	}
 
 	if s != "" && !slices.Contains(logDestNormalValues, s) {
@@ -111,7 +93,7 @@ func handleLogDestConfigValue(cfg *viper.Viper, n, dest string) (string, string,
 
 		// If the value is not a preset value, we assume it to be
 		// filename.
-		return logDestFile, s, nil
+		return config.LogDestinationValueFile, s, nil
 	}
 
 	return dest, "", nil
@@ -120,7 +102,7 @@ func handleLogDestConfigValue(cfg *viper.Viper, n, dest string) (string, string,
 func handleLogFileConfigValue(cfg *viper.Viper, n, dest, filename string) (string, string) {
 	if s := cfg.GetString(n); s != "" {
 		if dest == "" {
-			return logDestFile, s
+			return config.LogDestinationValueFile, s
 		}
 
 		// If the destination is already set, we can only set the filename.
@@ -163,7 +145,7 @@ func logDestFromConfigs(cfg *viper.Viper) (string, string, error) {
 		// Check that the value is actually set. We don't want to throw
 		// error for empty values.
 		switch name {
-		case logDest:
+		case config.LogDestinationKey:
 			dest, filename, err = handleLogDestConfigValue(cfg, name, dest)
 			if err != nil {
 				return "", "", fmt.Errorf("%w", err)
@@ -177,8 +159,8 @@ func logDestFromConfigs(cfg *viper.Viper) (string, string, error) {
 				switch {
 				case varName == "":
 					varName = name
-					dest = logDestNone
-				case dest == logDestNone:
+					dest = config.LogDestinationValueNone
+				case dest == config.LogDestinationValueNone:
 					return "", "", fmt.Errorf(
 						"%w: both %q and %q used to set log destination",
 						errMultipleLogDestSrcs,
@@ -217,11 +199,11 @@ func parseLogDestinationConfigs(cfg *viper.Viper) error {
 	}
 
 	if dest != "" {
-		cfg.Set(logDest, dest)
+		cfg.Set(config.LogDestinationKey, dest)
 	}
 
 	if filename != "" {
-		cfg.Set(logFile, filename)
+		cfg.Set(config.LogFileKey, filename)
 	}
 
 	return nil
@@ -240,14 +222,14 @@ func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 	// ignore the case that multiple values are selected.
 	switch {
 	case cmd.Flags().Changed("log-file"):
-		cfg.Set(logDest, logDestFile)
+		cfg.Set(config.LogDestinationKey, config.LogDestinationValueFile)
 
 		f, err := cmd.Flags().GetString("log-file")
 		if err != nil {
 			return fmt.Errorf("failed to get the value for the \"log-file\" flag: %w", err)
 		}
 
-		cfg.Set(logFile, f)
+		cfg.Set(config.LogFileKey, f)
 	case cmd.Flags().Changed("log-stderr"):
 		v, err := cmd.Flags().GetBool("log-stderr")
 		if err != nil {
@@ -255,7 +237,7 @@ func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(logDest, "stderr")
+			cfg.Set(config.LogDestinationKey, "stderr")
 		}
 	case cmd.Flags().Changed("log-stdout"):
 		v, err := cmd.Flags().GetBool("log-stdout")
@@ -264,7 +246,7 @@ func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(logDest, "stdout")
+			cfg.Set(config.LogDestinationKey, "stdout")
 		}
 	case cmd.Flags().Changed("log-none"):
 		v, err := cmd.Flags().GetBool("log-none")
@@ -273,7 +255,7 @@ func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(logDest, logDestNone)
+			cfg.Set(config.LogDestinationKey, config.LogDestinationValueNone)
 		}
 	case cmd.Flags().Changed("log-null"):
 		v, err := cmd.Flags().GetBool("log-null")
@@ -282,7 +264,7 @@ func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(logDest, logDestNone)
+			cfg.Set(config.LogDestinationKey, config.LogDestinationValueNone)
 		}
 	case cmd.Flags().Changed("disable-logs"):
 		v, err := cmd.Flags().GetBool("disable-logs")
@@ -291,7 +273,7 @@ func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(logDest, logDestNone)
+			cfg.Set(config.LogDestinationKey, config.LogDestinationValueNone)
 		}
 	case cmd.Flags().Changed("no-logs"):
 		v, err := cmd.Flags().GetBool("no-logs")
@@ -300,7 +282,7 @@ func parseLogDestFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(logDest, logDestNone)
+			cfg.Set(config.LogDestinationKey, config.LogDestinationValueNone)
 		}
 	}
 
@@ -349,19 +331,32 @@ func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
 	}
 
 	// Set the default log destination and file if they are not set.
-	if !cfg.IsSet(logDest) {
-		cfg.Set(logDest, logDestFile)
+	if !cfg.IsSet(config.LogDestinationKey) {
+		cfg.Set(config.LogDestinationKey, config.LogDestinationValueFile)
 	}
 
-	if !cfg.IsSet(logFile) {
-		cfg.Set(logFile, defaultLogFile())
+	if !cfg.IsSet(config.LogFileKey) {
+		cfg.Set(config.LogFileKey, defaultLogFile())
+	}
+
+	logfmt := cfg.GetString("log-format")
+	if logfmt == "" {
+		dest := cfg.GetString(config.LogDestinationKey)
+		switch dest {
+		case config.LogDestinationValueFile:
+			cfg.Set("log-format", "json")
+		case "stderr", "stdout":
+			cfg.Set("log-format", "text")
+		default:
+			cfg.Set("log-format", "json")
+		}
 	}
 
 	// If the log level is set to `off`, the destination for log is overridden
 	// and logs will be disabled.
 	levelName := cfg.GetString("log-level")
 	if levelName == "off" {
-		cfg.Set(logDest, logDestNone)
+		cfg.Set(config.LogDestinationKey, config.LogDestinationValueNone)
 	}
 
 	logLevel, err := logging.Level(levelName)
@@ -371,8 +366,8 @@ func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
 
 	// Create the correct writer for the logs.
 	logWriter, err := logging.Writer(
-		cfg.GetString(logDest),
-		cfg.GetString(logFile),
+		cfg.GetString(config.LogDestinationKey),
+		cfg.GetString(config.LogFileKey),
 		cfg.GetBool("rotate-logs"),
 	)
 	if err != nil {

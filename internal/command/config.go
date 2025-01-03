@@ -3,6 +3,7 @@ package command
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
@@ -33,7 +34,6 @@ func configFileFound(cfg *viper.Viper) bool {
 
 func setDefaults(cfg *viper.Viper) {
 	cfg.SetDefault("color", !color.NoColor)
-	cfg.SetDefault("log-format", defaultLogFormat)
 	cfg.SetDefault("log-level", defaultLogLevel)
 	cfg.SetDefault("rotate-logs", rotateLogsDefault)
 }
@@ -82,6 +82,28 @@ func readConfig(cfg *viper.Viper) (bool, error) {
 	return true, nil
 }
 
+func tryConfigDir(cfg *viper.Viper, dir string, names []string) (bool, error) {
+	var (
+		found = false
+		err   error
+	)
+
+	cfg.AddConfigPath(dir)
+
+	for _, s := range names {
+		if !found {
+			cfg.SetConfigName(s)
+
+			found, err = readConfig(cfg)
+			if err != nil {
+				return found, fmt.Errorf("%w", err)
+			}
+		}
+	}
+
+	return found, nil
+}
+
 // resolveConfigFile looks up the different locations for the config file and
 // reads the first that matches.
 // The first return value is a boolean telling whether a file was found and
@@ -92,7 +114,13 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 	// omitted from the following examples.
 	var (
 		configFound = false
-		err         error
+		configNames = []string{
+			strings.ToLower(constants.Name),
+			strings.ToLower(constants.CommandName),
+			"." + strings.ToLower(constants.Name),
+			"." + strings.ToLower(constants.CommandName),
+		}
+		err error
 	)
 
 	// Before looking up the config file in the specified locations, see
@@ -107,64 +135,65 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 		}
 	}
 
-	// First the config is looked for in the current working directory.
-	// Files that match: ./reginald
-	if !configFound {
-		cfg.SetConfigName("reginald")
-		cfg.AddConfigPath(".")
-
-		configFound, err = readConfig(cfg)
+	// Look up the directory specified with `--directory`.
+	if !configFound && cfg.GetString("directory") != "" {
+		configFound, err = tryConfigDir(cfg, cfg.GetString("directory"), configNames)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
 	}
 
-	// Next the current working directory but with dot in from of the
-	// file. Files that match: ./.reginald
+	// Current working directory.
 	if !configFound {
-		cfg.SetConfigName(".reginald")
-		cfg.AddConfigPath(".")
-
-		configFound, err = readConfig(cfg)
+		configFound, err = tryConfigDir(cfg, ".", configNames)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
 	}
 
-	// Next the XDG_CONFIG_HOME/reginald, defaulting to
-	// ~/.config/reginald.
-	// TODO: Look for config files in a directory named `reginald` in
-	// XDG_CONFIG_HOME.
+	// $XDG_CONFIG_HOME/reginald, filename must be config.
 	if !configFound {
-		cfg.SetConfigName("reginald")
-		cfg.AddConfigPath("${XDG_CONFIG_HOME}")
-		cfg.AddConfigPath("${HOME}/.config")
-
-		configFound, err = readConfig(cfg)
+		configFound, err = tryConfigDir(
+			cfg,
+			filepath.Join("${XDG_CONFIG_HOME}", strings.ToLower(constants.Name)),
+			[]string{"config"},
+		)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
 	}
 
-	// Next the user's home directory. If for some reason the user wants
-	// to include the config file there without prefixing the filename
-	// with a dot, we'll look for that first.
+	// $XDG_CONFIG_HOME, matches files without a dot prefix.
 	if !configFound {
-		cfg.SetConfigName("reginald")
-		cfg.AddConfigPath("${HOME}")
-
-		configFound, err = readConfig(cfg)
+		configFound, err = tryConfigDir(cfg, "${XDG_CONFIG_HOME}", configNames[:2])
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
 	}
 
-	// Finally the home directory but with a dot in the front.
+	// $HOME/.config/reginald, filename must be config.
 	if !configFound {
-		cfg.SetConfigName(".reginald")
-		cfg.AddConfigPath("${HOME}")
+		configFound, err = tryConfigDir(
+			cfg,
+			filepath.Join("$HOME", ".config", strings.ToLower(constants.Name)),
+			[]string{"config"},
+		)
+		if err != nil {
+			return configFound, fmt.Errorf("%w", err)
+		}
+	}
 
-		configFound, err = readConfig(cfg)
+	// $HOME/.config, matches files without a dot prefix.
+	if !configFound {
+		configFound, err = tryConfigDir(cfg, filepath.Join("$HOME", ".config"), configNames[:2])
+		if err != nil {
+			return configFound, fmt.Errorf("%w", err)
+		}
+	}
+
+	// Home directory.
+	if !configFound {
+		configFound, err = tryConfigDir(cfg, "$HOME", configNames)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
