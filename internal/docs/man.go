@@ -188,10 +188,8 @@ func printPreamble(buf *bytes.Buffer, header *ManHeader, cmd *cobra.Command, das
 	if description != "" {
 		buf.WriteString(".SH DESCRIPTION\n.sp\n")
 
-		// It's a convention to include each sentence on its own line.
-		description = strings.ReplaceAll(description, ". ", ".\n")
-		description = strings.ReplaceAll(description, "\n\n", "\n.sp\n")
-		description = strings.ReplaceAll(description, "`", "\\(ga")
+		// TODO: Pass in the flagset.
+		description = format(description, nil)
 
 		buf.WriteString(description)
 		buf.WriteByte('\n')

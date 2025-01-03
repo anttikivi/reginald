@@ -3,7 +3,6 @@ package docs
 import (
 	"bytes"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -33,7 +32,7 @@ func printFlags(buf *bytes.Buffer, flags *pflag.FlagSet, annotations map[string]
 
 		sb.WriteString(flagSynopsis(flag, valname, annotations))
 
-		usage = formatUsage(flags, usage)
+		usage = format(usage, flags)
 
 		sb.WriteString(usage)
 		sb.WriteByte('\n')
@@ -103,65 +102,12 @@ func flagSynopsis(flag *pflag.Flag, valname string, annotations map[string]strin
 	sb.WriteString(fmt.Sprintf("\\fB\\-\\-%s\\fR", strings.ReplaceAll(customFlag, "-", "\\-")))
 
 	if valname != "" {
-		sb.WriteString(fmt.Sprintf("=<%s>", strings.ReplaceAll(valname, "-", "\\-")))
+		sb.WriteString(fmt.Sprintf(" <%s>", strings.ReplaceAll(valname, "-", "\\-")))
 	}
 
 	sb.WriteByte('\n')
 
 	return sb.String()
-}
-
-func formatUsage(flags *pflag.FlagSet, usage string) string {
-	// Format my custom list format.
-	re := regexp.MustCompile(`(?s)""ol"".*?""endol""`)
-	numRe := regexp.MustCompile(`(?m)^\d+\.\s`)
-
-	usage = re.ReplaceAllStringFunc(usage, func(s string) string {
-		s = strings.ReplaceAll(s, "\"\"ol\"\"", ".RS 8")
-		s = numRe.ReplaceAllStringFunc(s, func(str string) string {
-			return fmt.Sprintf(".IP \"%s.\" 4\n", strings.TrimSuffix(str, ". "))
-		})
-		s = strings.ReplaceAll(s, "\"\"endol\"\"", ".RE")
-
-		return s
-	})
-
-	boldRe := regexp.MustCompile(`\*\*.*?\*\*`)
-
-	usage = boldRe.ReplaceAllStringFunc(usage, func(s string) string {
-		s = strings.Replace(s, "**", "\\fB", 1)
-		s = strings.Replace(s, "**", "\\fR", 1)
-
-		return s
-	})
-
-	usage = strings.ReplaceAll(usage, ". ", ".\n")
-	usage = strings.ReplaceAll(usage, "\n\n", "\n.sp\n")
-	usage = strings.ReplaceAll(usage, "’", "\\(cq")
-	usage = strings.ReplaceAll(usage, "`", "\\(ga")
-	usage = strings.ReplaceAll(usage, "~", "\\(ti")
-
-	for _, s := range strings.Fields(usage) {
-		if strings.HasPrefix(s, "--") {
-			if f := flags.Lookup(strings.TrimPrefix(s, "--")); f != nil {
-				usage = strings.ReplaceAll(
-					usage,
-					fmt.Sprintf(" --%s ", f.Name),
-					fmt.Sprintf(" \\fB\\-\\-%s\\fR ", strings.ReplaceAll(f.Name, "-", "\\-")),
-				)
-			}
-		} else if len(s) == 2 && strings.HasPrefix(s, "-") {
-			if f := flags.ShorthandLookup(strings.TrimPrefix(s, "-")); f != nil {
-				usage = strings.ReplaceAll(
-					usage,
-					fmt.Sprintf(" -%s ", f.Shorthand),
-					fmt.Sprintf(" \\fB\\-%s\\fR ", f.Shorthand),
-				)
-			}
-		}
-	}
-
-	return usage
 }
 
 // unquoteUsage extracts a back-quoted name from the given usage string and
