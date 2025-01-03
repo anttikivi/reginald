@@ -60,9 +60,9 @@ func main() {
 
 	if len(args) < 2 { //nolint:mnd // args contains only the name of this script
 		if isWindowsTarget() {
-			args = append(args, filepath.Join("bin", "reginald.exe"))
+			args = append(args, filepath.Join("bin", "rgl.exe"))
 		} else {
-			args = append(args, "bin/reginald")
+			args = append(args, "bin/rgl")
 		}
 	}
 

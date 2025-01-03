@@ -2,7 +2,7 @@ package constants
 
 const (
 	// Name of executable.
-	CommandName = "reginald"
+	CommandName = "rgl"
 
 	// Exit code when the program is executed successfully.
 	ExitSuccess = 0
