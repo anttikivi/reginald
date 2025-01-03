@@ -12,7 +12,7 @@ import (
 func NewCommand() *cobra.Command {
 	return &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:     "bootstrap",
-		Aliases: []string{"init", "initialise", "initialize"},
+		Aliases: []string{"clone", "init", "initialise", "initialize"},
 		Short:   "Ask " + constants.Name + " to bootstrap your environment",
 		Long:    strutil.Cap(description(), constants.HelpLineLen),
 		RunE:    run,
