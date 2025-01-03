@@ -12,6 +12,11 @@ import (
 	"github.com/spf13/viper"
 )
 
+//nolint:gochecknoglobals,lll // It is easier to have this here instead of inlining.
+var helpDescription = constants.Name + ` is the workstation valet for managing your workstation configuration and installed tools. It can bootstrap your local workstation, keep your "dotfiles" up to date by managing symlinks to them, and take care of whatever task you want to. To use ` + constants.Name + `, call one of the commands or read the man page for more information.
+
+Please note that ` + constants.Name + ` is still in development, and not all of the promised feature are implemented.`
+
 // New creates a new instance of the root command which includes the
 // subcommands.
 // TODO: Thinking that maybe the context should be passed in here.
@@ -19,7 +24,7 @@ func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:               constants.CommandName + " command [flags]",
 		Short:             constants.Name + " is the workstation valet",
-		Long:              strutil.Cap(description(), constants.HelpLineLen),
+		Long:              strutil.Cap(helpDescription, constants.HelpLineLen),
 		Annotations:       docsAnnotations(),
 		Version:           ver,
 		PersistentPreRunE: persistentPreRun,
@@ -110,10 +115,6 @@ func addFlags(cmd *cobra.Command) error {
 	}
 
 	return nil
-}
-
-func description() string {
-	return constants.Name + ` is the workstation valet for managing your workstation configuration and installed tools.`
 }
 
 func runHelp(cmd *cobra.Command, _ []string) error {

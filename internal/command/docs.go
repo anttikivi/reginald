@@ -12,7 +12,9 @@ func docsAnnotations() map[string]string {
 	fileName := strings.ToLower(constants.Name)
 
 	return map[string]string{
-		"docs_long":  description(),
+		"docs_long": constants.Name + ` is the workstation valet for managing your workstation configuration and installed tools. It can bootstrap your local workstation, keep your "dotfiles" up to date by managing symlinks to them, and take care of whatever task you want to. To use ` + constants.Name + `, call one of the commands or read the man page for more information.
+
+Please note that ` + constants.Name + ` is still in development, and not all of the promised feature are implemented.`,
 		"docs_usage": constants.Name + "[-v | --version] [-h | --help] [--color | --no-color] [-c <path> | --config-file <path>] [-C <path> | --directory <path>] [--log-file <path> | --log-stderr | --log-stdout | --no-logs] [--log-level] [--log-format <\"json\"|\"text\">] [--no-log-rotation] <command> [<args>]",
 		"docs_short": "the workstation valet",
 

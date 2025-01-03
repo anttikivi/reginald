@@ -91,7 +91,7 @@ func genManTreeFromOpts(cmd *cobra.Command, opts ManTreeOptions) error {
 }
 
 func renderMan(w io.Writer, cmd *cobra.Command, header *ManHeader) error {
-	b := genMan(cmd, header)
+	b := generateManual(cmd, header)
 	if _, err := w.Write(b); err != nil {
 		return fmt.Errorf("%w", err)
 	}
@@ -126,10 +126,10 @@ func fillHeader(header *ManHeader, name string) (*ManHeader, error) {
 	return header, nil
 }
 
-// genMan generates the man page.
+// generateManual generates the man page.
 // Right now, it only implements `roff` syntax, but I might implement `mdoc` in
 // the future.
-func genMan(cmd *cobra.Command, header *ManHeader) []byte {
+func generateManual(cmd *cobra.Command, header *ManHeader) []byte {
 	cmd.InitDefaultHelpCmd()
 	cmd.InitDefaultHelpFlag()
 
