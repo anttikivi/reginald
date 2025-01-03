@@ -5,7 +5,7 @@ import "strings"
 // Cap caps lines in string s so that they have the maximum length of l.
 // It only breaks lines at spaces.
 // Please note that Cap ignores extra spaces.
-func Cap(s string, l int) string { //nolint:varnamelen // standard variable names
+func Cap(s string, l int) string {
 	var sb strings.Builder
 
 	lines := strings.Split(s, "\n")

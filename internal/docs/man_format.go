@@ -38,24 +38,32 @@ func format(s string, flags *pflag.FlagSet) string {
 	s = strings.ReplaceAll(s, "`", "\\(ga")
 	s = strings.ReplaceAll(s, "~", "\\(ti")
 
+	s = formatFlagNames(s, flags)
+
+	return s
+}
+
+func formatFlagNames(s string, flags *pflag.FlagSet) string {
 	if flags != nil {
-		for _, f := range strings.Fields(s) {
-			if strings.HasPrefix(f, "--") {
-				if f := flags.Lookup(strings.TrimPrefix(f, "--")); f != nil {
-					s = strings.ReplaceAll(
-						s,
-						fmt.Sprintf(" --%s ", f.Name),
-						fmt.Sprintf(" \\fB\\-\\-%s\\fR ", strings.ReplaceAll(f.Name, "-", "\\-")),
-					)
-				}
-			} else if len(f) == 2 && strings.HasPrefix(f, "-") {
-				if f := flags.ShorthandLookup(strings.TrimPrefix(f, "-")); f != nil {
-					s = strings.ReplaceAll(
-						s,
-						fmt.Sprintf(" -%s ", f.Shorthand),
-						fmt.Sprintf(" \\fB\\-%s\\fR ", f.Shorthand),
-					)
-				}
+		return s
+	}
+
+	for _, f := range strings.Fields(s) {
+		if strings.HasPrefix(f, "--") {
+			if f := flags.Lookup(strings.TrimPrefix(f, "--")); f != nil {
+				s = strings.ReplaceAll(
+					s,
+					fmt.Sprintf(" --%s ", f.Name),
+					fmt.Sprintf(" \\fB\\-\\-%s\\fR ", strings.ReplaceAll(f.Name, "-", "\\-")),
+				)
+			}
+		} else if len(f) == 2 && strings.HasPrefix(f, "-") {
+			if f := flags.ShorthandLookup(strings.TrimPrefix(f, "-")); f != nil {
+				s = strings.ReplaceAll(
+					s,
+					fmt.Sprintf(" -%s ", f.Shorthand),
+					fmt.Sprintf(" \\fB\\-%s\\fR ", f.Shorthand),
+				)
 			}
 		}
 	}

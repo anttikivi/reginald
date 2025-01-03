@@ -48,6 +48,7 @@ linters-settings:
       - b *testing.B
       - err error
       - i int
+      - s string
       - sb strings.Builder
       - T any
       - t *testing.T
