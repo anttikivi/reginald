@@ -59,7 +59,7 @@ func flagUsage(flag *pflag.Flag, annotations map[string]string) (string, string)
 	}
 
 	if !hasCustomUsage && flag.DefValue != "" && flag.DefValue != "false" {
-		s := fmt.Sprintf("The default value for \\fB\\-\\-%s\\fR is \"%s\".", flag.Name, flag.DefValue)
+		s := fmt.Sprintf("The default value for \\fB\\-\\-%s\\fR is %q.", flag.Name, flag.DefValue)
 		usage = fmt.Sprintf("%s\n\n%s", usage, s)
 	}
 
@@ -173,7 +173,7 @@ func formatUsage(flags *pflag.FlagSet, usage string) string {
 // This function is from `spf13/pflag`, licensed under the BSD-3-Clause license.
 // Please see the `NOTICE` file for more information.
 func unquoteUsage(flag *pflag.Flag, s string) (string, string) {
-	name := ""
+	var name string
 
 	// Look for a back-quoted name, but avoid the strings package.
 	usage := s
@@ -183,9 +183,11 @@ func unquoteUsage(flag *pflag.Flag, s string) (string, string) {
 				if usage[j] == '`' {
 					name = usage[i+1 : j]
 					usage = usage[:i] + name + usage[j+1:]
+
 					return name, usage
 				}
 			}
+
 			break // Only one back quote; use type name.
 		}
 	}

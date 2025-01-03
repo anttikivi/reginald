@@ -157,6 +157,7 @@ func printPreamble(buf *bytes.Buffer, header *ManHeader, cmd *cobra.Command, das
 	buf.WriteString(".SH NAME\n")
 
 	short := cmd.Short
+
 	if cmd.Annotations != nil {
 		if s, ok := cmd.Annotations["docs_short"]; ok {
 			short = s
@@ -218,6 +219,7 @@ func manSynopsis(cmd *cobra.Command) string {
 	sb.WriteString(fmt.Sprintf("\\fI%s\\fR", name))
 
 	str := cmd.UseLine()
+
 	if cmd.Annotations != nil {
 		if s, ok := cmd.Annotations["docs_usage"]; ok {
 			str = s
@@ -228,6 +230,28 @@ func manSynopsis(cmd *cobra.Command) string {
 	str = strings.TrimPrefix(str, " ")
 	str = strings.TrimSuffix(str, " [flags]")
 
+	parts := parseSynopsisParts(str)
+	ll := sb.Len()
+	p := strings.Repeat(" ", len(name)+1)
+
+	for _, s := range parts {
+		ll += len(s) + 1
+		if ll > manLineLength {
+			sb.WriteRune('\n')
+			sb.WriteString(p)
+			sb.WriteString(s)
+
+			ll = len(p) + len(s)
+		} else {
+			sb.WriteRune(' ')
+			sb.WriteString(s)
+		}
+	}
+
+	return sb.String()
+}
+
+func parseSynopsisParts(str string) []string {
 	parts := make([]string, 0)
 
 	for i := 0; i < len(str); i++ {
@@ -271,22 +295,5 @@ func manSynopsis(cmd *cobra.Command) string {
 		}
 	}
 
-	ll := sb.Len()
-	p := strings.Repeat(" ", len(name)+1)
-
-	for _, s := range parts {
-		ll += len(s) + 1
-		if ll > manLineLength {
-			sb.WriteRune('\n')
-			sb.WriteString(p)
-			sb.WriteString(s)
-
-			ll = len(p) + len(s)
-		} else {
-			sb.WriteRune(' ')
-			sb.WriteString(s)
-		}
-	}
-
-	return sb.String()
+	return parts
 }
