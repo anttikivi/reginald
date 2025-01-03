@@ -7,6 +7,7 @@ import (
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/constants/config"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -62,7 +63,7 @@ func addFlags(cmd *cobra.Command) error {
 		return fmt.Errorf("failed to mark the \"config-file\" flag as a filename: %w", err)
 	}
 
-	cmd.PersistentFlags().StringP("directory", "C", "", "path to the local dotfiles directory")
+	cmd.PersistentFlags().StringP("directory", "C", config.DefaultDirectory, "path to the local dotfiles directory")
 
 	if err := cmd.MarkPersistentFlagDirname("directory"); err != nil {
 		return fmt.Errorf("failed to mark the \"directory\" flag as a dirname: %w", err)
