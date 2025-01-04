@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
@@ -36,12 +37,12 @@ func NewCommand() *cobra.Command {
 func run(cmd *cobra.Command, _ []string) error {
 	slog.Info("Running the bootstrap command")
 
-	cfg, ok := cmd.Context().Value(constants.ConfigContextKey).(*viper.Viper)
-	if !ok || cfg == nil {
-		return fmt.Errorf("%w", constants.ErrNoConfig)
+	vpr, ok := cmd.Context().Value(config.ViperContextKey).(*viper.Viper)
+	if !ok || vpr == nil {
+		return fmt.Errorf("%w", config.ErrNoViper)
 	}
 
-	slog.Debug("Retrieved the config", slog.Any("cfg", cfg.AllSettings()))
+	slog.Debug("Retrieved the Viper instance", slog.Any("vpr", vpr.AllSettings()))
 
 	return nil
 }

@@ -24,7 +24,7 @@ Please note that ` + constants.Name + ` is still in development, and not all of 
 // New creates a new instance of the root command which includes the
 // subcommands.
 // TODO: Thinking that maybe the context should be passed in here.
-func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
+func New(vpr *viper.Viper, ver string) (*cobra.Command, error) {
 	cobra.EnableTraverseRunHooks = true
 
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
@@ -43,7 +43,7 @@ func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
 		return nil, fmt.Errorf("%w", err)
 	}
 
-	if err := cfg.BindPFlag(config.KeyColor, cmd.PersistentFlags().Lookup("color")); err != nil {
+	if err := vpr.BindPFlag(config.KeyColor, cmd.PersistentFlags().Lookup("color")); err != nil {
 		return nil, fmt.Errorf("failed to bind the flag \"color\" to config %q: %w", config.KeyColor, err)
 	}
 
@@ -136,24 +136,24 @@ func runHelp(cmd *cobra.Command, _ []string) error {
 }
 
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
-	cfg, ok := cmd.Context().Value(constants.ConfigContextKey).(*viper.Viper)
-	if !ok || cfg == nil {
-		return fmt.Errorf("%w", constants.ErrNoConfig)
+	vpr, ok := cmd.Context().Value(config.ViperContextKey).(*viper.Viper)
+	if !ok || vpr == nil {
+		panic(fmt.Sprintf("%v", config.ErrNoViper))
 	}
 
-	if err := initRootConfig(cfg, cmd); err != nil {
-		return fmt.Errorf("failed to initialize the config: %w", err)
+	if _, err := initRootConfig(vpr, cmd); err != nil {
+		panic(fmt.Sprintf("failed to initialize the config: %v", err))
 	}
 
 	slog.Info("Starting a new Reginald run", "command", cmd.Name())
 
-	if configFileFound(cfg) {
-		slog.Info("Config file read", "path", cfg.ConfigFileUsed())
+	if configFileFound(vpr) {
+		slog.Info("Config file read", "path", vpr.ConfigFileUsed())
 	} else {
 		slog.Warn("Config file not found")
 	}
 
-	slog.Info("Running with the following settings", slog.Any("config", cfg.AllSettings()))
+	slog.Info("Running with the following settings", slog.Any("config", vpr.AllSettings()))
 
 	return nil
 }

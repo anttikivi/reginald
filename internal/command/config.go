@@ -11,19 +11,19 @@ import (
 	"github.com/spf13/viper"
 )
 
-func NewConfig() *viper.Viper {
+func NewViper() *viper.Viper {
 	return viper.New()
 }
 
-func setDefaults(cfg *viper.Viper) {
-	cfg.SetDefault(config.KeyColor, !color.NoColor)
-	cfg.SetDefault(config.KeyConfigFile, "")
-	cfg.SetDefault(config.KeyDirectory, "~/tmp")
-	cfg.SetDefault(config.KeyLogFile, config.DefaultLogFile)
-	cfg.SetDefault(config.KeyLogFormat, config.DefaultLogFormat)
-	cfg.SetDefault(config.KeyLogLevel, config.DefaultLogLevel)
-	cfg.SetDefault(config.KeyLogOutput, config.ValueLogOutputFile)
-	cfg.SetDefault(config.KeyRotateLogs, config.DefaultRotateLogs)
+func setDefaults(vpr *viper.Viper) {
+	vpr.SetDefault(config.KeyColor, !color.NoColor)
+	vpr.SetDefault(config.KeyConfigFile, "")
+	vpr.SetDefault(config.KeyDirectory, "~/tmp")
+	vpr.SetDefault(config.KeyLogFile, config.DefaultLogFile)
+	vpr.SetDefault(config.KeyLogFormat, config.DefaultLogFormat)
+	vpr.SetDefault(config.KeyLogLevel, config.DefaultLogLevel)
+	vpr.SetDefault(config.KeyLogOutput, config.ValueLogOutputFile)
+	vpr.SetDefault(config.KeyRotateLogs, config.DefaultRotateLogs)
 }
 
 // bindString binds a Viper config value to a persistent flag string if that
@@ -33,12 +33,12 @@ func setDefaults(cfg *viper.Viper) {
 // default or values from other sources. This function also binds the values to
 // the environment variables so that the values are included in all settings if
 // the environment variables are set.
-func bindString(cfg *viper.Viper, cmd *cobra.Command, key, flag string) {
-	if err := cfg.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
+func bindString(vpr *viper.Viper, cmd *cobra.Command, key, flag string) {
+	if err := vpr.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
 		panic(fmt.Sprintf("failed to bind the flag %q to config %q: %v", flag, key, err))
 	}
 
-	if err := cfg.BindEnv(key); err != nil {
+	if err := vpr.BindEnv(key); err != nil {
 		panic(
 			fmt.Sprintf(
 				"failed to bind the environment variable \"REGINALD_%s\" to config: %v",
@@ -50,20 +50,20 @@ func bindString(cfg *viper.Viper, cmd *cobra.Command, key, flag string) {
 }
 
 // initRootConfig initializes the configuration for the current run.
-func initRootConfig(cfg *viper.Viper, cmd *cobra.Command) error {
+func initRootConfig(vpr *viper.Viper, cmd *cobra.Command) (*config.Config, error) {
 	noColor, err := cmd.Flags().GetBool("no-color")
 	if err != nil {
-		return fmt.Errorf("failed to get the value for the \"no-color\" flag: %w", err)
+		return nil, fmt.Errorf("failed to get the value for the \"no-color\" flag: %w", err)
 	}
 
 	if noColor {
-		cfg.Set(config.KeyColor, false)
+		vpr.Set(config.KeyColor, false)
 	}
 
-	bindString(cfg, cmd, config.KeyConfigFile, "config-file")
-	bindString(cfg, cmd, config.KeyDirectory, "directory")
-	bindString(cfg, cmd, config.KeyLogFormat, "log-format")
-	bindString(cfg, cmd, config.KeyLogLevel, "log-level")
+	bindString(vpr, cmd, config.KeyConfigFile, "config-file")
+	bindString(vpr, cmd, config.KeyDirectory, "directory")
+	bindString(vpr, cmd, config.KeyLogFormat, "log-format")
+	bindString(vpr, cmd, config.KeyLogLevel, "log-level")
 
 	// Check the log rotation.
 	// There are two command-line flags that can be used to disable rotating
@@ -74,43 +74,49 @@ func initRootConfig(cfg *viper.Viper, cmd *cobra.Command) error {
 	if cmd.Flags().Changed("no-log-rotation") {
 		noLogRotation, err := cmd.Flags().GetBool("no-log-rotation")
 		if err != nil {
-			return fmt.Errorf("failed to get the value for the \"no-log-rotation\" flag: %w", err)
+			return nil, fmt.Errorf("failed to get the value for the \"no-log-rotation\" flag: %w", err)
 		}
 
 		if noLogRotation {
-			cfg.Set(config.KeyRotateLogs, false)
+			vpr.Set(config.KeyRotateLogs, false)
 		}
 	}
 
 	if cmd.Flags().Changed("disable-log-rotation") {
 		noLogRotation, err := cmd.Flags().GetBool("disable-log-rotation")
 		if err != nil {
-			return fmt.Errorf("failed to get the value for the \"disable-log-rotation\" flag: %w", err)
+			return nil, fmt.Errorf("failed to get the value for the \"disable-log-rotation\" flag: %w", err)
 		}
 
 		if noLogRotation {
-			cfg.Set(config.KeyRotateLogs, false)
+			vpr.Set(config.KeyRotateLogs, false)
 		}
 	}
 
-	setDefaults(cfg)
+	setDefaults(vpr)
 
-	// cfg.SetEnvPrefix(constants.CommandName)
-	cfg.SetEnvPrefix(strings.ToLower(constants.Name))
-	cfg.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	cfg.AutomaticEnv()
+	// vpr.SetEnvPrefix(constants.CommandName)
+	vpr.SetEnvPrefix(strings.ToLower(constants.Name))
+	vpr.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	vpr.AutomaticEnv()
 
-	if _, err := resolveConfigFile(cfg); err != nil {
-		return fmt.Errorf("failed to resolve the config file: %w", err)
+	if _, err := resolveConfigFile(vpr); err != nil {
+		return nil, fmt.Errorf("failed to resolve the config file: %w", err)
 	}
 
-	if !cfg.GetBool(config.KeyColor) {
+	if !vpr.GetBool(config.KeyColor) {
 		color.NoColor = true
 	}
 
-	if err := initLogging(cfg, cmd); err != nil {
-		return fmt.Errorf("failed to init logging: %w", err)
+	if err := initLogging(vpr, cmd); err != nil {
+		return nil, fmt.Errorf("failed to init logging: %w", err)
 	}
 
-	return nil
+	var cfg *config.Config
+
+	if err := vpr.UnmarshalExact(cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the config: %w", err)
+	}
+
+	return cfg, nil
 }

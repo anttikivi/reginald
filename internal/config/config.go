@@ -6,6 +6,13 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 )
 
+// Config is a parsed configuration instance for an application run. It is
+// unmarshaled from the Viper instance for the run after parsing the values from
+// the configuration sources.
+type Config struct {
+	configFile string `mapstructure:"config-file"`
+}
+
 const (
 	// DefaultLogFormat is the initial default value for the `log-format` value.
 	// The default is later determined by the log output.

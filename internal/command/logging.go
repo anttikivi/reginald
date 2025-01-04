@@ -70,7 +70,7 @@ func normalizeLogOutput(v string) (string, error) {
 	return s, nil
 }
 
-func handleLogOutConfigValue(cfg *viper.Viper, n, output string) (string, string, error) {
+func handleLogOutConfigValue(vpr *viper.Viper, n, output string) (string, string, error) {
 	if output != "" {
 		return "", "", fmt.Errorf(
 			"%w: the variable %q already contains a value: %q",
@@ -80,7 +80,7 @@ func handleLogOutConfigValue(cfg *viper.Viper, n, output string) (string, string
 		)
 	}
 
-	if s := cfg.GetString(n); slices.Contains(logOutValues, s) {
+	if s := vpr.GetString(n); slices.Contains(logOutValues, s) {
 		// The value for `log-output` is within the valid values and, thus,
 		// should be considered.
 		return s, "", nil
@@ -99,8 +99,8 @@ func handleLogOutConfigValue(cfg *viper.Viper, n, output string) (string, string
 	return output, "", nil
 }
 
-func handleLogFileConfigValue(cfg *viper.Viper, n, output, filename string) (string, string) {
-	if s := cfg.GetString(n); s != "" {
+func handleLogFileConfigValue(vpr *viper.Viper, n, output, filename string) (string, string) {
+	if s := vpr.GetString(n); s != "" {
 		if output == "" {
 			return config.ValueLogOutputFile, s
 		}
@@ -114,8 +114,8 @@ func handleLogFileConfigValue(cfg *viper.Viper, n, output, filename string) (str
 	return output, filename
 }
 
-func handleStderroutConfigValue(cfg *viper.Viper, n, output string) string {
-	if b := cfg.GetBool(n); b {
+func handleStderroutConfigValue(vpr *viper.Viper, n, output string) string {
+	if b := vpr.GetBool(n); b {
 		return strings.TrimPrefix(n, "log-")
 	}
 
@@ -129,7 +129,7 @@ func handleStderroutConfigValue(cfg *viper.Viper, n, output string) string {
 // found, the last one is overridden. The values are checked in the following
 // order: log-output -> log-file -> log-stderr -> log-stdout -> no-logs. If a
 // config value has synonyms, like no-logs, only one of those is permitted.
-func logOutFromConfigs(cfg *viper.Viper) (string, string, error) {
+func logOutFromConfigs(vpr *viper.Viper) (string, string, error) {
 	var err error
 
 	varName, output, filename := "", "", ""
@@ -137,23 +137,23 @@ func logOutFromConfigs(cfg *viper.Viper) (string, string, error) {
 	// Ensure that no duplicate keys are specified.
 	// The order of the keys are as specified in the variable.
 	for _, name := range allLogConfigNames {
-		if !cfg.IsSet(name) {
+		if !vpr.IsSet(name) {
 			continue
 		}
 		// Check that the value is actually set. We don't want to throw
 		// error for empty values.
 		switch name {
 		case config.KeyLogOutput:
-			output, filename, err = handleLogOutConfigValue(cfg, name, output)
+			output, filename, err = handleLogOutConfigValue(vpr, name, output)
 			if err != nil {
 				return "", "", fmt.Errorf("%w", err)
 			}
 		case "log-file":
-			output, filename = handleLogFileConfigValue(cfg, name, output, filename)
+			output, filename = handleLogFileConfigValue(vpr, name, output, filename)
 		case "log-stderr", "log-stdout":
-			output = handleStderroutConfigValue(cfg, name, output)
+			output = handleStderroutConfigValue(vpr, name, output)
 		case "log-none", "log-null", "disable-logs", "no-logs":
-			if b := cfg.GetBool(name); b {
+			if b := vpr.GetBool(name); b {
 				switch {
 				case varName == "":
 					varName = name
@@ -190,18 +190,18 @@ func logOutFromConfigs(cfg *viper.Viper) (string, string, error) {
 // parseLogOutputConfigs parses the log output from the Viper sources apart from
 // command-line flags. It returns an error if more than one output value is
 // specified.
-func parseLogOutputConfigs(cfg *viper.Viper) error {
-	output, filename, err := logOutFromConfigs(cfg)
+func parseLogOutputConfigs(vpr *viper.Viper) error {
+	output, filename, err := logOutFromConfigs(vpr)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
 	if output != "" {
-		cfg.Set(config.KeyLogOutput, output)
+		vpr.Set(config.KeyLogOutput, output)
 	}
 
 	if filename != "" {
-		cfg.Set(config.KeyLogFile, filename)
+		vpr.Set(config.KeyLogFile, filename)
 	}
 
 	return nil
@@ -212,7 +212,7 @@ func parseLogOutputConfigs(cfg *viper.Viper) error {
 // TODO: See if this functions complexity can be reduced.
 //
 //nolint:cyclop // this function does what it needs to
-func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
+func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) error {
 	// Check the different command-line arguments and see if they are set. As
 	// command-line options override options from other sources, set the values
 	// according to them if they are set. Otherwise the other sources are used.
@@ -220,14 +220,14 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 	// ignore the case that multiple values are selected.
 	switch {
 	case cmd.Flags().Changed("log-file"):
-		cfg.Set(config.KeyLogOutput, config.ValueLogOutputFile)
+		vpr.Set(config.KeyLogOutput, config.ValueLogOutputFile)
 
 		f, err := cmd.Flags().GetString("log-file")
 		if err != nil {
 			return fmt.Errorf("failed to get the value for the \"log-file\" flag: %w", err)
 		}
 
-		cfg.Set(config.KeyLogFile, f)
+		vpr.Set(config.KeyLogFile, f)
 	case cmd.Flags().Changed("log-stderr"):
 		v, err := cmd.Flags().GetBool("log-stderr")
 		if err != nil {
@@ -235,7 +235,7 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(config.KeyLogOutput, "stderr")
+			vpr.Set(config.KeyLogOutput, "stderr")
 		}
 	case cmd.Flags().Changed("log-stdout"):
 		v, err := cmd.Flags().GetBool("log-stdout")
@@ -244,7 +244,7 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(config.KeyLogOutput, "stdout")
+			vpr.Set(config.KeyLogOutput, "stdout")
 		}
 	case cmd.Flags().Changed("log-none"):
 		v, err := cmd.Flags().GetBool("log-none")
@@ -253,7 +253,7 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(config.KeyLogOutput, config.ValueLogOutputNone)
+			vpr.Set(config.KeyLogOutput, config.ValueLogOutputNone)
 		}
 	case cmd.Flags().Changed("log-null"):
 		v, err := cmd.Flags().GetBool("log-null")
@@ -262,7 +262,7 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(config.KeyLogOutput, config.ValueLogOutputNone)
+			vpr.Set(config.KeyLogOutput, config.ValueLogOutputNone)
 		}
 	case cmd.Flags().Changed("disable-logs"):
 		v, err := cmd.Flags().GetBool("disable-logs")
@@ -271,7 +271,7 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(config.KeyLogOutput, config.ValueLogOutputNone)
+			vpr.Set(config.KeyLogOutput, config.ValueLogOutputNone)
 		}
 	case cmd.Flags().Changed("no-logs"):
 		v, err := cmd.Flags().GetBool("no-logs")
@@ -280,7 +280,7 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 
 		if v {
-			cfg.Set(config.KeyLogOutput, config.ValueLogOutputNone)
+			vpr.Set(config.KeyLogOutput, config.ValueLogOutputNone)
 		}
 	}
 
@@ -290,11 +290,11 @@ func parseLogOutFlags(cfg *viper.Viper, cmd *cobra.Command) error {
 // setLogOutput checks the different possible flags and environment variables
 // that can be set for `log-output` and sets the `log-output` config value
 // correctly.
-func setLogOutput(cfg *viper.Viper, cmd *cobra.Command) error {
+func setLogOutput(vpr *viper.Viper, cmd *cobra.Command) error {
 	// Bind all of these to environment variables. Later we check for the
 	// command-line flags and as those override all of the other options.
 	for _, alias := range allLogConfigNames {
-		if err := cfg.BindEnv(alias); err != nil {
+		if err := vpr.BindEnv(alias); err != nil {
 			return fmt.Errorf(
 				"failed to bind the environment variable \"REGINALD_%s\" to config: %w",
 				strings.ReplaceAll(strings.ToUpper(alias), "-", "_"),
@@ -303,18 +303,18 @@ func setLogOutput(cfg *viper.Viper, cmd *cobra.Command) error {
 		}
 	}
 
-	if err := parseLogOutputConfigs(cfg); err != nil {
+	if err := parseLogOutputConfigs(vpr); err != nil {
 		return fmt.Errorf("failed to parse the log output: %w", err)
 	}
 
-	if err := parseLogOutFlags(cfg, cmd); err != nil {
+	if err := parseLogOutFlags(vpr, cmd); err != nil {
 		return fmt.Errorf("failed to parse the log output: %w", err)
 	}
 
 	return nil
 }
 
-func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
+func initLogging(vpr *viper.Viper, cmd *cobra.Command) error {
 	// There are some simple commands for displaying basic information.
 	// Just disable logging for those.
 	if cmd.Name() == version.CmdName {
@@ -324,28 +324,28 @@ func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
 		return nil
 	}
 
-	if err := setLogOutput(cfg, cmd); err != nil {
+	if err := setLogOutput(vpr, cmd); err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	logfmt := cfg.GetString(config.KeyLogFormat)
+	logfmt := vpr.GetString(config.KeyLogFormat)
 	if logfmt == "" {
-		output := cfg.GetString(config.KeyLogOutput)
+		output := vpr.GetString(config.KeyLogOutput)
 		switch output {
 		case config.ValueLogOutputFile:
-			cfg.SetDefault(config.KeyLogFormat, config.ValueLogFormatJSON)
+			vpr.SetDefault(config.KeyLogFormat, config.ValueLogFormatJSON)
 		case "stderr", "stdout":
-			cfg.SetDefault(config.KeyLogFormat, config.ValueLogFormatText)
+			vpr.SetDefault(config.KeyLogFormat, config.ValueLogFormatText)
 		default:
-			cfg.SetDefault(config.KeyLogFormat, config.ValueLogFormatJSON)
+			vpr.SetDefault(config.KeyLogFormat, config.ValueLogFormatJSON)
 		}
 	}
 
 	// If the log level is set to `off`, the output for log is overridden and
 	// logs will be disabled.
-	levelName := cfg.GetString(config.KeyLogLevel)
+	levelName := vpr.GetString(config.KeyLogLevel)
 	if levelName == "off" {
-		cfg.Set(config.KeyLogOutput, config.ValueLogOutputNone)
+		vpr.Set(config.KeyLogOutput, config.ValueLogOutputNone)
 	}
 
 	logLevel, err := logging.Level(levelName)
@@ -355,15 +355,15 @@ func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
 
 	// Create the correct writer for the logs.
 	logWriter, err := logging.Writer(
-		cfg.GetString(config.KeyLogOutput),
-		cfg.GetString(config.KeyLogFile),
-		cfg.GetBool(config.KeyRotateLogs),
+		vpr.GetString(config.KeyLogOutput),
+		vpr.GetString(config.KeyLogFile),
+		vpr.GetBool(config.KeyRotateLogs),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to get the log writer: %w", err)
 	}
 
-	logHandler, err := logging.Handler(logWriter, cfg.GetString(config.KeyLogFormat), logLevel)
+	logHandler, err := logging.Handler(logWriter, vpr.GetString(config.KeyLogFormat), logLevel)
 	if err != nil {
 		return fmt.Errorf("failed to create the log handler: %w", err)
 	}
@@ -375,15 +375,15 @@ func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
 	slog.Info(
 		"Logging initialized",
 		"output",
-		cfg.GetString(config.KeyLogOutput),
+		vpr.GetString(config.KeyLogOutput),
 		"format",
-		cfg.GetString(config.KeyLogFormat),
+		vpr.GetString(config.KeyLogFormat),
 		"level",
-		cfg.GetString(config.KeyLogLevel),
+		vpr.GetString(config.KeyLogLevel),
 		"file",
-		cfg.GetString(config.KeyLogFile),
+		vpr.GetString(config.KeyLogFile),
 		"rotate",
-		cfg.GetBool(config.KeyRotateLogs),
+		vpr.GetBool(config.KeyRotateLogs),
 	)
 
 	return nil

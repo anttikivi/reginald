@@ -333,24 +333,24 @@ log-null = false
 			// Do the setup steps that would have been done before calling the
 			// function.
 
-			cfg := viper.New()
+			vpr := viper.New()
 
-			cfg.SetEnvPrefix(strings.ToLower(constants.Name))
-			cfg.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-			cfg.AutomaticEnv()
+			vpr.SetEnvPrefix(strings.ToLower(constants.Name))
+			vpr.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+			vpr.AutomaticEnv()
 
 			if tt.configFile != "" {
-				cfg.SetConfigType(tt.configType)
+				vpr.SetConfigType(tt.configType)
 
-				if err := cfg.ReadConfig(bytes.NewBufferString(tt.configFile)); err != nil {
+				if err := vpr.ReadConfig(bytes.NewBufferString(tt.configFile)); err != nil {
 					t.Fatalf("unexpectedly failed to read the test config file: %v", err)
 				}
 
-				t.Logf("Config read, all values now: %v", cfg.AllSettings())
+				t.Logf("Config read, all values now: %v", vpr.AllSettings())
 			}
 
 			for _, alias := range allLogConfigNames {
-				if err := cfg.BindEnv(alias); err != nil {
+				if err := vpr.BindEnv(alias); err != nil {
 					t.Fatalf("unexpectedly failed to bind the environment variable \"REGINALD_%s\": %v",
 						strings.ReplaceAll(strings.ToUpper(alias), "-", "_"),
 						err,
@@ -358,7 +358,7 @@ log-null = false
 				}
 			}
 
-			gotOut, gotFilename, gotErr := logOutFromConfigs(cfg)
+			gotOut, gotFilename, gotErr := logOutFromConfigs(vpr)
 			if gotErr == nil && tt.wantErr {
 				t.Fatal("logOutFromConfigs() succeeded unexpectedly")
 			}

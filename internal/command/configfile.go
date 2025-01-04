@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/viper"
 )
 
-func configFileFound(cfg *viper.Viper) bool {
-	return cfg.ConfigFileUsed() != ""
+func configFileFound(vpr *viper.Viper) bool {
+	return vpr.ConfigFileUsed() != ""
 }
 
 // readConfig is a utility that reads the config file with Viper.
@@ -21,8 +21,8 @@ func configFileFound(cfg *viper.Viper) bool {
 // The function returns true if the config file was read, otherwise false.
 // If the config file is found but could not be read, the function returns false
 // and an error.
-func readConfig(cfg *viper.Viper) (bool, error) {
-	if err := cfg.ReadInConfig(); err != nil {
+func readConfig(vpr *viper.Viper) (bool, error) {
+	if err := vpr.ReadInConfig(); err != nil {
 		var notFoundError viper.ConfigFileNotFoundError
 		if !errors.As(err, &notFoundError) {
 			return false, fmt.Errorf("could not read the configuration file: %w", err)
@@ -34,19 +34,19 @@ func readConfig(cfg *viper.Viper) (bool, error) {
 	return true, nil
 }
 
-func tryConfigDir(cfg *viper.Viper, dir string, names []string) (bool, error) {
+func tryConfigDir(vpr *viper.Viper, dir string, names []string) (bool, error) {
 	var (
 		found = false
 		err   error
 	)
 
-	cfg.AddConfigPath(dir)
+	vpr.AddConfigPath(dir)
 
 	for _, s := range names {
 		if !found {
-			cfg.SetConfigName(s)
+			vpr.SetConfigName(s)
 
-			found, err = readConfig(cfg)
+			found, err = readConfig(vpr)
 			if err != nil {
 				return found, fmt.Errorf("%w", err)
 			}
@@ -60,7 +60,7 @@ func tryConfigDir(cfg *viper.Viper, dir string, names []string) (bool, error) {
 // reads the first that matches.
 // The first return value is a boolean telling whether a file was found and
 // read.
-func resolveConfigFile(cfg *viper.Viper) (bool, error) {
+func resolveConfigFile(vpr *viper.Viper) (bool, error) {
 	// Reginald is flexible about the configuration file to use. You can
 	// use multiple types of configuration files so the extensions are
 	// omitted from the following examples.
@@ -77,19 +77,19 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 
 	// Before looking up the config file in the specified locations, see
 	// if the command-line flag or the environment variable is set.
-	configFile := cfg.GetString(config.KeyConfigFile)
+	configFile := vpr.GetString(config.KeyConfigFile)
 	if configFile != "" {
-		cfg.SetConfigFile(configFile)
+		vpr.SetConfigFile(configFile)
 
-		configFound, err = readConfig(cfg)
+		configFound, err = readConfig(vpr)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
 	}
 
 	// Look up the directory specified with `--directory`.
-	if !configFound && cfg.GetString(config.KeyDirectory) != "" {
-		configFound, err = tryConfigDir(cfg, cfg.GetString(config.KeyDirectory), configNames)
+	if !configFound && vpr.GetString(config.KeyDirectory) != "" {
+		configFound, err = tryConfigDir(vpr, vpr.GetString(config.KeyDirectory), configNames)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -97,7 +97,7 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 
 	// Current working directory.
 	if !configFound {
-		configFound, err = tryConfigDir(cfg, ".", configNames)
+		configFound, err = tryConfigDir(vpr, ".", configNames)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -106,7 +106,7 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 	// $XDG_CONFIG_HOME/reginald, filename must be config.
 	if !configFound {
 		configFound, err = tryConfigDir(
-			cfg,
+			vpr,
 			filepath.Join("${XDG_CONFIG_HOME}", strings.ToLower(constants.Name)),
 			[]string{"config"},
 		)
@@ -117,7 +117,7 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 
 	// $XDG_CONFIG_HOME, matches files without a dot prefix.
 	if !configFound {
-		configFound, err = tryConfigDir(cfg, "${XDG_CONFIG_HOME}", configNames[:2])
+		configFound, err = tryConfigDir(vpr, "${XDG_CONFIG_HOME}", configNames[:2])
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -126,7 +126,7 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 	// $HOME/.config/reginald, filename must be config.
 	if !configFound {
 		configFound, err = tryConfigDir(
-			cfg,
+			vpr,
 			filepath.Join("$HOME", ".config", strings.ToLower(constants.Name)),
 			[]string{"config"},
 		)
@@ -137,7 +137,7 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 
 	// $HOME/.config, matches files without a dot prefix.
 	if !configFound {
-		configFound, err = tryConfigDir(cfg, filepath.Join("$HOME", ".config"), configNames[:2])
+		configFound, err = tryConfigDir(vpr, filepath.Join("$HOME", ".config"), configNames[:2])
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
@@ -145,7 +145,7 @@ func resolveConfigFile(cfg *viper.Viper) (bool, error) {
 
 	// Home directory.
 	if !configFound {
-		configFound, err = tryConfigDir(cfg, "$HOME", configNames)
+		configFound, err = tryConfigDir(vpr, "$HOME", configNames)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}

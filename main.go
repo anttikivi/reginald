@@ -9,6 +9,7 @@ import (
 	"github.com/anttikivi/go-semver"
 	"github.com/anttikivi/reginald/internal/build"
 	"github.com/anttikivi/reginald/internal/command"
+	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/logging"
 )
@@ -30,16 +31,16 @@ func run() int {
 		v = buildVersion
 	}
 
-	cfg := command.NewConfig()
+	vpr := command.NewViper()
 
-	cmd, err := command.New(cfg, v)
+	cmd, err := command.New(vpr, v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
 		return constants.ExitError
 	}
 
-	ctx := context.WithValue(context.Background(), constants.ConfigContextKey, cfg)
+	ctx := context.WithValue(context.Background(), config.ViperContextKey, vpr)
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
