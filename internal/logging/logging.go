@@ -101,7 +101,19 @@ func Init(cfg *Config) error {
 	logger := slog.New(logHandler)
 
 	slog.SetDefault(logger)
-	slog.Info("Logging initialized", "output", cfg.Output, "format", cfg.Format, "level", cfg.Level, "file", cfg.File, "rotate", cfg.Rotate)
+	slog.Info(
+		"Logging initialized",
+		"output",
+		cfg.Output,
+		"format",
+		cfg.Format,
+		"level",
+		cfg.Level,
+		"file",
+		cfg.File,
+		"rotate",
+		cfg.Rotate,
+	)
 
 	return nil
 }

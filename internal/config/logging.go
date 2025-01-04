@@ -289,7 +289,13 @@ func setLogOutput(vpr *viper.Viper, cmd *cobra.Command) error {
 	// command-line flags and as those override all of the other options.
 	for _, alias := range allLogConfigNames {
 		if err := vpr.BindEnv(alias); err != nil {
-			panic(fmt.Sprintf("failed to bind the environment variable \"REGINALD_%s\" to config: %v", EnvReplacer.Replace(strings.ToUpper(alias)), err))
+			panic(
+				fmt.Sprintf(
+					"failed to bind the environment variable \"REGINALD_%s\" to config: %v",
+					EnvReplacer.Replace(strings.ToUpper(alias)),
+					err,
+				),
+			)
 		}
 	}
 
