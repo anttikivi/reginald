@@ -1,4 +1,4 @@
-//nolint:lll // This file contains the command for generating documentation.
+//nolint:lll // This file contains the input for generating documentation.
 package command
 
 import (

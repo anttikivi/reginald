@@ -33,13 +33,19 @@ func setDefaults(cfg *viper.Viper) {
 // default or values from other sources. This function also binds the values to
 // the environment variables so that the values are included in all settings if
 // the environment variables are set.
-func bindString(cfg *viper.Viper, cmd *cobra.Command, key string, flag string) {
+func bindString(cfg *viper.Viper, cmd *cobra.Command, key, flag string) {
 	if err := cfg.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
 		panic(fmt.Sprintf("failed to bind the flag %q to config %q: %v", flag, key, err))
 	}
 
 	if err := cfg.BindEnv(key); err != nil {
-		panic(fmt.Sprintf("failed to bind the environment variable \"REGINALD_%s\" to config: %v", strings.ReplaceAll(strings.ToUpper(key), "-", "_"), err))
+		panic(
+			fmt.Sprintf(
+				"failed to bind the environment variable \"REGINALD_%s\" to config: %v",
+				strings.ReplaceAll(strings.ToUpper(key), "-", "_"),
+				err,
+			),
+		)
 	}
 }
 

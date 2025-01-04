@@ -1,3 +1,4 @@
+//nolint:lll // This file contains the input for generating documentation.
 package bootstrap
 
 func docsAnnotations() map[string]string {

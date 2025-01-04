@@ -372,7 +372,19 @@ func initLogging(cfg *viper.Viper, cmd *cobra.Command) error {
 
 	slog.SetDefault(logger)
 
-	slog.Info("Logging initialized", "output", cfg.GetString(config.KeyLogOutput), "format", cfg.GetString(config.KeyLogFormat), "level", cfg.GetString(config.KeyLogLevel), "file", cfg.GetString(config.KeyLogFile), "rotate", cfg.GetBool(config.KeyRotateLogs))
+	slog.Info(
+		"Logging initialized",
+		"output",
+		cfg.GetString(config.KeyLogOutput),
+		"format",
+		cfg.GetString(config.KeyLogFormat),
+		"level",
+		cfg.GetString(config.KeyLogLevel),
+		"file",
+		cfg.GetString(config.KeyLogFile),
+		"rotate",
+		cfg.GetBool(config.KeyRotateLogs),
+	)
 
 	return nil
 }

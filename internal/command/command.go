@@ -109,7 +109,11 @@ func addFlags(cmd *cobra.Command) error {
 	cmd.PersistentFlags().String(
 		"log-format",
 		config.DefaultLogFormat,
-		fmt.Sprintf("format for the logs, possible values are: %q and %q", config.ValueLogFormatJSON, config.ValueLogFormatText),
+		fmt.Sprintf(
+			"format for the logs, possible values are: %q and %q",
+			config.ValueLogFormatJSON,
+			config.ValueLogFormatText,
+		),
 	)
 
 	cmd.PersistentFlags().Bool("no-log-rotation", !config.DefaultRotateLogs, "disable the built-in log rotation")
