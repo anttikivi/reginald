@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func Test_normalizeLogDestination(t *testing.T) {
+func Test_normalizeLogOutput(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -34,39 +34,39 @@ func Test_normalizeLogDestination(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, gotErr := normalizeLogDestination(tt.v)
+			got, gotErr := normalizeLogOutput(tt.v)
 			if gotErr == nil && tt.wantErr {
-				t.Fatal("normalizeLogDestination() succeeded unexpectedly")
+				t.Fatal("normalizeLogOutput() succeeded unexpectedly")
 			}
 
 			if gotErr != nil && !tt.wantErr {
-				t.Errorf("normalizeLogDestination() failed: %v", gotErr)
+				t.Errorf("normalizeLogOutput() failed: %v", gotErr)
 			}
 
 			if got != tt.want {
-				t.Errorf("normalizeLogDestination() = %v, want %v", got, tt.want)
+				t.Errorf("normalizeLogOutput() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func Test_logDestFromConfigs(t *testing.T) { //nolint:gocognit,maintidx // no need to worry about this in this test
+func Test_logOutFromConfigs(t *testing.T) { //nolint:gocognit,maintidx // no need to worry about this in this test
 	tests := map[string]struct {
 		configType   string
 		configFile   string
 		env          map[string]string
-		wantDest     string
+		wantOut      string
 		wantFilename string
 		wantErr      bool
 	}{
-		"empty": {configType: "", configFile: "", env: nil, wantDest: "", wantFilename: "", wantErr: false},
+		"empty": {configType: "", configFile: "", env: nil, wantOut: "", wantFilename: "", wantErr: false},
 		"tomlConfigNoDuplicateDisable": {
 			configType: "toml",
 			configFile: `no-logs = true
 disable-logs = true
 `,
 			env:          nil,
-			wantDest:     "",
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      true,
 		},
@@ -75,59 +75,59 @@ disable-logs = true
 			configFile: `no-logs = true
 `,
 			env:          map[string]string{"REGINALD_DISABLE_LOGS": "true"},
-			wantDest:     "",
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      true,
 		},
-		"tomlConfigInvalidDest": {
+		"tomlConfigInvalidOut": {
 			configType: "toml",
-			configFile: `log-destination = "invalid"
+			configFile: `log-output = "invalid"
 `,
 			env:          nil,
-			wantDest:     "",
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      true,
 		},
-		"invalidDestEnv": {
+		"invalidOutEnv": {
 			configType:   "toml",
 			configFile:   "",
-			env:          map[string]string{"REGINALD_LOG_DESTINATION": "invalid"},
-			wantDest:     "",
+			env:          map[string]string{"REGINALD_LOG_OUTPUT": "invalid"},
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      true,
 		},
-		"tomlConfigInvalidDestEnv": {
+		"tomlConfigInvalidOutEnv": {
 			configType: "toml",
-			configFile: `log-destination = "invalid"
+			configFile: `log-output = "invalid"
 `,
-			env:          map[string]string{"REGINALD_LOG_DESTINATION": "invalid"},
-			wantDest:     "",
+			env:          map[string]string{"REGINALD_LOG_OUTPUT": "invalid"},
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      true,
 		},
-		"tomlConfigImplicitFileDest": {
+		"tomlConfigImplicitFileOut": {
 			configType: "toml",
-			configFile: `log-destination = "./file"
+			configFile: `log-output = "./file"
 `,
 			env:          nil,
-			wantDest:     "file",
+			wantOut:      "file",
 			wantFilename: "./file",
 			wantErr:      false,
 		},
-		"implicitFileDestEnv": {
+		"implicitFileOutEnv": {
 			configType:   "toml",
 			configFile:   "",
-			env:          map[string]string{"REGINALD_LOG_DESTINATION": "./file"},
-			wantDest:     "file",
+			env:          map[string]string{"REGINALD_LOG_OUTPUT": "./file"},
+			wantOut:      "file",
 			wantFilename: "./file",
 			wantErr:      false,
 		},
-		"tomlConfigImplicitFileDestEnv": {
+		"tomlConfigImplicitFileOutEnv": {
 			configType: "toml",
-			configFile: `log-destination = "./file-first"
+			configFile: `log-output = "./file-first"
 `,
-			env:          map[string]string{"REGINALD_LOG_DESTINATION": "./file-second"},
-			wantDest:     "file",
+			env:          map[string]string{"REGINALD_LOG_OUTPUT": "./file-second"},
+			wantOut:      "file",
 			wantFilename: "./file-second",
 			wantErr:      false,
 		},
@@ -136,17 +136,17 @@ disable-logs = true
 			configFile: `log-stderr = true
 `,
 			env:          nil,
-			wantDest:     "stderr",
+			wantOut:      "stderr",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStderrOverrides": {
 			configType: "toml",
-			configFile: `log-destination = "file"
+			configFile: `log-output = "file"
 log-stderr = true
 `,
 			env:          nil,
-			wantDest:     "stderr",
+			wantOut:      "stderr",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -155,16 +155,16 @@ log-stderr = true
 			configFile: `log-stderr = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "true"},
-			wantDest:     "stderr",
+			wantOut:      "stderr",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStderrEnvOverridesImplicit": {
 			configType: "toml",
-			configFile: `log-destination = "./file"
+			configFile: `log-output = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "true"},
-			wantDest:     "stderr",
+			wantOut:      "stderr",
 			wantFilename: "./file",
 			wantErr:      false,
 		},
@@ -173,17 +173,17 @@ log-stderr = true
 			configFile: `log-stderr = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "false"},
-			wantDest:     "",
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStderrFalseDoesNotOverride": {
 			configType: "toml",
-			configFile: `log-destination = "stderr"
+			configFile: `log-output = "stderr"
 log-stderr = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "false"},
-			wantDest:     "stderr",
+			wantOut:      "stderr",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -192,17 +192,17 @@ log-stderr = false
 			configFile: `log-stdout = true
 `,
 			env:          nil,
-			wantDest:     "stdout",
+			wantOut:      "stdout",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStdoutOverrides": {
 			configType: "toml",
-			configFile: `log-destination = "file"
+			configFile: `log-output = "file"
 log-stdout = true
 `,
 			env:          nil,
-			wantDest:     "stdout",
+			wantOut:      "stdout",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -211,16 +211,16 @@ log-stdout = true
 			configFile: `log-stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "true"},
-			wantDest:     "stdout",
+			wantOut:      "stdout",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStdoutEnvOverridesImplicit": {
 			configType: "toml",
-			configFile: `log-destination = "./file"
+			configFile: `log-output = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "true"},
-			wantDest:     "stdout",
+			wantOut:      "stdout",
 			wantFilename: "./file",
 			wantErr:      false,
 		},
@@ -229,38 +229,38 @@ log-stdout = true
 			configFile: `log-stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
-			wantDest:     "",
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStdoutFalseDoesNotOverride": {
 			configType: "toml",
-			configFile: `log-destination = "stdout"
+			configFile: `log-output = "stdout"
 log-stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
-			wantDest:     "stdout",
+			wantOut:      "stdout",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStdoutFalseDoesNotOverrideStderr": {
 			configType: "toml",
-			configFile: `log-destination = "stderr"
+			configFile: `log-output = "stderr"
 log-stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
-			wantDest:     "stderr",
+			wantOut:      "stderr",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigStdoutFalseDoesNotOverrideStderrBool": {
 			configType: "toml",
-			configFile: `log-destination = "stdout"
+			configFile: `log-output = "stdout"
 log-stderr = true
 log-stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
-			wantDest:     "stderr",
+			wantOut:      "stderr",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -269,17 +269,17 @@ log-stdout = false
 			configFile: `log-null = true
 `,
 			env:          nil,
-			wantDest:     "none",
+			wantOut:      "none",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigDisableOverrides": {
 			configType: "toml",
-			configFile: `log-destination = "file"
+			configFile: `log-output = "file"
 log-null = true
 `,
 			env:          nil,
-			wantDest:     "none",
+			wantOut:      "none",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -289,16 +289,16 @@ log-null = true
 log-file = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_NULL": "true"},
-			wantDest:     "none",
+			wantOut:      "none",
 			wantFilename: "./file",
 			wantErr:      false,
 		},
 		"tomlConfigDisableEnvOverridesImplicit": {
 			configType: "toml",
-			configFile: `log-destination = "./file"
+			configFile: `log-output = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_NONE": "true"},
-			wantDest:     "none",
+			wantOut:      "none",
 			wantFilename: "./file",
 			wantErr:      false,
 		},
@@ -307,17 +307,17 @@ log-file = "./file"
 			configFile: `log-null = false
 `,
 			env:          map[string]string{"REGINALD_LOG_NULL": "false"},
-			wantDest:     "",
+			wantOut:      "",
 			wantFilename: "",
 			wantErr:      false,
 		},
 		"tomlConfigDisableFalseDoesNotOverride": {
 			configType: "toml",
-			configFile: `log-destination = "stdout"
+			configFile: `log-output = "stdout"
 log-null = false
 `,
 			env:          map[string]string{"REGINALD_LOG_NULL": "false"},
-			wantDest:     "stdout",
+			wantOut:      "stdout",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -358,21 +358,21 @@ log-null = false
 				}
 			}
 
-			gotDest, gotFilename, gotErr := logDestFromConfigs(cfg)
+			gotOut, gotFilename, gotErr := logOutFromConfigs(cfg)
 			if gotErr == nil && tt.wantErr {
-				t.Fatal("logDestFromConfigs() succeeded unexpectedly")
+				t.Fatal("logOutFromConfigs() succeeded unexpectedly")
 			}
 
 			if gotErr != nil && !tt.wantErr {
-				t.Errorf("logDestFromConfigs() failed: %v", gotErr)
+				t.Errorf("logOutFromConfigs() failed: %v", gotErr)
 			}
 
-			if gotDest != tt.wantDest {
-				t.Errorf("logDestFromConfigs() = %v, want %v", gotDest, tt.wantDest)
+			if gotOut != tt.wantOut {
+				t.Errorf("logOutFromConfigs() = %v, want %v", gotOut, tt.wantOut)
 			}
 
 			if gotFilename != tt.wantFilename {
-				t.Errorf("logDestFromConfigs() = %v, want %v", gotFilename, tt.wantFilename)
+				t.Errorf("logOutFromConfigs() = %v, want %v", gotFilename, tt.wantFilename)
 			}
 		})
 	}
