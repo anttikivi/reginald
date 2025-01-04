@@ -1,4 +1,4 @@
-package command
+package config
 
 import (
 	"bytes"
@@ -62,8 +62,9 @@ func Test_logOutFromConfigs(t *testing.T) { //nolint:gocognit,maintidx // no nee
 		"empty": {configType: "", configFile: "", env: nil, wantOut: "", wantFilename: "", wantErr: false},
 		"tomlConfigNoDuplicateDisable": {
 			configType: "toml",
-			configFile: `no-logs = true
-disable-logs = true
+			configFile: `[log]
+null = true
+disable = true
 `,
 			env:          nil,
 			wantOut:      "",
@@ -72,16 +73,18 @@ disable-logs = true
 		},
 		"tomlConfigNoDuplicateDisableEnv": {
 			configType: "toml",
-			configFile: `no-logs = true
+			configFile: `[log]
+none = true
 `,
-			env:          map[string]string{"REGINALD_DISABLE_LOGS": "true"},
+			env:          map[string]string{"REGINALD_LOG_DISABLE": "true"},
 			wantOut:      "",
 			wantFilename: "",
 			wantErr:      true,
 		},
 		"tomlConfigInvalidOut": {
 			configType: "toml",
-			configFile: `log-output = "invalid"
+			configFile: `[log]
+output = "invalid"
 `,
 			env:          nil,
 			wantOut:      "",
@@ -98,7 +101,8 @@ disable-logs = true
 		},
 		"tomlConfigInvalidOutEnv": {
 			configType: "toml",
-			configFile: `log-output = "invalid"
+			configFile: `[log]
+output = "invalid"
 `,
 			env:          map[string]string{"REGINALD_LOG_OUTPUT": "invalid"},
 			wantOut:      "",
@@ -107,7 +111,8 @@ disable-logs = true
 		},
 		"tomlConfigImplicitFileOut": {
 			configType: "toml",
-			configFile: `log-output = "./file"
+			configFile: `[log]
+output = "./file"
 `,
 			env:          nil,
 			wantOut:      "file",
@@ -124,7 +129,8 @@ disable-logs = true
 		},
 		"tomlConfigImplicitFileOutEnv": {
 			configType: "toml",
-			configFile: `log-output = "./file-first"
+			configFile: `[log]
+output = "./file-first"
 `,
 			env:          map[string]string{"REGINALD_LOG_OUTPUT": "./file-second"},
 			wantOut:      "file",
@@ -133,7 +139,8 @@ disable-logs = true
 		},
 		"tomlConfigStderr": {
 			configType: "toml",
-			configFile: `log-stderr = true
+			configFile: `[log]
+stderr = true
 `,
 			env:          nil,
 			wantOut:      "stderr",
@@ -142,8 +149,9 @@ disable-logs = true
 		},
 		"tomlConfigStderrOverrides": {
 			configType: "toml",
-			configFile: `log-output = "file"
-log-stderr = true
+			configFile: `[log]
+output = "file"
+stderr = true
 `,
 			env:          nil,
 			wantOut:      "stderr",
@@ -152,7 +160,8 @@ log-stderr = true
 		},
 		"tomlConfigStderrEnvOverride": {
 			configType: "toml",
-			configFile: `log-stderr = false
+			configFile: `[log]
+stderr = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "true"},
 			wantOut:      "stderr",
@@ -161,7 +170,8 @@ log-stderr = true
 		},
 		"tomlConfigStderrEnvOverridesImplicit": {
 			configType: "toml",
-			configFile: `log-output = "./file"
+			configFile: `[log]
+output = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "true"},
 			wantOut:      "stderr",
@@ -170,7 +180,8 @@ log-stderr = true
 		},
 		"tomlConfigStderrNoFalse": {
 			configType: "toml",
-			configFile: `log-stderr = false
+			configFile: `[log]
+stderr = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "false"},
 			wantOut:      "",
@@ -179,8 +190,9 @@ log-stderr = true
 		},
 		"tomlConfigStderrFalseDoesNotOverride": {
 			configType: "toml",
-			configFile: `log-output = "stderr"
-log-stderr = false
+			configFile: `[log]
+output = "stderr"
+stderr = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDERR": "false"},
 			wantOut:      "stderr",
@@ -189,7 +201,8 @@ log-stderr = false
 		},
 		"tomlConfigStdout": {
 			configType: "toml",
-			configFile: `log-stdout = true
+			configFile: `[log]
+stdout = true
 `,
 			env:          nil,
 			wantOut:      "stdout",
@@ -198,8 +211,9 @@ log-stderr = false
 		},
 		"tomlConfigStdoutOverrides": {
 			configType: "toml",
-			configFile: `log-output = "file"
-log-stdout = true
+			configFile: `[log]
+output = "file"
+stdout = true
 `,
 			env:          nil,
 			wantOut:      "stdout",
@@ -208,7 +222,8 @@ log-stdout = true
 		},
 		"tomlConfigStdoutEnvOverride": {
 			configType: "toml",
-			configFile: `log-stdout = false
+			configFile: `[log]
+stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "true"},
 			wantOut:      "stdout",
@@ -217,7 +232,8 @@ log-stdout = true
 		},
 		"tomlConfigStdoutEnvOverridesImplicit": {
 			configType: "toml",
-			configFile: `log-output = "./file"
+			configFile: `[log]
+output = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "true"},
 			wantOut:      "stdout",
@@ -226,7 +242,8 @@ log-stdout = true
 		},
 		"tomlConfigStdoutNoFalse": {
 			configType: "toml",
-			configFile: `log-stdout = false
+			configFile: `[log]
+stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
 			wantOut:      "",
@@ -235,8 +252,9 @@ log-stdout = true
 		},
 		"tomlConfigStdoutFalseDoesNotOverride": {
 			configType: "toml",
-			configFile: `log-output = "stdout"
-log-stdout = false
+			configFile: `[log]
+output = "stdout"
+stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
 			wantOut:      "stdout",
@@ -245,8 +263,9 @@ log-stdout = false
 		},
 		"tomlConfigStdoutFalseDoesNotOverrideStderr": {
 			configType: "toml",
-			configFile: `log-output = "stderr"
-log-stdout = false
+			configFile: `[log]
+output = "stderr"
+stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
 			wantOut:      "stderr",
@@ -255,9 +274,10 @@ log-stdout = false
 		},
 		"tomlConfigStdoutFalseDoesNotOverrideStderrBool": {
 			configType: "toml",
-			configFile: `log-output = "stdout"
-log-stderr = true
-log-stdout = false
+			configFile: `[log]
+output = "stdout"
+stderr = true
+stdout = false
 `,
 			env:          map[string]string{"REGINALD_LOG_STDOUT": "false"},
 			wantOut:      "stderr",
@@ -266,7 +286,8 @@ log-stdout = false
 		},
 		"tomlConfigDisable": {
 			configType: "toml",
-			configFile: `log-null = true
+			configFile: `[log]
+null = true
 `,
 			env:          nil,
 			wantOut:      "none",
@@ -275,8 +296,9 @@ log-stdout = false
 		},
 		"tomlConfigDisableOverrides": {
 			configType: "toml",
-			configFile: `log-output = "file"
-log-null = true
+			configFile: `[log]
+output = "file"
+null = true
 `,
 			env:          nil,
 			wantOut:      "none",
@@ -285,8 +307,9 @@ log-null = true
 		},
 		"tomlConfigDisableEnvOverride": {
 			configType: "toml",
-			configFile: `log-stdout = false
-log-file = "./file"
+			configFile: `[log]
+stdout = false
+file = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_NULL": "true"},
 			wantOut:      "none",
@@ -295,7 +318,8 @@ log-file = "./file"
 		},
 		"tomlConfigDisableEnvOverridesImplicit": {
 			configType: "toml",
-			configFile: `log-output = "./file"
+			configFile: `[log]
+output = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_NONE": "true"},
 			wantOut:      "none",
@@ -304,7 +328,8 @@ log-file = "./file"
 		},
 		"tomlConfigDisableNoFalse": {
 			configType: "toml",
-			configFile: `log-null = false
+			configFile: `[log]
+null = false
 `,
 			env:          map[string]string{"REGINALD_LOG_NULL": "false"},
 			wantOut:      "",
@@ -313,8 +338,9 @@ log-file = "./file"
 		},
 		"tomlConfigDisableFalseDoesNotOverride": {
 			configType: "toml",
-			configFile: `log-output = "stdout"
-log-null = false
+			configFile: `[log]
+output = "stdout"
+null = false
 `,
 			env:          map[string]string{"REGINALD_LOG_NULL": "false"},
 			wantOut:      "stdout",
@@ -336,7 +362,7 @@ log-null = false
 			vpr := viper.New()
 
 			vpr.SetEnvPrefix(strings.ToLower(constants.Name))
-			vpr.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+			vpr.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 			vpr.AutomaticEnv()
 
 			if tt.configFile != "" {

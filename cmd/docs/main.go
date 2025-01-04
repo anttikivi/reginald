@@ -11,6 +11,7 @@ import (
 	"github.com/anttikivi/reginald/internal/command"
 	"github.com/anttikivi/reginald/internal/docs"
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 const defaultDirPerm os.FileMode = 0o755
@@ -50,7 +51,7 @@ func run() error {
 		v = buildVersion
 	}
 
-	vpr := command.NewViper()
+	vpr := viper.New()
 
 	cmd, _ := command.New(vpr, v)
 	cmd.InitDefaultHelpCmd()

@@ -1,4 +1,4 @@
-package command
+package config
 
 import (
 	"errors"
@@ -6,12 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/spf13/viper"
 )
 
-func configFileFound(vpr *viper.Viper) bool {
+func FileFound(vpr *viper.Viper) bool {
 	return vpr.ConfigFileUsed() != ""
 }
 
@@ -77,7 +76,7 @@ func resolveConfigFile(vpr *viper.Viper) (bool, error) {
 
 	// Before looking up the config file in the specified locations, see
 	// if the command-line flag or the environment variable is set.
-	configFile := vpr.GetString(config.KeyConfigFile)
+	configFile := vpr.GetString(KeyConfigFile)
 	if configFile != "" {
 		vpr.SetConfigFile(configFile)
 
@@ -88,8 +87,8 @@ func resolveConfigFile(vpr *viper.Viper) (bool, error) {
 	}
 
 	// Look up the directory specified with `--directory`.
-	if !configFound && vpr.GetString(config.KeyDirectory) != "" {
-		configFound, err = tryConfigDir(vpr, vpr.GetString(config.KeyDirectory), configNames)
+	if !configFound && vpr.GetString(KeyDirectory) != "" {
+		configFound, err = tryConfigDir(vpr, vpr.GetString(KeyDirectory), configNames)
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}

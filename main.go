@@ -12,6 +12,7 @@ import (
 	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/logging"
+	"github.com/spf13/viper"
 )
 
 func run() int {
@@ -31,7 +32,7 @@ func run() int {
 		v = buildVersion
 	}
 
-	vpr := command.NewViper()
+	vpr := viper.New()
 
 	cmd, err := command.New(vpr, v)
 	if err != nil {

@@ -8,7 +8,9 @@ import (
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/strutil"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -75,7 +77,7 @@ func addFlags(cmd *cobra.Command) error {
 	}
 
 	// Logging options.
-	cmd.PersistentFlags().String("log-file", config.DefaultLogFile, "print logs to the specified file")
+	cmd.PersistentFlags().String("log-file", logging.DefaultFile, "print logs to the specified file")
 
 	if err := cmd.MarkPersistentFlagFilename("log-file"); err != nil {
 		return fmt.Errorf("failed to mark the \"log-file\" flag as a filename: %w", err)
@@ -103,21 +105,21 @@ func addFlags(cmd *cobra.Command) error {
 
 	cmd.PersistentFlags().String(
 		"log-level",
-		config.DefaultLogLevel,
+		logging.DefaultLevelName,
 		"logging level to use, possible values are: debug, info, warn (or warning), error (or err), and off",
 	)
 	cmd.PersistentFlags().String(
 		"log-format",
-		config.DefaultLogFormat,
+		logging.DefaultFormat,
 		fmt.Sprintf(
 			"format for the logs, possible values are: %q and %q",
-			config.ValueLogFormatJSON,
-			config.ValueLogFormatText,
+			logging.ValueFormatJSON,
+			logging.ValueFormatText,
 		),
 	)
 
-	cmd.PersistentFlags().Bool("no-log-rotation", !config.DefaultRotateLogs, "disable the built-in log rotation")
-	cmd.PersistentFlags().Bool("disable-log-rotation", !config.DefaultRotateLogs, "disable the built-in log rotation")
+	cmd.PersistentFlags().Bool("no-log-rotation", !logging.DefaultRotate, "disable the built-in log rotation")
+	cmd.PersistentFlags().Bool("disable-log-rotation", !logging.DefaultRotate, "disable the built-in log rotation")
 	cmd.MarkFlagsMutuallyExclusive("no-log-rotation", "disable-log-rotation")
 
 	if err := cmd.PersistentFlags().MarkHidden("disable-log-rotation"); err != nil {
@@ -129,7 +131,7 @@ func addFlags(cmd *cobra.Command) error {
 
 func runHelp(cmd *cobra.Command, _ []string) error {
 	if err := cmd.Help(); err != nil {
-		return fmt.Errorf("failed to run the help command: %w", err)
+		panic(fmt.Errorf("failed to run the help command: %w", err))
 	}
 
 	return nil
@@ -141,19 +143,35 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 		panic(fmt.Sprintf("%v", config.ErrNoViper))
 	}
 
-	if _, err := initRootConfig(vpr, cmd); err != nil {
-		panic(fmt.Sprintf("failed to initialize the config: %v", err))
+	if err := config.Init(vpr, cmd); err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	cfg, err := config.Parse(vpr)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	if !cfg.UseColor {
+		color.NoColor = true
+	}
+
+	logging.FastInit(cmd)
+
+	if err := logging.Init(&cfg.Log); err != nil {
+		panic(fmt.Sprintf("failed to initialize logging: %v", err))
 	}
 
 	slog.Info("Starting a new Reginald run", "command", cmd.Name())
 
-	if configFileFound(vpr) {
+	if config.FileFound(vpr) {
 		slog.Info("Config file read", "path", vpr.ConfigFileUsed())
 	} else {
 		slog.Warn("Config file not found")
 	}
 
-	slog.Info("Running with the following settings", slog.Any("config", vpr.AllSettings()))
+	slog.Debug("Got the following raw settings", slog.Any("config", vpr.AllSettings()))
+	slog.Info("Running with the following configuration", slog.Any("config", cfg))
 
 	return nil
 }
