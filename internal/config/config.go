@@ -158,7 +158,7 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 func setDefaults(vpr *viper.Viper, parsed bool) {
 	vpr.SetDefault(KeyColor, !color.NoColor)
 	vpr.SetDefault(KeyConfigFile, "")
-	vpr.SetDefault(KeyDirectory, "~/tmp")
+	vpr.SetDefault(KeyDirectory, DefaultDirectory)
 	vpr.SetDefault(logging.KeyFile, logging.DefaultFile)
 	vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat)
 	vpr.SetDefault(logging.KeyOutput, logging.ValueOutputFile)
