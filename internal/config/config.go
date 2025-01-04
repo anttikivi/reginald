@@ -15,10 +15,23 @@ import (
 // unmarshaled from the Viper instance for the run after parsing the values from
 // the configuration sources.
 type Config struct {
-	UseColor      bool           `mapstructure:"color"`
-	ConfigFile    string         `mapstructure:"config-file"`
-	BaseDirectory string         `mapstructure:"directory"`
-	Log           logging.Config `mapstructure:"log"`
+	// BaseDirectory is the directory of operations for the program. It should
+	// be the local directory with the so-called dotfiles.
+	BaseDirectory string `mapstructure:"directory"`
+
+	// ConfigFile is the path to the resolved config file.
+	ConfigFile string `mapstructure:"config-file"`
+
+	// Log contains the configuration for logging.
+	Log logging.Config `mapstructure:"log"`
+
+	// Repository is the remote Git repository that contains the so-called
+	// dotfiles. Initially it contains the value that the user set in the
+	// configuration but it is replaced by the resolved URL in the command.
+	Repository string `mapstructure:"repository"`
+
+	// UseColor tells whether the program should output colors to the terminal.
+	UseColor bool `mapstructure:"color"`
 }
 
 const (
@@ -30,6 +43,9 @@ const (
 
 	// KeyDirectory is the config key for the base directory value.
 	KeyDirectory = "directory"
+
+	// KeyRepository is the config key for the remote repository.
+	KeyRepository = "repository"
 )
 
 // EnvReplacer is the [strings.Replacer] used to format the config key for
@@ -54,6 +70,7 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 
 	bindString(vpr, cmd, KeyConfigFile, "config-file")
 	bindString(vpr, cmd, KeyDirectory, "directory")
+	bindString(vpr, cmd, KeyRepository, "")
 	bindString(vpr, cmd, logging.KeyFormat, "log-format")
 	bindString(vpr, cmd, logging.KeyLevel, "log-level")
 
@@ -159,6 +176,7 @@ func setDefaults(vpr *viper.Viper, parsed bool) {
 	vpr.SetDefault(KeyColor, !color.NoColor)
 	vpr.SetDefault(KeyConfigFile, "")
 	vpr.SetDefault(KeyDirectory, DefaultDirectory)
+	vpr.SetDefault(KeyRepository, "")
 	vpr.SetDefault(logging.KeyFile, logging.DefaultFile)
 	vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat)
 	vpr.SetDefault(logging.KeyOutput, logging.ValueOutputFile)
@@ -171,16 +189,14 @@ func setDefaults(vpr *viper.Viper, parsed bool) {
 	}
 }
 
-// bindString binds a Viper config value to a persistent flag string if that
-// string has been set by the user with a command-line argument. This additional
-// check is needed because the command-line arguments always have a default
-// value, usually an empty string, that would otherwise override the Viper
-// default or values from other sources. This function also binds the values to
-// the environment variables so that the values are included in all settings if
-// the environment variables are set.
+// bindString binds a Viper config value to an environment variable and,
+// optionally, to a flag. The config key must be given. If flag is an empty
+// string, it won't be bound.
 func bindString(vpr *viper.Viper, cmd *cobra.Command, key, flag string) {
-	if err := vpr.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
-		panic(fmt.Sprintf("failed to bind the flag %q to config %q: %v", flag, key, err))
+	if flag != "" {
+		if err := vpr.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
+			panic(fmt.Sprintf("failed to bind the flag %q to config %q: %v", flag, key, err))
+		}
 	}
 
 	if err := vpr.BindEnv(key); err != nil {

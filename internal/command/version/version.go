@@ -11,8 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const CmdName = "version"
-
 func Template(v string) string {
 	return versionString(v) + "\n"
 }
@@ -21,7 +19,7 @@ func NewCommand(v string) *cobra.Command {
 	s := versionString(v)
 
 	return &cobra.Command{ //nolint:exhaustruct // we want to use the default values
-		Use:   CmdName,
+		Use:   constants.VersionCommandName,
 		Short: "Print the version information of " + constants.Name,
 		Run: func(_ *cobra.Command, _ []string) {
 			fmt.Fprintln(os.Stdout, s)

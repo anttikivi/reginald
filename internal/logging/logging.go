@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/anttikivi/reginald/internal/command/version"
+	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -53,7 +53,7 @@ func (h NullHandler) WithGroup(_ string) slog.Handler {
 // CanFastInit reports whether the given command can skip parsing the
 // configuration for logging and instead default to using [NullHandler].
 func CanFastInit(cmd *cobra.Command) bool {
-	return cmd == nil || cmd.Name() == version.CmdName
+	return cmd == nil || cmd.Name() == constants.VersionCommandName
 }
 
 // FastInit skip the normal logger initialization and defaults to using
