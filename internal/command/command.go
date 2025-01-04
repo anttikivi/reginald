@@ -6,13 +6,16 @@ import (
 
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
+	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
-	"github.com/anttikivi/reginald/internal/constants/config"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
+// helpDescription is the description printed when the command is run with the
+// `--help` flag.
+//
 //nolint:gochecknoglobals,lll // It is easier to have this here instead of inlining.
 var helpDescription = constants.Name + ` is the workstation valet for managing your workstation configuration and installed tools. It can bootstrap your local workstation, keep your "dotfiles" up to date by managing symlinks to them, and take care of whatever task you want to. To use ` + constants.Name + `, call one of the commands or read the man page for more information.
 
@@ -22,6 +25,8 @@ Please note that ` + constants.Name + ` is still in development, and not all of 
 // subcommands.
 // TODO: Thinking that maybe the context should be passed in here.
 func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
+	cobra.EnableTraverseRunHooks = true
+
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:               constants.CommandName + " command [flags]",
 		Short:             constants.Name + " is the workstation valet",
@@ -38,8 +43,8 @@ func New(cfg *viper.Viper, ver string) (*cobra.Command, error) {
 		return nil, fmt.Errorf("%w", err)
 	}
 
-	if err := cfg.BindPFlag("color", cmd.PersistentFlags().Lookup("color")); err != nil {
-		return nil, fmt.Errorf("failed to bind the flag \"color\" to config: %w", err)
+	if err := cfg.BindPFlag(config.KeyColor, cmd.PersistentFlags().Lookup("color")); err != nil {
+		return nil, fmt.Errorf("failed to bind the flag \"color\" to config %q: %w", config.KeyColor, err)
 	}
 
 	cmd.AddCommand(bootstrap.NewCommand())
@@ -70,7 +75,7 @@ func addFlags(cmd *cobra.Command) error {
 	}
 
 	// Logging options.
-	cmd.PersistentFlags().String("log-file", defaultLogFile(), "print logs to the specified file")
+	cmd.PersistentFlags().String("log-file", config.DefaultLogFile, "print logs to the specified file")
 
 	if err := cmd.MarkPersistentFlagFilename("log-file"); err != nil {
 		return fmt.Errorf("failed to mark the \"log-file\" flag as a filename: %w", err)
@@ -98,17 +103,17 @@ func addFlags(cmd *cobra.Command) error {
 
 	cmd.PersistentFlags().String(
 		"log-level",
-		"info",
+		config.DefaultLogLevel,
 		"logging level to use, possible values are: debug, info, warn (or warning), error (or err), and off",
 	)
 	cmd.PersistentFlags().String(
 		"log-format",
-		defaultLogFormat,
-		"format for the logs, possible values are: json and text",
+		config.DefaultLogFormat,
+		fmt.Sprintf("format for the logs, possible values are: %q and %q", config.ValueLogFormatJSON, config.ValueLogFormatText),
 	)
 
-	cmd.PersistentFlags().Bool("no-log-rotation", !rotateLogsDefault, "disable the built-in log rotation")
-	cmd.PersistentFlags().Bool("disable-log-rotation", !rotateLogsDefault, "disable the built-in log rotation")
+	cmd.PersistentFlags().Bool("no-log-rotation", !config.DefaultRotateLogs, "disable the built-in log rotation")
+	cmd.PersistentFlags().Bool("disable-log-rotation", !config.DefaultRotateLogs, "disable the built-in log rotation")
 	cmd.MarkFlagsMutuallyExclusive("no-log-rotation", "disable-log-rotation")
 
 	if err := cmd.PersistentFlags().MarkHidden("disable-log-rotation"); err != nil {
@@ -129,18 +134,17 @@ func runHelp(cmd *cobra.Command, _ []string) error {
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	cfg, ok := cmd.Context().Value(constants.ConfigContextKey).(*viper.Viper)
 	if !ok || cfg == nil {
-		return fmt.Errorf("%w", ErrNoConfig)
+		return fmt.Errorf("%w", constants.ErrNoConfig)
 	}
 
-	if err := initConfig(cfg, cmd); err != nil {
+	if err := initRootConfig(cfg, cmd); err != nil {
 		return fmt.Errorf("failed to initialize the config: %w", err)
 	}
 
 	slog.Info("Starting a new Reginald run", "command", cmd.Name())
-	slog.Info("Logging initialized", "rotate-logs", cfg.GetBool("rotate-logs"))
 
 	if configFileFound(cfg) {
-		slog.Info("Config file read", "config-file", cfg.ConfigFileUsed())
+		slog.Info("Config file read", "path", cfg.ConfigFileUsed())
 	} else {
 		slog.Warn("Config file not found")
 	}

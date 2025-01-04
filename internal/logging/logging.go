@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/anttikivi/reginald/internal/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -26,9 +27,9 @@ const (
 )
 
 var (
-	errInvalidLogDestination = errors.New("invalid log destination")
-	errInvalidLogFormat      = errors.New("invalid log format")
-	errInvalidLogLevel       = errors.New("invalid log level")
+	errInvalidLogOutput = errors.New("invalid log output")
+	errInvalidLogFormat = errors.New("invalid log format")
+	errInvalidLogLevel  = errors.New("invalid log level")
 )
 
 func (h NullHandler) Enabled(_ context.Context, _ slog.Level) bool {
@@ -56,10 +57,10 @@ func Handler(w io.Writer, format string, level slog.Level) (slog.Handler, error)
 	}
 
 	switch format {
-	case "json":
+	case config.ValueLogFormatJSON:
 		//nolint:exhaustruct // we want to use the default values
 		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil
-	case "text":
+	case config.ValueLogFormatText:
 		//nolint:exhaustruct // we want to use the default values
 		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil
 	default:
@@ -93,13 +94,13 @@ func Level(l string) (slog.Level, error) {
 // should take care of rotating the logs.
 func Writer(dest, file string, rotate bool) (io.Writer, error) {
 	switch dest {
-	case "stdout":
+	case config.ValueLogOutputStdout:
 		return os.Stdout, nil
-	case "stderr":
+	case config.ValueLogOutputStderr:
 		return os.Stderr, nil
-	case "none":
+	case config.ValueLogOutputNone:
 		return io.Discard, nil
-	case "file":
+	case config.ValueLogOutputFile:
 		if rotate {
 			return &lumberjack.Logger{
 				Filename:   file,
@@ -118,6 +119,6 @@ func Writer(dest, file string, rotate bool) (io.Writer, error) {
 			return fw, nil
 		}
 	default:
-		return nil, fmt.Errorf("%w: %s", errInvalidLogDestination, dest)
+		return nil, fmt.Errorf("%w: %s", errInvalidLogOutput, dest)
 	}
 }
