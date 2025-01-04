@@ -59,12 +59,17 @@ func CanFastInit(cmd *cobra.Command) bool {
 // FastInit skip the normal logger initialization and defaults to using
 // [NullHandler] instead. Some commands (like `version`) don't require logging
 // or are better of running fast without parsing the config, so the parsing is
-// skipped and null logging is used instead.
-func FastInit(cmd *cobra.Command) {
+// skipped and null logging is used instead. The function returns whether the
+// fast initialization was performed or not.
+func FastInit(cmd *cobra.Command) bool {
 	if CanFastInit(cmd) {
 		logger := slog.New(NullHandler{})
 		slog.SetDefault(logger)
+
+		return true
 	}
+
+	return false
 }
 
 // Handler creates an slog.Handler for the given options.

@@ -157,10 +157,10 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 		color.NoColor = true
 	}
 
-	logging.FastInit(cmd)
-
-	if err := logging.Init(&cfg.Log); err != nil {
-		panic(fmt.Sprintf("failed to initialize logging: %v", err))
+	if ok := logging.FastInit(cmd); !ok {
+		if err := logging.Init(&cfg.Log); err != nil {
+			panic(fmt.Sprintf("failed to initialize logging: %v", err))
+		}
 	}
 
 	slog.Info("Starting a new Reginald run", "command", cmd.Name())
