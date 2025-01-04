@@ -8,7 +8,6 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // helpDescription is the description printed when the command is run with the
@@ -37,12 +36,12 @@ func NewCommand() *cobra.Command {
 func run(cmd *cobra.Command, _ []string) error {
 	slog.Info("Running the bootstrap command")
 
-	vpr, ok := cmd.Context().Value(config.ViperContextKey).(*viper.Viper)
-	if !ok || vpr == nil {
-		return fmt.Errorf("%w", config.ErrNoViper)
+	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
+	if !ok || cfg == nil {
+		panic(fmt.Errorf("%w", config.ErrNoConfig))
 	}
 
-	slog.Debug("Retrieved the Viper instance", slog.Any("vpr", vpr.AllSettings()))
+	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
 
 	return nil
 }

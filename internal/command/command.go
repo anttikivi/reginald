@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -172,6 +173,11 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 
 	slog.Debug("Got the following raw settings", slog.Any("config", vpr.AllSettings()))
 	slog.Info("Running with the following configuration", slog.Any("config", cfg))
+
+	ctx := context.WithValue(cmd.Context(), config.ConfigContextKey, cfg)
+	cmd.SetContext(ctx)
+
+	slog.Debug("Set the command context with the config")
 
 	return nil
 }
