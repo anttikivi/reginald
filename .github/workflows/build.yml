@@ -59,7 +59,7 @@ jobs:
           (matrix.goarch == '386' || matrix.goarch == 'amd64')) || (matrix.goos
           == 'darwin' && (matrix.goarch == 'arm64' || matrix.goarch == 'amd64'))
           }}
-        run: ./reginald version
+        run: ./rgl version
 
   make-build:
     runs-on: ${{ matrix.os }}
@@ -108,10 +108,10 @@ jobs:
           (matrix.goarch == '386' || matrix.goarch == 'amd64')) || (matrix.goos
           == 'darwin' && (matrix.goarch == 'arm64' || matrix.goarch ==
           'amd64'))) }}
-        run: ./bin/reginald version
+        run: ./bin/rgl version
 
       - name: Run the version command on Windows
         if:
           ${{ runner.os == 'Windows' && (matrix.goarch == '386' || matrix.goarch
           == 'amd64') }}
-        run: .\bin\reginald.exe version
+        run: .\bin\rgl.exe version
