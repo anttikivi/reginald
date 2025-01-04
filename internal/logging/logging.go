@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/intutil"
+	"github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -17,8 +19,11 @@ import (
 type NullHandler struct{}
 
 const (
-	defaultFilePerm os.FileMode = 0o644
-	LevelOff        slog.Level  = 12
+	LevelOff                   slog.Level  = 12
+	DefaultTimeFormat                      = "2006-01-02T15:04:05.000-07:00"
+	DefaultDecoratedTimeFormat             = "2006-01-02 15:04:05"
+	DefaultJSONTimeFormat                  = "2006-01-02T15:04:05.000000-07:00"
+	defaultFilePerm            os.FileMode = 0o644
 )
 
 const (
@@ -74,17 +79,50 @@ func FastInit(cmd *cobra.Command) bool {
 
 // Handler creates an slog.Handler for the given options.
 // If the given options do not result in a valid handler, returns an error.
-func Handler(w io.Writer, format string, level slog.Level) (slog.Handler, error) {
+func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 	if w == io.Discard {
 		return NullHandler{}, nil
 	}
 
+	format := cfg.Format
+	level := cfg.Level
+	decorate := (cfg.Output == "stderr" || cfg.Output == "stdout") && cfg.UseColor && !cfg.Bare
+
+	var logOptions log.Options
+
+	if decorate {
+		logInt32, err := intutil.ToInt32(int(level))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create log options: %w", err)
+		}
+
+		//nolint:exhaustruct // We want to use the default values.
+		logOptions = log.Options{
+			Level:           log.Level(logInt32),
+			ReportCaller:    false,
+			ReportTimestamp: false,
+			TimeFormat:      DefaultDecoratedTimeFormat,
+		}
+	}
+
 	switch format {
 	case ValueFormatJSON:
-		//nolint:exhaustruct // we want to use the default values
+		if decorate {
+			logOptions.Formatter = log.JSONFormatter
+			logOptions.ReportCaller = true
+			logOptions.ReportTimestamp = true
+			logOptions.TimeFormat = DefaultJSONTimeFormat
+
+			return log.NewWithOptions(w, logOptions), nil
+		}
+		//nolint:exhaustruct // We want to use the default values.
 		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil
 	case ValueFormatText:
-		//nolint:exhaustruct // we want to use the default values
+		if decorate {
+			return log.NewWithOptions(w, logOptions), nil
+		}
+
+		//nolint:exhaustruct // We want to use the default values.
 		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", errInvalidFormat, format)
@@ -98,7 +136,7 @@ func Init(cfg *Config) error {
 		return fmt.Errorf("failed to get the log writer: %w", err)
 	}
 
-	logHandler, err := Handler(logWriter, cfg.Format, cfg.Level)
+	logHandler, err := Handler(logWriter, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create the log handler: %w", err)
 	}

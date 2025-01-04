@@ -71,6 +71,7 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 	bindString(vpr, cmd, KeyConfigFile, "config-file")
 	bindString(vpr, cmd, KeyDirectory, "directory")
 	bindString(vpr, cmd, KeyRepository, "")
+	bindString(vpr, cmd, logging.KeyBare, "bare-logs")
 	bindString(vpr, cmd, logging.KeyFormat, "log-format")
 	bindString(vpr, cmd, logging.KeyLevel, "log-level")
 
@@ -166,6 +167,10 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal the config: %w", err)
 	}
 
+	// I think this is stupid but still a fine way to pass the color information
+	// to the logging init.
+	cfg.Log.UseColor = cfg.UseColor
+
 	return cfg, nil
 }
 
@@ -177,6 +182,7 @@ func setDefaults(vpr *viper.Viper, parsed bool) {
 	vpr.SetDefault(KeyConfigFile, "")
 	vpr.SetDefault(KeyDirectory, DefaultDirectory)
 	vpr.SetDefault(KeyRepository, "")
+	vpr.SetDefault(logging.KeyBare, logging.DefaultBare)
 	vpr.SetDefault(logging.KeyFile, logging.DefaultFile)
 	vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat)
 	vpr.SetDefault(logging.KeyOutput, logging.ValueOutputFile)

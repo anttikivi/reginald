@@ -78,6 +78,7 @@ func addFlags(cmd *cobra.Command) error {
 	}
 
 	// Logging options.
+	cmd.PersistentFlags().Bool("bare-logs", false, "print logs plainly if they are output to the terminal")
 	cmd.PersistentFlags().String("log-file", logging.DefaultFile, "print logs to the specified file")
 
 	if err := cmd.MarkPersistentFlagFilename("log-file"); err != nil {

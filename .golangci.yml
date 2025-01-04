@@ -27,6 +27,7 @@ linters-settings:
         allow:
           - $gostd
           - github.com/anttikivi
+          - github.com/charmbracelet/log
           - github.com/cli/safeexec
           - github.com/fatih/color
           - github.com/spf13/cobra
@@ -52,6 +53,7 @@ linters-settings:
       - sb strings.Builder
       - T any
       - t *testing.T
+      - w io.Writer
 
 issues:
   exclude-rules:
