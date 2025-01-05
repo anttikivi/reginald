@@ -1,6 +1,7 @@
-package logging
+package exit
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -25,14 +26,11 @@ shown below, and any additional information which may help replicate the issue.
 
 `
 
-// An exit code of 11 keeps us out of the way of the detailed exit codes and
-// also happens to be the same code as SIGSEGV which is roughly the same type
-// of condition that causes most panics.
-const exitCode = 11
-
 // In case multiple goroutines panic concurrently, ensure only the first one
 // recovered by HandlePanic starts printing.
-var panicMutex sync.Mutex //nolint:gochecknoglobals // the mutex needs to be global to share it between goroutines
+//
+//nolint:gochecknoglobals // The mutex needs to be global to share it between goroutines.
+var panicMutex sync.Mutex
 
 // HandlePanic is called to recover from an internal panic in Reginald and
 // augments the standard stack trace with a helpful error message.
@@ -46,7 +44,7 @@ func HandlePanic() {
 	handle(recovered, nil)
 }
 
-func handle(recovered interface{}, trace []byte) {
+func handle(recovered any, trace []byte) {
 	if recovered == nil {
 		return
 	}
@@ -63,5 +61,12 @@ func handle(recovered interface{}, trace []byte) {
 		os.Stderr.Write(trace)
 	}
 
-	os.Exit(exitCode)
+	if err, ok := recovered.(error); ok {
+		var exitError *Error
+		if errors.As(err, &exitError) {
+			os.Exit(int(exitError.Code))
+		}
+	}
+
+	os.Exit(int(Failure))
 }
