@@ -11,7 +11,7 @@ var Version = "DEV" //nolint:gochecknoglobals // set at build time
 // Format for the date is "YYYY-MM-DD".
 var Date = "" //nolint:gochecknoglobals // set at build time
 
-func Init() {
+func init() { //nolint:gochecknoinits // Handles values set at build time, magic is justified.
 	if Version == "DEV" {
 		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "(devel)" {
 			Version = info.Main.Version

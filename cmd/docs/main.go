@@ -19,9 +19,6 @@ const defaultDirPerm os.FileMode = 0o755
 var errPathNotDefined = errors.New("--path is not set")
 
 func run() error {
-	// Do this first to avoid having an `init` function in the package.
-	build.Init()
-
 	flags := pflag.NewFlagSet("", pflag.ContinueOnError)
 	man := flags.Bool("man", false, "Generate manual pages")
 	dir := flags.String("path", "", "Path to the directory where you want to generate the docs to")

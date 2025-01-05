@@ -4,12 +4,6 @@ const (
 	// Name of executable.
 	CommandName = "rgl"
 
-	// Exit code when the program is executed successfully.
-	ExitSuccess = 0
-
-	// Exit code for generic errors.
-	ExitError = 1
-
 	// HelpLineLen is the maximum length of the help lines printed.
 	HelpLineLen = 80
 
