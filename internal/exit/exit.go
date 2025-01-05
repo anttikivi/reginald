@@ -57,7 +57,7 @@ func (e *Error) Code() Code {
 }
 
 func (e *Error) Error() string {
-	return e.err.Error()
+	return fmt.Sprintf("%v (%d)", e.err.Error(), e.c)
 }
 
 func New(c Code, err error) *Error {
