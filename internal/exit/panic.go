@@ -64,7 +64,7 @@ func handle(recovered any, trace []byte) {
 	if err, ok := recovered.(error); ok {
 		var exitError *Error
 		if errors.As(err, &exitError) {
-			os.Exit(int(exitError.Code))
+			os.Exit(int(exitError.Code()))
 		}
 	}
 

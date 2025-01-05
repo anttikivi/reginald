@@ -56,7 +56,7 @@ func run(v string) exit.Code {
 
 		var exitError *exit.Error
 		if errors.As(err, &exitError) {
-			return exitError.Code
+			return exitError.Code()
 		}
 
 		return exit.Failure
@@ -69,7 +69,7 @@ func run(v string) exit.Code {
 
 		var exitError *exit.Error
 		if errors.As(err, &exitError) {
-			return exitError.Code
+			return exitError.Code()
 		}
 
 		return exit.Failure
