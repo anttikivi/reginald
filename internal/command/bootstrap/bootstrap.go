@@ -2,11 +2,11 @@ package bootstrap
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
 )
@@ -44,7 +44,7 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 
 	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
 	if !ok || cfg == nil {
-		panic(fmt.Errorf("%w", config.ErrNoConfig))
+		panic(exit.New(exit.CommandInitFailure, config.ErrNoConfig))
 	}
 
 	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
@@ -61,7 +61,7 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 	}
 
 	if repo == "" {
-		return fmt.Errorf("%w", errNoRepo)
+		return exit.New(exit.InvalidConfig, errNoRepo)
 	}
 
 	cfg.Repository = repo
@@ -74,7 +74,7 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
 	if !ok || cfg == nil {
-		panic(fmt.Errorf("%w", config.ErrNoConfig))
+		panic(exit.New(exit.CommandInitFailure, config.ErrNoConfig))
 	}
 
 	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))

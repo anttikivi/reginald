@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/spf13/viper"
 )
 
@@ -24,7 +25,7 @@ func readConfig(vpr *viper.Viper) (bool, error) {
 	if err := vpr.ReadInConfig(); err != nil {
 		var notFoundError viper.ConfigFileNotFoundError
 		if !errors.As(err, &notFoundError) {
-			return false, fmt.Errorf("could not read the configuration file: %w", err)
+			return false, exit.New(exit.InvalidConfigFile, fmt.Errorf("could not read the configuration file: %w", err))
 		}
 
 		return false, nil

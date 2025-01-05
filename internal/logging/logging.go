@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/intutil"
 	"github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
@@ -80,7 +81,7 @@ func FastInit(cmd *cobra.Command) bool {
 // Handler creates an slog.Handler for the given options.
 // If the given options do not result in a valid handler, returns an error.
 func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
-	if w == io.Discard {
+	if w == io.Discard || cfg.Output == "none" {
 		return NullHandler{}, nil
 	}
 
@@ -93,7 +94,12 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 	if decorate {
 		logInt32, err := intutil.ToInt32(int(level))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create log options: %w", err)
+			panic(
+				exit.New(
+					exit.Failure,
+					fmt.Errorf("failed to cast the logging level to a narrower type (int to int32): %w", err),
+				),
+			)
 		}
 
 		//nolint:exhaustruct // We want to use the default values.
@@ -125,7 +131,7 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 		//nolint:exhaustruct // We want to use the default values.
 		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil
 	default:
-		return nil, fmt.Errorf("%w: %s", errInvalidFormat, format)
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %s", errInvalidFormat, format))
 	}
 }
 
@@ -206,12 +212,12 @@ func Writer(dest, file string, rotate bool) (io.Writer, error) {
 		} else {
 			fw, err := os.OpenFile(file, os.O_WRONLY|os.O_APPEND|os.O_CREATE, defaultFilePerm)
 			if err != nil {
-				return nil, fmt.Errorf("failed to open log file at %v: %w", file, err)
+				return nil, exit.New(exit.Failure, fmt.Errorf("failed to open log file at %v: %w", file, err))
 			}
 
 			return fw, nil
 		}
 	default:
-		return nil, fmt.Errorf("%w: %s", errInvalidOutput, dest)
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %s", errInvalidOutput, dest))
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -220,14 +221,24 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 
 		f, err := cmd.Flags().GetString("log-file")
 		if err != nil {
-			panic(fmt.Errorf("failed to get the value for the \"log-file\" flag: %w", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"log-file\" flag: %w", err),
+				),
+			)
 		}
 
 		vpr.Set(logging.KeyFile, f)
 	case cmd.Flags().Changed("log-stderr"):
 		v, err := cmd.Flags().GetBool("log-stderr")
 		if err != nil {
-			panic(fmt.Errorf("failed to get the value for the \"log-stderr\" flag: %w", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"log-stderr\" flag: %w", err),
+				),
+			)
 		}
 
 		if v {
@@ -236,7 +247,12 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 	case cmd.Flags().Changed("log-stdout"):
 		v, err := cmd.Flags().GetBool("log-stdout")
 		if err != nil {
-			panic(fmt.Errorf("failed to get the value for the \"log-stdout\" flag: %w", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"log-stdout\" flag: %w", err),
+				),
+			)
 		}
 
 		if v {
@@ -245,7 +261,12 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 	case cmd.Flags().Changed("log-none"):
 		v, err := cmd.Flags().GetBool("log-none")
 		if err != nil {
-			panic(fmt.Errorf("failed to get the value for the \"log-none\" flag: %w", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"log-none\" flag: %w", err),
+				),
+			)
 		}
 
 		if v {
@@ -254,7 +275,12 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 	case cmd.Flags().Changed("log-null"):
 		v, err := cmd.Flags().GetBool("log-null")
 		if err != nil {
-			panic(fmt.Errorf("failed to get the value for the \"log-null\" flag: %w", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"log-null\" flag: %w", err),
+				),
+			)
 		}
 
 		if v {
@@ -263,7 +289,12 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 	case cmd.Flags().Changed("disable-logs"):
 		v, err := cmd.Flags().GetBool("disable-logs")
 		if err != nil {
-			panic(fmt.Errorf("failed to get the value for the \"disable-logs\" flag: %w", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"disable-logs\" flag: %w", err),
+				),
+			)
 		}
 
 		if v {
@@ -272,7 +303,12 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 	case cmd.Flags().Changed("no-logs"):
 		v, err := cmd.Flags().GetBool("no-logs")
 		if err != nil {
-			panic(fmt.Errorf("failed to get the value for the \"no-logs\" flag: %w", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"no-logs\" flag: %w", err),
+				),
+			)
 		}
 
 		if v {
@@ -290,10 +326,13 @@ func setLogOutput(vpr *viper.Viper, cmd *cobra.Command) error {
 	for _, alias := range allLogConfigNames {
 		if err := vpr.BindEnv(alias); err != nil {
 			panic(
-				fmt.Sprintf(
-					"failed to bind the environment variable \"REGINALD_%s\" to config: %v",
-					EnvReplacer.Replace(strings.ToUpper(alias)),
-					err,
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf(
+						"failed to bind the environment variable \"REGINALD_%s\" to config: %w",
+						EnvReplacer.Replace(strings.ToUpper(alias)),
+						err,
+					),
 				),
 			)
 		}

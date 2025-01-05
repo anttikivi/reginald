@@ -1,10 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -48,6 +50,10 @@ const (
 	KeyRepository = "repository"
 )
 
+// ErrConfigType is error for cases where a value given in the config is the
+// wrong type.
+var ErrConfigType = errors.New("invalid config type")
+
 // EnvReplacer is the [strings.Replacer] used to format the config key for
 // binding with environment variables.
 //
@@ -61,7 +67,9 @@ var EnvReplacer = strings.NewReplacer("-", "_", ".", "_")
 func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 	noColor, err := cmd.Flags().GetBool("no-color")
 	if err != nil {
-		panic(fmt.Sprintf("failed to get the value for the \"no-color\" flag: %v", err))
+		panic(
+			exit.New(exit.CommandInitFailure, fmt.Errorf("failed to get the value for the \"no-color\" flag: %w", err)),
+		)
 	}
 
 	if noColor {
@@ -83,7 +91,12 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 	if cmd.Flags().Changed("no-log-rotation") {
 		noLogRotation, err := cmd.Flags().GetBool("no-log-rotation")
 		if err != nil {
-			panic(fmt.Sprintf("failed to get the value for the \"no-log-rotation\" flag: %v", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"no-log-rotation\" flag: %w", err),
+				),
+			)
 		}
 
 		if noLogRotation {
@@ -94,7 +107,12 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 	if cmd.Flags().Changed("disable-log-rotation") {
 		noLogRotation, err := cmd.Flags().GetBool("disable-log-rotation")
 		if err != nil {
-			panic(fmt.Sprintf("failed to get the value for the \"disable-log-rotation\" flag: %v", err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to get the value for the \"disable-log-rotation\" flag: %w", err),
+				),
+			)
 		}
 
 		if noLogRotation {
@@ -118,7 +136,7 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 
 	if !logging.CanFastInit(cmd) {
 		if err := parseLoggingConfig(vpr, cmd); err != nil {
-			return fmt.Errorf("%w", err)
+			return exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
 		}
 	}
 
@@ -135,7 +153,7 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 	// Set the correct logging level parsed from the name.
 	logLevel, err := logging.Level(vpr.GetString(logging.KeyLevelName))
 	if err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
 	}
 
 	vpr.Set(logging.KeyLevel, logLevel)
@@ -144,7 +162,12 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 
 	logm, ok := m["log"].(map[string]any)
 	if !ok {
-		panic("type assertion of the \"log\" value in the Viper instance to map[string]any failed")
+		panic(
+			exit.New(
+				exit.InvalidConfig,
+				fmt.Errorf("%w: value for \"log\" cannot be cast to map[string]any", ErrConfigType),
+			),
+		)
 	}
 
 	delete(logm, "stderr")
@@ -164,7 +187,10 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 	var cfg *Config
 
 	if err := cleanVpr.UnmarshalExact(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal the config: %w", err)
+		return nil, exit.New(
+			exit.InvalidConfig,
+			fmt.Errorf("%w: failed to convert the parsed config to `Config`: %w", ErrConfigType, err),
+		)
 	}
 
 	// I think this is stupid but still a fine way to pass the color information
@@ -201,16 +227,24 @@ func setDefaults(vpr *viper.Viper, parsed bool) {
 func bindString(vpr *viper.Viper, cmd *cobra.Command, key, flag string) {
 	if flag != "" {
 		if err := vpr.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
-			panic(fmt.Sprintf("failed to bind the flag %q to config %q: %v", flag, key, err))
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to bind the flag %q to config %q: %w", flag, key, err),
+				),
+			)
 		}
 	}
 
 	if err := vpr.BindEnv(key); err != nil {
 		panic(
-			fmt.Sprintf(
-				"failed to bind the environment variable \"REGINALD_%s\" to config: %v",
-				EnvReplacer.Replace(strings.ToUpper(key)),
-				err,
+			exit.New(
+				exit.CommandInitFailure,
+				fmt.Errorf(
+					"failed to bind the environment variable \"REGINALD_%s\" to config: %w",
+					EnvReplacer.Replace(strings.ToUpper(key)),
+					err,
+				),
 			),
 		)
 	}

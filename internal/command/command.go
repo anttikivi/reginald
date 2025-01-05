@@ -9,6 +9,7 @@ import (
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/fatih/color"
@@ -43,11 +44,14 @@ func New(vpr *viper.Viper, ver string) (*cobra.Command, error) {
 	cmd.SetVersionTemplate(version.Template(ver))
 
 	if err := addFlags(cmd); err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return nil, exit.New(exit.CommandInitFailure, err)
 	}
 
 	if err := vpr.BindPFlag(config.KeyColor, cmd.PersistentFlags().Lookup("color")); err != nil {
-		return nil, fmt.Errorf("failed to bind the flag \"color\" to config %q: %w", config.KeyColor, err)
+		return nil, exit.New(
+			exit.CommandInitFailure,
+			fmt.Errorf("failed to bind the flag \"color\" to config %q: %w", config.KeyColor, err),
+		)
 	}
 
 	cmd.AddCommand(bootstrap.NewCommand())
@@ -134,7 +138,7 @@ func addFlags(cmd *cobra.Command) error {
 
 func runHelp(cmd *cobra.Command, _ []string) error {
 	if err := cmd.Help(); err != nil {
-		panic(fmt.Errorf("failed to run the help command: %w", err))
+		panic(exit.New(exit.CommandRunFailure, fmt.Errorf("failed to run the command help: %w", err)))
 	}
 
 	return nil
@@ -143,7 +147,7 @@ func runHelp(cmd *cobra.Command, _ []string) error {
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	vpr, ok := cmd.Context().Value(config.ViperContextKey).(*viper.Viper)
 	if !ok || vpr == nil {
-		panic(fmt.Sprintf("%v", config.ErrNoViper))
+		panic(exit.New(exit.CommandInitFailure, config.ErrNoViper))
 	}
 
 	if err := config.Init(vpr, cmd); err != nil {

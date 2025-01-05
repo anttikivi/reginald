@@ -22,15 +22,29 @@ const (
 	// Failure is the exit code for generic or unknown errors.
 	Failure Code = 1
 
+	// User errors.
+
+	// InvalidConfig is the exit code for when the program fails due to invalid
+	// configuration.
+	InvalidConfig Code = 3
+
+	// InvalidConfigFile is the exit code for when the program fails to read the
+	// config file.
+	InvalidConfigFile Code = 4
+
 	// Internal errors.
 
-	// ErrorFailure is the exit code when there is an attempt to create a new
+	// NewErrorFailure is the exit code when there is an attempt to create a new
 	// [Error] with invalid values.
-	ErrorFailure Code = 11
+	NewErrorFailure Code = 11
 
 	// CommandInitFailure is the exit code when creating the command instance
 	// fails.
 	CommandInitFailure Code = 12
+
+	// CommandRunFailure is the exit code when the command run fails due to an
+	// unexpected error.
+	CommandRunFailure Code = 13
 )
 
 var (
@@ -48,15 +62,15 @@ func (e *Error) Error() string {
 
 func New(c Code, err error) *Error {
 	if err == nil && c < 0 {
-		panic(&Error{c: ErrorFailure, err: fmt.Errorf("%w with %w %d", errNilError, errInvalidCode, c)})
+		panic(&Error{c: NewErrorFailure, err: fmt.Errorf("%w with %w %d", errNilError, errInvalidCode, c)})
 	}
 
 	if err == nil {
-		panic(&Error{c: ErrorFailure, err: fmt.Errorf("%w with exit code %d", errNilError, c)})
+		panic(&Error{c: NewErrorFailure, err: fmt.Errorf("%w with exit code %d", errNilError, c)})
 	}
 
 	if c < 0 {
-		panic(&Error{c: ErrorFailure, err: fmt.Errorf("%w %d with error: %w", errInvalidCode, c, err)})
+		panic(&Error{c: NewErrorFailure, err: fmt.Errorf("%w %d with error: %w", errInvalidCode, c, err)})
 	}
 
 	return &Error{c, err}
