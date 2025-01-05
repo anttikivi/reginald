@@ -83,7 +83,7 @@ func handleLogOutConfigValue(vpr *viper.Viper, n, output string) (string, string
 	} else if s != "" {
 		// If we assume the log output to be a file, require that the value
 		// contains a path separator.
-		if !strings.ContainsRune(s, os.PathSeparator) {
+		if !strings.ContainsFunc(s, func(r rune) bool { return r == os.PathSeparator || r == '/' }) {
 			return "", "", fmt.Errorf("%w: %q", errInvalidLogOutValue, s)
 		}
 
