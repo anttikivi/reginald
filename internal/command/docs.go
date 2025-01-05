@@ -17,7 +17,7 @@ func docsAnnotations() map[string]string {
 To use ` + constants.Name + `, call one of the commands or read the man page for more information. Simply running **` + constants.CommandName + `** prints the help message.
 
 Please note that ` + constants.Name + ` is still in development, and not all of the promised feature are implemented.`,
-		"docs_usage": constants.Name + "[-v | --version] [-h | --help] [--color | --no-color] [-c <path> | --config-file <path>] [-C <path> | --directory <path>] [--bare-logs] [--log-file <path> | --log-stderr | --log-stdout | --no-logs] [--log-level] [--log-format <\"json\"|\"text\">] [--no-log-rotation] <command> [<args>]",
+		"docs_usage": constants.Name + "[-v | --version] [-h | --help] [--color | --no-color] [-c <path> | --config-file <path>] [-C <path> | --directory <path>] [--log-file <path> | --log-stderr | --log-stdout | --no-logs] [--log-level] [--log-format <\"json\"|\"text\">] [--no-log-rotation] [--plain-logs] <command> [<args>]",
 		"docs_short": "the workstation valet",
 
 		"docs_flag_color_name":  "[no-]color",
@@ -42,7 +42,7 @@ By default, ` + constants.Name + ` looks for the configuration from various loca
 
 The standard pattern is to have the desired configuration in this directory and to let ` + constants.Name + ` create symbolic link to it to a path in the configuration lookup as part of the initial installation. This eliminates the need for the --directory flag for subsequent runs, if the configuration file has the "**directory**" option.`,
 
-		"docs_flag_barelogs_usage":  `Print the logging output of ` + constants.Name + ` without the additional coloring and "pretty-printing" if the output of the logs is set to either stderr or stdout. This flag has no effect if the logs are not printed to either of those or if using colors is disabled (see the --[no-]color flag for more information). If the format of the logs is set to JSON, the logs are printed to the output without colors but setting this flag disables including information on the caller of the log function in the log output.`,
+		"docs_flag_plainlogs_usage": `Print the logging output of ` + constants.Name + ` without the additional coloring and "pretty-printing" if the output of the logs is set to either stderr or stdout. This flag has no effect if the logs are not printed to either of those or if using colors is disabled (see the --[no-]color flag for more information). If the format of the logs is set to JSON, the logs are printed to the output without colors but setting this flag disables including information on the caller of the log function in the log output.`,
 		"docs_flag_logfile_usage":   `Print the logging output of ` + constants.Name + ` to file at the given <` + "`path`" + `>. The format of the logging outputs is determined by the --log-format flag. If no format is specified in the configuration, the default is "json" for logging to a file.`,
 		"docs_flag_logstderr_usage": `Print the logging output of ` + constants.Name + ` to stderr. The format of the logging outputs is determined by the --log-format flag. If no format is specified in the configuration, the default is "text" for logging to stderr.`,
 		"docs_flag_logstdout_usage": `Print the logging output of ` + constants.Name + ` to stdout. The format of the logging outputs is determined by the --log-format flag. If no format is specified in the configuration, the default is "text" for logging to stdout.`,

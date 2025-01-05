@@ -86,7 +86,7 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 
 	format := cfg.Format
 	level := cfg.Level
-	decorate := (cfg.Output == "stderr" || cfg.Output == "stdout") && cfg.UseColor && !cfg.Bare
+	decorate := (cfg.Output == "stderr" || cfg.Output == "stdout") && cfg.UseColor && !cfg.Plain
 
 	var logOptions log.Options
 

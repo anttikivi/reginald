@@ -78,7 +78,6 @@ func addFlags(cmd *cobra.Command) error {
 	}
 
 	// Logging options.
-	cmd.PersistentFlags().Bool("bare-logs", false, "print logs plainly if they are output to the terminal")
 	cmd.PersistentFlags().String("log-file", logging.DefaultFile, "print logs to the specified file")
 
 	if err := cmd.MarkPersistentFlagFilename("log-file"); err != nil {
@@ -127,6 +126,8 @@ func addFlags(cmd *cobra.Command) error {
 	if err := cmd.PersistentFlags().MarkHidden("disable-log-rotation"); err != nil {
 		return fmt.Errorf("failed to mark the \"disable-log-rotation\" flag as hidden: %w", err)
 	}
+
+	cmd.PersistentFlags().Bool("plain-logs", false, "print logs plainly if they are output to the terminal")
 
 	return nil
 }
