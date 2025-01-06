@@ -8,6 +8,7 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
+	"github.com/anttikivi/reginald/internal/paths"
 	"github.com/fatih/color"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
@@ -198,6 +199,43 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 	// I think this is stupid but still a fine way to pass the color information
 	// to the logging init.
 	cfg.Log.UseColor = cfg.UseColor
+
+	cfg, err := cleanPaths(cfg)
+	if err != nil {
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("failed to clean config paths: %w", err))
+	}
+
+	return cfg, nil
+}
+
+// cleanPaths cleans the paths in the config instance and makes them absolute.
+// It also resolves home directories and environment variables in them.
+func cleanPaths(cfg *Config) (*Config, error) {
+	var (
+		p   string
+		err error
+	)
+
+	p, err = paths.Abs(cfg.BaseDirectory)
+	if err != nil {
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("failed to turn %q to an absolute path: %w", p, err))
+	}
+
+	cfg.BaseDirectory = p
+
+	p, err = paths.Abs(cfg.ConfigFile)
+	if err != nil {
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("failed to turn %q to an absolute path: %w", p, err))
+	}
+
+	cfg.ConfigFile = p
+
+	p, err = paths.Abs(cfg.Log.File)
+	if err != nil {
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("failed to turn %q to an absolute path: %w", p, err))
+	}
+
+	cfg.Log.File = p
 
 	return cfg, nil
 }
