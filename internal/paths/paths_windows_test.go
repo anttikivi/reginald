@@ -1,3 +1,5 @@
+//go:build windows
+
 package paths_test
 
 import (
@@ -35,7 +37,7 @@ func TestExpandEnv(t *testing.T) {
 		{
 			"some/path/%%/here",
 			map[string]string{"some/path/%WITHVAR%/here": "not this!", "WITHVAR": "var"},
-			"some/path/%%/here",
+			"some/path/%/here",
 		},
 		{
 			"%some%/path/var/here",
