@@ -17,17 +17,15 @@ type Config struct {
 }
 
 const (
-	// DefaultValueFormat is the initial default value for the `log-format`
-	// value. The default is later determined by the log output.
-	DefaultValueFormat = ""
+	// DefaultFormat is the initial default value for the `log-format` value.
+	// The default is later determined by the log output.
+	DefaultFormat = FormatJSON
 
-	// DefaultValueLevel is the default config value for the logging level. It
-	// is a string as the config options are given as strings.
-	DefaultValueLevel = "INFO"
+	// DefaultLevel is the default config value for the logging level.
+	DefaultLevel = LevelInfo
 
-	// DefaultValueOutput is the default config value for the logging output.
-	// It is a string as the config options are given as strings.
-	DefaultValueOutput = ValueOutputFile
+	// DefaultOutput is the default config value for the logging output.
+	DefaultOutput = OutputFile
 
 	// DefaultPlain is the default value for whether logs should be printed
 	// without decorations to the terminal.

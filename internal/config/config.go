@@ -208,9 +208,9 @@ func setDefaults(vpr *viper.Viper) {
 	vpr.SetDefault(KeyRepository, "")
 	vpr.SetDefault(logging.KeyPlain, logging.DefaultPlain)
 	vpr.SetDefault(logging.KeyFile, logging.DefaultFile)
-	vpr.SetDefault(logging.KeyFormat, logging.DefaultValueFormat)
-	vpr.SetDefault(logging.KeyLevel, logging.DefaultValueLevel)
-	vpr.SetDefault(logging.KeyOutput, logging.DefaultValueOutput)
+	vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat.String())
+	vpr.SetDefault(logging.KeyLevel, logging.DefaultLevel.String())
+	vpr.SetDefault(logging.KeyOutput, logging.DefaultOutput.String())
 	vpr.SetDefault(logging.KeyRotate, logging.DefaultRotate)
 }
 

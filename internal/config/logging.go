@@ -33,7 +33,7 @@ func handleLogOutConfigValue(vpr *viper.Viper, varname, output string) (string, 
 
 		// If the value is not a preset value, we assume it to be
 		// filename.
-		return logging.ValueOutputFile, s, nil
+		return logging.OutputFile.String(), s, nil
 	}
 
 	return output, "", nil
@@ -42,7 +42,7 @@ func handleLogOutConfigValue(vpr *viper.Viper, varname, output string) (string, 
 func handleLogFileConfigValue(vpr *viper.Viper, varname, output, filename string) (string, string) {
 	if s := vpr.GetString(varname); s != "" {
 		if output == "" {
-			return logging.ValueOutputFile, s
+			return logging.OutputFile.String(), s
 		}
 
 		// If the output is already set, we can only set the filename. This way
@@ -143,7 +143,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 	// ignore the case that multiple values are selected.
 	switch {
 	case cmd.Flags().Changed("log-file"):
-		vpr.Set(logging.KeyOutput, logging.ValueOutputFile)
+		vpr.Set(logging.KeyOutput, logging.OutputFile.String())
 
 		f, err := cmd.Flags().GetString("log-file")
 		if err != nil {
@@ -168,7 +168,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 		}
 
 		if v {
-			vpr.Set(logging.KeyOutput, logging.ValueOutputStderr)
+			vpr.Set(logging.KeyOutput, logging.OutputStderr.String())
 		}
 	case cmd.Flags().Changed("log-stdout"):
 		v, err := cmd.Flags().GetBool("log-stdout")
@@ -182,7 +182,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 		}
 
 		if v {
-			vpr.Set(logging.KeyOutput, logging.ValueOutputStdout)
+			vpr.Set(logging.KeyOutput, logging.OutputStdout.String())
 		}
 	case cmd.Flags().Changed("log-none"):
 		v, err := cmd.Flags().GetBool("log-none")
@@ -196,7 +196,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 		}
 
 		if v {
-			vpr.Set(logging.KeyOutput, logging.ValueOutputNone)
+			vpr.Set(logging.KeyOutput, logging.OutputNone.String())
 		}
 	case cmd.Flags().Changed("log-null"):
 		v, err := cmd.Flags().GetBool("log-null")
@@ -210,7 +210,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 		}
 
 		if v {
-			vpr.Set(logging.KeyOutput, logging.ValueOutputNone)
+			vpr.Set(logging.KeyOutput, logging.OutputNone.String())
 		}
 	case cmd.Flags().Changed("disable-logs"):
 		v, err := cmd.Flags().GetBool("disable-logs")
@@ -224,7 +224,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 		}
 
 		if v {
-			vpr.Set(logging.KeyOutput, logging.ValueOutputNone)
+			vpr.Set(logging.KeyOutput, logging.OutputNone.String())
 		}
 	case cmd.Flags().Changed("no-logs"):
 		v, err := cmd.Flags().GetBool("no-logs")
@@ -238,7 +238,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 		}
 
 		if v {
-			vpr.Set(logging.KeyOutput, logging.ValueOutputNone)
+			vpr.Set(logging.KeyOutput, logging.OutputNone.String())
 		}
 	}
 }
@@ -278,14 +278,14 @@ func parseLoggingConfig(vpr *viper.Viper, cmd *cobra.Command) error {
 		return fmt.Errorf("%w", err)
 	}
 
-	output := vpr.GetString(logging.KeyOutput)
+	output := strings.ToLower(vpr.GetString(logging.KeyOutput))
 	switch output {
-	case logging.ValueOutputFile:
-		vpr.SetDefault(logging.KeyFormat, logging.ValueFormatJSON)
-	case logging.ValueOutputStderr, logging.ValueOutputStdout:
-		vpr.SetDefault(logging.KeyFormat, logging.ValueFormatText)
+	case strings.ToLower(logging.OutputFile.String()):
+		vpr.SetDefault(logging.KeyFormat, logging.FormatJSON.String())
+	case strings.ToLower(logging.OutputStderr.String()), strings.ToLower(logging.OutputStdout.String()):
+		vpr.SetDefault(logging.KeyFormat, logging.FormatText.String())
 	default:
-		vpr.SetDefault(logging.KeyFormat, logging.ValueFormatJSON)
+		vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat.String())
 	}
 
 	return nil

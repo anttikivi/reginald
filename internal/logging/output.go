@@ -30,27 +30,8 @@ const (
 	OutputNone
 )
 
-const (
-	// ValueOutputFile is the string representation of [OutputFile] as it should
-	// be printed and used in configs. The value in configs is case-insensitive.
-	ValueOutputFile = "file"
-
-	// ValueOutputStderr is the string representation of [OutputStderr] as it
-	// should be printed and used in configs. The value in configs is
-	// case-insensitive.
-	ValueOutputStderr = "stderr"
-
-	// ValueOutputStdout is the string representation of [OutputStdout] as it
-	// should be printed and used in configs. The value in configs is
-	// case-insensitive.
-	ValueOutputStdout = "stdout"
-
-	// ValueOutputNone is the string representation of [OutputNone] as it should
-	// be printed and used in configs. The value in configs is case-insensitive.
-	ValueOutputNone = "none"
-)
-
-// OutputValueNoneAliases contains the aliases that [Output] accepts instead of [ValueOutputNone] in the config.
+// OutputValueNoneAliases contains the aliases that [Output] accepts instead of
+// "none" in the config.
 //
 //nolint:gochecknoglobals // This value is used like a constant.
 var OutputValueNoneAliases = []string{"disable", "disabled", "nil", "null", "/dev/null"}
@@ -60,10 +41,10 @@ var OutputValueNoneAliases = []string{"disable", "disabled", "nil", "null", "/de
 //
 //nolint:gochecknoglobals // This value is used like a constant.
 var AllOutputValues = []string{
-	ValueOutputFile,
-	ValueOutputStderr,
-	ValueOutputStdout,
-	ValueOutputNone,
+	"file",
+	"stderr",
+	"stdout",
+	"none",
 	"disable",
 	"disabled",
 	"nil",
@@ -92,13 +73,13 @@ func (o Output) MarshalText() ([]byte, error) {
 func (o Output) String() string {
 	switch o {
 	case OutputFile:
-		return ValueOutputFile
+		return "file"
 	case OutputStderr:
-		return ValueOutputStderr
+		return "stderr"
 	case OutputStdout:
-		return ValueOutputStdout
+		return "stdout"
 	case OutputNone:
-		return ValueOutputNone
+		return "none"
 	default:
 		return "invalid"
 	}
@@ -131,13 +112,13 @@ func (o *Output) unmarshal(s string) error {
 	}
 
 	switch s {
-	case ValueOutputFile:
+	case "file":
 		*o = OutputFile
-	case ValueOutputStderr:
+	case "stderr":
 		*o = OutputStderr
-	case ValueOutputStdout:
+	case "stdout":
 		*o = OutputStdout
-	case ValueOutputNone:
+	case "none":
 		*o = OutputNone
 	default:
 		return fmt.Errorf("%w: %s", errInvalidOutput, s)
