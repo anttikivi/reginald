@@ -18,15 +18,17 @@ type Config struct {
 }
 
 const (
-	// DefaultFormat is the initial default value for the `log-format` value.
-	// The default is later determined by the log output.
-	DefaultFormat = ""
+	// DefaultValueFormat is the initial default value for the `log-format`
+	// value. The default is later determined by the log output.
+	DefaultValueFormat = ""
 
-	// DefaultLevel is the default value for log level.
-	DefaultLevel slog.Level = slog.LevelInfo
+	// DefaultValueLevel is the default config value for the logging level. It
+	// is a string as the config options are given as strings.
+	DefaultValueLevel = "info"
 
-	// DefaultLevelName is the name of the default value for log level.
-	DefaultLevelName = "info"
+	// DefaultValueOutput is the default config value for the logging output.
+	// It is a string as the config options are given as strings.
+	DefaultValueOutput = ValueOutputFile
 
 	// DefaultPlain is the default value for whether logs should be printed
 	// without decorations to the terminal.
@@ -46,10 +48,6 @@ const (
 	// KeyLevel is the config key for the log level value.
 	KeyLevel = "log.level"
 
-	// KeyLevelName is the config key for the intermediate logging level
-	// value.
-	KeyLevelName = "log.level-name"
-
 	// KeyOutput is the config key for the log output value. If it is set to
 	// `file`, the `log-file` must also be set.
 	KeyOutput = "log.output"
@@ -61,23 +59,40 @@ const (
 
 	// KeyRotate is the config key for the log rotation value.
 	KeyRotate = "log.rotate"
+
+	// KeyStderr is the config key for settings the logging output to stderr.
+	KeyStderr = "log.stderr"
+
+	// KeyStdout is the config key for settings the logging output to stdout.
+	KeyStdout = "log.stdout"
+
+	// All of the aliases for the boolean disabling the logging.
+	KeyNone     = "log.none"
+	KeyNil      = "log.nil"
+	KeyNull     = "log.null"
+	KeyDisable  = "log.disable"
+	KeyDisabled = "log.disabled"
 )
 
 var (
 	// DefaultFile is the name for the default file for logging output.
 	//
-	//nolint:gochecknoglobals // this value is shared and use like a constant
+	//nolint:gochecknoglobals // Used like a constant.
 	DefaultFile = strings.ToLower(constants.Name) + ".log"
 
-	// OutputValueNoneAliases contains the aliases to set as `log-output` in
-	// order to achieve the disabling of the logging.
+	// AllOutputKeys contains all of the possible keys that set the logging
+	// output.
 	//
-	//nolint:gochecknoglobals // this value is shared and use like a constant
-	OutputValueNoneAliases = []string{
-		"disable",
-		"disabled",
-		"nil",
-		"null",
-		"/dev/null",
+	//nolint:gochecknoglobals // Used like a constant.
+	AllOutputKeys = []string{
+		KeyOutput,
+		KeyFile,
+		KeyStderr,
+		KeyStdout,
+		KeyNone,
+		KeyNil,
+		KeyNull,
+		KeyDisable,
+		KeyDisabled,
 	}
 )

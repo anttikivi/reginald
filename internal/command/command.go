@@ -110,12 +110,12 @@ func addFlags(cmd *cobra.Command) error {
 
 	cmd.PersistentFlags().String(
 		"log-level",
-		logging.DefaultLevelName,
-		"logging level to use, possible values are: debug, info, warn (or warning), error (or err), and off",
+		logging.DefaultValueLevel,
+		"logging level to use, possible values are: debug, info, warn, error, and off",
 	)
 	cmd.PersistentFlags().String(
 		"log-format",
-		logging.DefaultFormat,
+		logging.DefaultValueFormat,
 		fmt.Sprintf(
 			"format for the logs, possible values are: %q and %q",
 			logging.ValueFormatJSON,

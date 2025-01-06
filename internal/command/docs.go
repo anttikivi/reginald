@@ -51,7 +51,7 @@ The standard pattern is to have the desired configuration in this directory and 
 		"docs_flag_logformat_usage":   `Print the logging output of ` + constants.Name + ` in the given <format>. Possible values are "json" and "text". If no value is set in the command-line options or in the configuration, the default is to use "json" when outputting to a file and "text" when outputting to either stderr or stdout.`,
 		"docs_flag_logformat_valname": `"json"|"text"`,
 
-		"docs_flag_loglevel_usage": `Only print the logging output of ` + constants.Name + ` with its severity set to at least to <` + "`level`" + `>. The possible levels are "debug", "info", "warn", "error", and "off". The values are case-insensitive. You can also use "warning" as a synonym for "warn" and "err" as a synonym for "error". If the level is set to "off", ` + constants.Name + ` behaves as if logging is completely disabled. See the documentation on --no-logs for explanation of this behavior.`,
+		"docs_flag_loglevel_usage": `Only print the logging output of ` + constants.Name + ` with its severity set to at least to <` + "`level`" + `>. The possible levels are "debug", "info", "warn", "error", and "off". The values are case-insensitive. If the level is set to "off", ` + constants.Name + ` behaves as if logging is completely disabled. See the documentation on --no-logs for explanation of this behavior.`,
 
 		"docs_flag_nologrotation_usage": `Disable the built-in log rotation in ` + constants.Name + ` when the logging output to a file. You should use this flag or disable the log rotation in the configuration if you are using your own log rotation.`,
 	}

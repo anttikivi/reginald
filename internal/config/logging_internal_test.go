@@ -6,49 +6,9 @@ import (
 	"testing"
 
 	"github.com/anttikivi/reginald/internal/constants"
+	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/spf13/viper"
 )
-
-func Test_normalizeLogOutput(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		v       string
-		want    string
-		wantErr bool
-	}{
-		{name: "empty", v: "", want: "", wantErr: false},
-		{name: "bad", v: "bad", want: "", wantErr: true},
-		{name: "disable", v: "disable", want: "none", wantErr: false},
-		{name: "disabled", v: "disabled", want: "none", wantErr: false},
-		{name: "nil", v: "nil", want: "none", wantErr: false},
-		{name: "null", v: "null", want: "none", wantErr: false},
-		{name: "dev/null", v: "/dev/null", want: "none", wantErr: false},
-		{name: "file", v: "file", want: "file", wantErr: false},
-		{name: "stderr", v: "stderr", want: "stderr", wantErr: false},
-		{name: "stdout", v: "stdout", want: "stdout", wantErr: false},
-		{name: "none", v: "none", want: "none", wantErr: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, gotErr := normalizeLogOutput(tt.v)
-			if gotErr == nil && tt.wantErr {
-				t.Fatal("normalizeLogOutput() succeeded unexpectedly")
-			}
-
-			if gotErr != nil && !tt.wantErr {
-				t.Errorf("normalizeLogOutput() failed: %v", gotErr)
-			}
-
-			if got != tt.want {
-				t.Errorf("normalizeLogOutput() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
 
 func Test_logOutFromConfigs(t *testing.T) { //nolint:gocognit,maintidx // no need to worry about this in this test
 	tests := map[string]struct {
@@ -290,7 +250,7 @@ stdout = false
 null = true
 `,
 			env:          nil,
-			wantOut:      "none",
+			wantOut:      "null",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -301,7 +261,7 @@ output = "file"
 null = true
 `,
 			env:          nil,
-			wantOut:      "none",
+			wantOut:      "null",
 			wantFilename: "",
 			wantErr:      false,
 		},
@@ -312,7 +272,7 @@ stdout = false
 file = "./file"
 `,
 			env:          map[string]string{"REGINALD_LOG_NULL": "true"},
-			wantOut:      "none",
+			wantOut:      "null",
 			wantFilename: "./file",
 			wantErr:      false,
 		},
@@ -375,7 +335,7 @@ null = false
 				t.Logf("Config read, all values now: %v", vpr.AllSettings())
 			}
 
-			for _, alias := range allLogConfigNames {
+			for _, alias := range logging.AllOutputKeys {
 				if err := vpr.BindEnv(alias); err != nil {
 					t.Fatalf("unexpectedly failed to bind the environment variable \"REGINALD_%s\": %v",
 						strings.ReplaceAll(strings.ToUpper(alias), "-", "_"),

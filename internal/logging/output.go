@@ -2,6 +2,7 @@ package logging
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -48,6 +49,27 @@ const (
 	// be printed and used in configs. The value in configs is case-insensitive.
 	ValueOutputNone = "none"
 )
+
+// OutputValueNoneAliases contains the aliases that [Output] accepts instead of [ValueOutputNone] in the config.
+//
+//nolint:gochecknoglobals // This value is used like a constant.
+var OutputValueNoneAliases = []string{"disable", "disabled", "nil", "null", "/dev/null"}
+
+// AllOutputValues contains all of the possible values for the log output besides
+// a filename.
+//
+//nolint:gochecknoglobals // This value is used like a constant.
+var AllOutputValues = []string{
+	ValueOutputFile,
+	ValueOutputStderr,
+	ValueOutputStdout,
+	ValueOutputNone,
+	"disable",
+	"disabled",
+	"nil",
+	"null",
+	"/dev/null",
+}
 
 // MarshalJSON implements [encoding/json.Marshaler] by quoting the output of
 // [Output.String].
@@ -101,7 +123,14 @@ func (o *Output) UnmarshalText(text []byte) error {
 
 // unmarshal parses a string representing a [Output] for unmarshaling the value.
 func (o *Output) unmarshal(s string) error {
-	switch strings.ToLower(s) {
+	s = strings.ToLower(s)
+	if slices.Contains(OutputValueNoneAliases, s) {
+		*o = OutputNone
+
+		return nil
+	}
+
+	switch s {
 	case ValueOutputFile:
 		*o = OutputFile
 	case ValueOutputStderr:

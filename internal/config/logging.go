@@ -14,70 +14,16 @@ import (
 )
 
 var (
-	//nolint:gochecknoglobals // needed across the functions
-	logAliases = []string{
-		"log.file",
-		"log.stderr",
-		"log.stdout",
-		"log.none",
-		"log.null",
-		"log.disable",
-	}
-	//nolint:gochecknoglobals // needed across the functions
-	allLogConfigNames = append([]string{logging.KeyOutput}, logAliases...)
-	//nolint:gochecknoglobals // needed across the functions
-	logOutValues = append(
-		[]string{
-			logging.ValueOutputFile,
-			logging.ValueOutputStderr,
-			logging.ValueOutputStdout,
-			logging.ValueOutputNone,
-		},
-		logging.OutputValueNoneAliases...,
-	)
-	//nolint:gochecknoglobals // needed across the functions
-	logOutNormalValues = []string{
-		logging.ValueOutputFile,
-		logging.ValueOutputStderr,
-		logging.ValueOutputStdout,
-		logging.ValueOutputNone,
-	}
-)
-
-var (
 	errLogOutUnexpected   = errors.New("unexpected error while parsing log output")
 	errMultipleLogOutSrcs = errors.New("multiple log outputs specified")
-	errInvalidLogOutValue = errors.New("invalid log output value")
-	errInvalidLogOutVar   = errors.New("invalid log output variable")
+
+	errInvalidLogOutVar    = errors.New("invalid log output variable")
+	errInvalidLogOutValue  = errors.New("invalid log output value")
+	errMultipleNoneAliases = errors.New("multiple aliases for `log.none` used")
 )
 
-// normalizeLogOutput checks the given value for `log-output` and normalizes it.
-// The configuration allows for a more wider range or values, and this function
-// does the normalizing.
-func normalizeLogOutput(v string) (string, error) {
-	s := v
-	if s == "disable" || s == "disabled" || s == "nil" || s == "null" || s == "/dev/null" {
-		s = logging.ValueOutputNone
-	}
-
-	if s != "" && !slices.Contains(logOutNormalValues, s) {
-		return "", fmt.Errorf("%w: %s", errInvalidLogOutValue, s)
-	}
-
-	return s, nil
-}
-
-func handleLogOutConfigValue(vpr *viper.Viper, n, output string) (string, string, error) {
-	if output != "" {
-		return "", "", fmt.Errorf(
-			"%w: the variable %q already contains a value: %q",
-			errLogOutUnexpected,
-			"output",
-			output,
-		)
-	}
-
-	if s := vpr.GetString(n); slices.Contains(logOutValues, s) {
+func handleLogOutConfigValue(vpr *viper.Viper, varname, output string) (string, string, error) {
+	if s := vpr.GetString(varname); slices.Contains(logging.AllOutputValues, s) {
 		// The value for `log-output` is within the valid values and, thus,
 		// should be considered.
 		return s, "", nil
@@ -96,8 +42,8 @@ func handleLogOutConfigValue(vpr *viper.Viper, n, output string) (string, string
 	return output, "", nil
 }
 
-func handleLogFileConfigValue(vpr *viper.Viper, n, output, filename string) (string, string) {
-	if s := vpr.GetString(n); s != "" {
+func handleLogFileConfigValue(vpr *viper.Viper, varname, output, filename string) (string, string) {
+	if s := vpr.GetString(varname); s != "" {
 		if output == "" {
 			return logging.ValueOutputFile, s
 		}
@@ -111,9 +57,9 @@ func handleLogFileConfigValue(vpr *viper.Viper, n, output, filename string) (str
 	return output, filename
 }
 
-func handleStderroutConfigValue(vpr *viper.Viper, n, output string) string {
-	if b := vpr.GetBool(n); b {
-		return strings.TrimPrefix(n, "log.")
+func handleStderroutConfigValue(vpr *viper.Viper, varname, output string) string {
+	if b := vpr.GetBool(varname); b {
+		return strings.TrimPrefix(varname, "log.")
 	}
 
 	return output
@@ -129,11 +75,12 @@ func handleStderroutConfigValue(vpr *viper.Viper, n, output string) string {
 func logOutFromConfigs(vpr *viper.Viper) (string, string, error) {
 	var err error
 
-	varName, output, filename := "", "", ""
+	output, filename := "", ""
+	noneAliasUsed := ""
 
 	// Ensure that no duplicate keys are specified.
 	// The order of the keys are as specified in the variable.
-	for _, name := range allLogConfigNames {
+	for _, name := range logging.AllOutputKeys {
 		if !vpr.IsSet(name) {
 			continue
 		}
@@ -147,38 +94,20 @@ func logOutFromConfigs(vpr *viper.Viper) (string, string, error) {
 			}
 		case logging.KeyFile:
 			output, filename = handleLogFileConfigValue(vpr, name, output, filename)
-		case "log.stderr", "log.stdout":
+		case logging.KeyStderr, logging.KeyStdout:
 			output = handleStderroutConfigValue(vpr, name, output)
-		case "log.none", "log.null", "log.disable":
+		case logging.KeyNone, logging.KeyNil, logging.KeyNull, logging.KeyDisable, logging.KeyDisabled:
 			if b := vpr.GetBool(name); b {
-				switch {
-				case varName == "":
-					varName = name
-					output = logging.ValueOutputNone
-				case output == logging.ValueOutputNone:
-					return "", "", fmt.Errorf(
-						"%w: both %q and %q used to set log output",
-						errMultipleLogOutSrcs,
-						varName,
-						name,
-					)
-				default:
-					return "", "", fmt.Errorf(
-						"%w: both %q and %q enabled as log output",
-						errMultipleLogOutSrcs,
-						output,
-						name,
-					)
+				if noneAliasUsed == "" {
+					noneAliasUsed = name
+					output = strings.TrimPrefix(name, "log.")
+				} else {
+					return "", "", fmt.Errorf("%w: %q and %q", errMultipleNoneAliases, noneAliasUsed, name)
 				}
 			}
 		default:
-			return "", "", fmt.Errorf("%w: %s", errInvalidLogOutVar, name)
+			panic(exit.New(exit.CommandInitFailure, fmt.Errorf("%w: %s", errInvalidLogOutVar, name)))
 		}
-	}
-
-	output, err = normalizeLogOutput(output)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to normalize the log output: %w", err)
 	}
 
 	return output, filename, nil
@@ -323,7 +252,7 @@ func parseLogOutFlags(vpr *viper.Viper, cmd *cobra.Command) {
 func setLogOutput(vpr *viper.Viper, cmd *cobra.Command) error {
 	// Bind all of these to environment variables. Later we check for the
 	// command-line flags and as those override all of the other options.
-	for _, alias := range allLogConfigNames {
+	for _, alias := range logging.AllOutputKeys {
 		if err := vpr.BindEnv(alias); err != nil {
 			panic(
 				exit.New(
@@ -352,24 +281,14 @@ func parseLoggingConfig(vpr *viper.Viper, cmd *cobra.Command) error {
 		return fmt.Errorf("%w", err)
 	}
 
-	logfmt := vpr.GetString(logging.KeyFormat)
-	if logfmt == "" {
-		output := vpr.GetString(logging.KeyOutput)
-		switch output {
-		case logging.ValueOutputFile:
-			vpr.SetDefault(logging.KeyFormat, logging.ValueFormatJSON)
-		case logging.ValueOutputStderr, logging.ValueOutputStdout:
-			vpr.SetDefault(logging.KeyFormat, logging.ValueFormatText)
-		default:
-			vpr.SetDefault(logging.KeyFormat, logging.ValueFormatJSON)
-		}
-	}
-
-	// If the log level is set to `off`, the output for log is overridden and
-	// logs will be disabled.
-	levelName := vpr.GetString(logging.KeyLevel)
-	if levelName == "off" {
-		vpr.Set(logging.KeyOutput, logging.ValueOutputNone)
+	output := vpr.GetString(logging.KeyOutput)
+	switch output {
+	case logging.ValueOutputFile:
+		vpr.SetDefault(logging.KeyFormat, logging.ValueFormatJSON)
+	case logging.ValueOutputStderr, logging.ValueOutputStdout:
+		vpr.SetDefault(logging.KeyFormat, logging.ValueFormatText)
+	default:
+		vpr.SetDefault(logging.KeyFormat, logging.ValueFormatJSON)
 	}
 
 	return nil

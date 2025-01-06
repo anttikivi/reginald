@@ -121,7 +121,7 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 		}
 	}
 
-	setDefaults(vpr, false)
+	setDefaults(vpr)
 
 	// vpr.SetEnvPrefix(constants.CommandName)
 	vpr.SetEnvPrefix(strings.ToLower(constants.Name))
@@ -148,17 +148,6 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 // errors that are caused by invalid configuration (user error), and panics if
 // there are actual problems with the program.
 func Parse(vpr *viper.Viper) (*Config, error) {
-	// Set the name of the logging level to the intermediate value
-	vpr.Set(logging.KeyLevelName, vpr.GetString(logging.KeyLevel))
-
-	// Set the correct logging level parsed from the name.
-	logLevel, err := logging.Level(vpr.GetString(logging.KeyLevelName))
-	if err != nil {
-		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
-	}
-
-	vpr.Set(logging.KeyLevel, logLevel)
-
 	m := vpr.AllSettings()
 
 	logm, ok := m["log"].(map[string]any)
@@ -171,15 +160,15 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 		)
 	}
 
-	delete(logm, "stderr")
-	delete(logm, "stdout")
-	delete(logm, "none")
-	delete(logm, "null")
-	delete(logm, "disable")
-	delete(logm, "level-name")
+	// Remove the log output aliases from the map.
+	for _, s := range logging.AllOutputKeys {
+		if s != logging.KeyOutput {
+			delete(logm, strings.TrimPrefix(s, "log."))
+		}
+	}
 
 	cleanVpr := viper.New()
-	setDefaults(cleanVpr, true)
+	setDefaults(cleanVpr)
 
 	for k, v := range m {
 		cleanVpr.Set(k, v)
@@ -212,22 +201,17 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 // setDefaults sets the default settings to the given Viper instance. If parsed
 // is set to true, the function sets the real, parsed values to the correct keys
 // instead of intermediate values used while parsing the config sources.
-func setDefaults(vpr *viper.Viper, parsed bool) {
+func setDefaults(vpr *viper.Viper) {
 	vpr.SetDefault(KeyColor, !color.NoColor)
 	vpr.SetDefault(KeyConfigFile, "")
 	vpr.SetDefault(KeyDirectory, DefaultDirectory)
 	vpr.SetDefault(KeyRepository, "")
 	vpr.SetDefault(logging.KeyPlain, logging.DefaultPlain)
 	vpr.SetDefault(logging.KeyFile, logging.DefaultFile)
-	vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat)
-	vpr.SetDefault(logging.KeyOutput, logging.ValueOutputFile)
+	vpr.SetDefault(logging.KeyFormat, logging.DefaultValueFormat)
+	vpr.SetDefault(logging.KeyLevel, logging.DefaultValueLevel)
+	vpr.SetDefault(logging.KeyOutput, logging.DefaultValueOutput)
 	vpr.SetDefault(logging.KeyRotate, logging.DefaultRotate)
-
-	if parsed {
-		vpr.SetDefault(logging.KeyLevel, logging.DefaultLevel)
-	} else {
-		vpr.SetDefault(logging.KeyLevel, logging.DefaultLevelName)
-	}
 }
 
 // bindString binds a Viper config value to an environment variable and,

@@ -81,7 +81,7 @@ func FastInit(cmd *cobra.Command) bool {
 // Handler creates an slog.Handler for the given options.
 // If the given options do not result in a valid handler, returns an error.
 func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
-	if w == io.Discard || cfg.Output == OutputNone {
+	if w == io.Discard || cfg.Output == OutputNone || cfg.Level == LevelOff {
 		return NullHandler{}, nil
 	}
 
