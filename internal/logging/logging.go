@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
@@ -20,7 +19,6 @@ import (
 type NullHandler struct{}
 
 const (
-	LevelOff                   slog.Level  = 16
 	DefaultTimeFormat                      = "2006-01-02T15:04:05.000-07:00"
 	DefaultDecoratedTimeFormat             = "2006-01-02 15:04:05"
 	DefaultJSONTimeFormat                  = "2006-01-02T15:04:05.000000-07:00"
@@ -36,7 +34,6 @@ const (
 var (
 	errInvalidOutput = errors.New("invalid log output")
 	errInvalidFormat = errors.New("invalid log format")
-	errInvalidLevel  = errors.New("invalid log level")
 )
 
 func (h NullHandler) Enabled(_ context.Context, _ slog.Level) bool {
@@ -122,14 +119,14 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 			return log.NewWithOptions(w, logOptions), nil
 		}
 		//nolint:exhaustruct // We want to use the default values.
-		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil
+		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.Level(level)}), nil
 	case FormatText:
 		if decorate {
 			return log.NewWithOptions(w, logOptions), nil
 		}
 
 		//nolint:exhaustruct // We want to use the default values.
-		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil
+		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.Level(level)}), nil
 	default:
 		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %v", errInvalidFormat, format))
 	}
@@ -165,26 +162,6 @@ func Init(cfg *Config) error {
 	)
 
 	return nil
-}
-
-// Level returns the slog.Level that corresponds to the given string.
-// If the string is not a valid log level, returns an error.
-func Level(l string) (slog.Level, error) {
-	switch strings.ToLower(l) {
-	case "debug":
-		return slog.LevelDebug, nil
-	case "info":
-		return slog.LevelInfo, nil
-	case "warn", "warning":
-		return slog.LevelWarn, nil
-	case "error", "err":
-		return slog.LevelError, nil
-	case "off":
-		// TODO: Figure out a better value. Logs are disabled anyway.
-		return LevelOff, nil
-	default:
-		return slog.LevelDebug, fmt.Errorf("%w: %v", errInvalidLevel, l)
-	}
 }
 
 // Writer returns the correct writer for the specified logger destination.

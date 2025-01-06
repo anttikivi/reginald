@@ -14,9 +14,6 @@ import (
 )
 
 var (
-	errLogOutUnexpected   = errors.New("unexpected error while parsing log output")
-	errMultipleLogOutSrcs = errors.New("multiple log outputs specified")
-
 	errInvalidLogOutVar    = errors.New("invalid log output variable")
 	errInvalidLogOutValue  = errors.New("invalid log output value")
 	errMultipleNoneAliases = errors.New("multiple aliases for `log.none` used")

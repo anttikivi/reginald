@@ -1,19 +1,18 @@
 package logging
 
 import (
-	"log/slog"
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
 )
 
 type Config struct {
-	File     string     `mapstructure:"file"`
-	Format   Format     `mapstructure:"format"`
-	Level    slog.Level `mapstructure:"level"`
-	Output   Output     `mapstructure:"output"`
-	Plain    bool       `mapstructure:"plain"`
-	Rotate   bool       `mapstructure:"rotate"`
+	File     string `mapstructure:"file"`
+	Format   Format `mapstructure:"format"`
+	Level    Level  `mapstructure:"level"`
+	Output   Output `mapstructure:"output"`
+	Plain    bool   `mapstructure:"plain"`
+	Rotate   bool   `mapstructure:"rotate"`
 	UseColor bool
 }
 
@@ -24,7 +23,7 @@ const (
 
 	// DefaultValueLevel is the default config value for the logging level. It
 	// is a string as the config options are given as strings.
-	DefaultValueLevel = "info"
+	DefaultValueLevel = "INFO"
 
 	// DefaultValueOutput is the default config value for the logging output.
 	// It is a string as the config options are given as strings.
