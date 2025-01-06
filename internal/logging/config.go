@@ -11,7 +11,7 @@ type Config struct {
 	File     string     `mapstructure:"file"`
 	Format   Format     `mapstructure:"format"`
 	Level    slog.Level `mapstructure:"level"`
-	Output   string     `mapstructure:"output"`
+	Output   Output     `mapstructure:"output"`
 	Plain    bool       `mapstructure:"plain"`
 	Rotate   bool       `mapstructure:"rotate"`
 	UseColor bool
@@ -61,14 +61,6 @@ const (
 
 	// KeyRotate is the config key for the log rotation value.
 	KeyRotate = "log.rotate"
-
-	ValueFormatJSON = "json"
-	ValueFormatText = "text"
-
-	ValueOutputFile   = "file"
-	ValueOutputNone   = "none"
-	ValueOutputStderr = "stderr"
-	ValueOutputStdout = "stdout"
 )
 
 var (

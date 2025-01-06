@@ -81,13 +81,13 @@ func FastInit(cmd *cobra.Command) bool {
 // Handler creates an slog.Handler for the given options.
 // If the given options do not result in a valid handler, returns an error.
 func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
-	if w == io.Discard || cfg.Output == "none" {
+	if w == io.Discard || cfg.Output == OutputNone {
 		return NullHandler{}, nil
 	}
 
 	format := cfg.Format
 	level := cfg.Level
-	decorate := (cfg.Output == "stderr" || cfg.Output == "stdout") && cfg.UseColor && !cfg.Plain
+	decorate := (cfg.Output == OutputStderr || cfg.Output == OutputStdout) && cfg.UseColor && !cfg.Plain
 
 	var logOptions log.Options
 
@@ -191,15 +191,15 @@ func Level(l string) (slog.Level, error) {
 // The filename file must be supplied if the destination dest is set to file.
 // If the destination is a file, parameter rotate controls whether Reginald
 // should take care of rotating the logs.
-func Writer(dest, file string, rotate bool) (io.Writer, error) {
-	switch dest {
-	case ValueOutputStdout:
-		return os.Stdout, nil
-	case ValueOutputStderr:
+func Writer(out Output, file string, rotate bool) (io.Writer, error) {
+	switch out {
+	case OutputStderr:
 		return os.Stderr, nil
-	case ValueOutputNone:
+	case OutputStdout:
+		return os.Stdout, nil
+	case OutputNone:
 		return io.Discard, nil
-	case ValueOutputFile:
+	case OutputFile:
 		if rotate {
 			return &lumberjack.Logger{
 				Filename:   file,
@@ -218,6 +218,6 @@ func Writer(dest, file string, rotate bool) (io.Writer, error) {
 			return fw, nil
 		}
 	default:
-		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %s", errInvalidOutput, dest))
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %s", errInvalidOutput, out))
 	}
 }

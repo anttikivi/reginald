@@ -19,6 +19,16 @@ const (
 	FormatText
 )
 
+const (
+	// ValueFormatJSON is the string representation of [FormatJSON] as it should
+	// be printed and used in configs. The value in configs is case-insensitive.
+	ValueFormatJSON = "json"
+
+	// ValueFormatText is the string representation of [FormatText] as it should
+	// be printed and used in configs. The value in configs is case-insensitive.
+	ValueFormatText = "text"
+)
+
 // MarshalJSON implements [encoding/json.Marshaler] by quoting the output of
 // [Format.String].
 func (f Format) MarshalJSON() ([]byte, error) {
@@ -48,7 +58,7 @@ func (f Format) String() string {
 	}
 }
 
-// UnmarshalJSON implements [encoding/json.Unmarshaler] It accepts any string
+// UnmarshalJSON implements [encoding/json.Unmarshaler]. It accepts any string
 // produced by [Format.MarshalJSON], ignoring case.
 func (f *Format) UnmarshalJSON(data []byte) error {
 	s, err := strconv.Unquote(string(data))
