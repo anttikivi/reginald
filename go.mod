@@ -5,6 +5,7 @@ go 1.22.9
 require (
 	github.com/anttikivi/go-semver v0.2.0
 	github.com/charmbracelet/log v0.4.0
+	github.com/cli/safeexec v1.0.1
 	github.com/fatih/color v1.18.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/spf13/cobra v1.8.1
@@ -16,7 +17,6 @@ require (
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/lipgloss v0.10.0 // indirect
-	github.com/cli/safeexec v1.0.1
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
