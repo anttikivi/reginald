@@ -9,6 +9,7 @@ import (
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/fatih/color"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -186,7 +187,15 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 
 	var cfg *Config
 
-	if err := cleanVpr.UnmarshalExact(&cfg); err != nil {
+	decoderOpts := viper.DecodeHook(
+		mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			mapstructure.StringToSliceHookFunc(","),
+			mapstructure.TextUnmarshallerHookFunc(),
+		),
+	)
+
+	if err := cleanVpr.UnmarshalExact(&cfg, decoderOpts); err != nil {
 		return nil, exit.New(
 			exit.InvalidConfig,
 			fmt.Errorf("%w: failed to convert the parsed config to `Config`: %w", ErrConfigType, err),

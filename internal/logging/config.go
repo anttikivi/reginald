@@ -9,7 +9,7 @@ import (
 
 type Config struct {
 	File     string     `mapstructure:"file"`
-	Format   string     `mapstructure:"format"`
+	Format   Format     `mapstructure:"format"`
 	Level    slog.Level `mapstructure:"level"`
 	Output   string     `mapstructure:"output"`
 	Plain    bool       `mapstructure:"plain"`

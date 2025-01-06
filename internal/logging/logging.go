@@ -20,7 +20,7 @@ import (
 type NullHandler struct{}
 
 const (
-	LevelOff                   slog.Level  = 12
+	LevelOff                   slog.Level  = 16
 	DefaultTimeFormat                      = "2006-01-02T15:04:05.000-07:00"
 	DefaultDecoratedTimeFormat             = "2006-01-02 15:04:05"
 	DefaultJSONTimeFormat                  = "2006-01-02T15:04:05.000000-07:00"
@@ -112,7 +112,7 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 	}
 
 	switch format {
-	case ValueFormatJSON:
+	case FormatJSON:
 		if decorate {
 			logOptions.Formatter = log.JSONFormatter
 			logOptions.ReportCaller = true
@@ -123,7 +123,7 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 		}
 		//nolint:exhaustruct // We want to use the default values.
 		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}), nil
-	case ValueFormatText:
+	case FormatText:
 		if decorate {
 			return log.NewWithOptions(w, logOptions), nil
 		}
@@ -131,7 +131,7 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 		//nolint:exhaustruct // We want to use the default values.
 		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), nil
 	default:
-		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %s", errInvalidFormat, format))
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %v", errInvalidFormat, format))
 	}
 }
 
