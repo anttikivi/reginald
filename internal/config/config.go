@@ -174,6 +174,10 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 		cleanVpr.Set(k, v)
 	}
 
+	if f, ok := m["config-file"]; (!ok || f == "") && FileFound(vpr) {
+		cleanVpr.Set(KeyConfigFile, vpr.ConfigFileUsed())
+	}
+
 	var cfg *Config
 
 	decoderOpts := viper.DecodeHook(
