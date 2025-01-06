@@ -6,7 +6,7 @@ import (
 	"github.com/anttikivi/reginald/internal/paths"
 )
 
-func TestCap(t *testing.T) {
+func TestExpandEnv(t *testing.T) {
 	tests := []struct {
 		path string
 		env  map[string]string
