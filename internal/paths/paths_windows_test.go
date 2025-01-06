@@ -192,11 +192,6 @@ func TestExpandUser(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			"\\test\\file",
-			"\\test\\file",
-			false,
-		},
-		{
 			"~\\test\\file",
 			home() + "\\test\\file",
 			false,

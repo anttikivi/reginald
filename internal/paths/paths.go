@@ -50,7 +50,7 @@ func ExpandUser(path string) (string, error) {
 		}
 
 		// Using the current user's home directory.
-		if path[1] == '/' {
+		if path[1] == '/' || path[1] == os.PathSeparator {
 			return filepath.Join(home, path[1:]), nil
 		}
 
@@ -70,7 +70,9 @@ func expandOtherUser(path string) (string, error) {
 		username string
 	)
 
-	if i = strings.IndexByte(path, '/'); i != -1 {
+	if i = strings.IndexByte(path, os.PathSeparator); i != -1 {
+		username = path[1:i]
+	} else if i = strings.IndexByte(path, '/'); i != -1 {
 		username = path[1:i]
 	} else {
 		username = path[1:]
@@ -82,10 +84,8 @@ func expandOtherUser(path string) (string, error) {
 	}
 
 	if i == -1 {
-		path = u.HomeDir
-	} else {
-		path = filepath.Join(u.HomeDir, path[i:]) + "/"
+		return u.HomeDir, nil
 	}
 
-	return path, nil
+	return filepath.Join(u.HomeDir, path[i:]), nil
 }
