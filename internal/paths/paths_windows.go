@@ -11,7 +11,7 @@ import (
 // values of the current environment variables. References to undefined
 // variables are replaced by the empty string.
 func ExpandEnv(path string) string {
-	if strings.ContainsRune(path, '%') {
+	if strings.Contains(path, "%") {
 		path = expandWinEnv(path)
 	}
 
