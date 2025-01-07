@@ -17,7 +17,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-var errNoRepo = errors.New("no remote Git repository specified")
+var (
+	errNoRepo      = errors.New("no remote Git repository specified")
+	errInvalidRepo = errors.New("invalid remote Git repository")
+)
 
 // helpDescription is the description printed when the command is run with the
 // `--help` flag.
@@ -264,5 +267,34 @@ func run(cmd *cobra.Command, _ []string) error {
 	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
 	slog.Info("Received the repository config", "repository", cfg.Repository)
 
+	repo := cfg.Repository
+	if strings.HasPrefix(repo, "ssh://") && !cfg.DisableHTTPSInit {
+		slog.Debug("Converting the repository to HTTPS for cloning")
+
+		repo, err := toHTTPS(repo)
+		if err != nil {
+			return exit.New(exit.InvalidConfig, fmt.Errorf("cannot convert repository from SSH to HTTPS: %w", err))
+		}
+
+		slog.Debug("Conversion done", "repository", repo)
+	}
+
 	return nil
+}
+
+func toHTTPS(repo string) (string, error) {
+	repo = strings.TrimPrefix(repo, "ssh://")
+
+	// Remove `user@`.
+	i := strings.IndexByte(repo, '@')
+	if i == -1 {
+		return "", fmt.Errorf("%w: no '@' found", errInvalidRepo)
+	}
+
+	repo = repo[i+1:]
+
+	// This should suffice as the URL was "normalized" earlier.
+	repo = "https://" + repo
+
+	return repo, nil
 }
