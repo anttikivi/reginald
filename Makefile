@@ -2,7 +2,11 @@ GCI_VERSION = 0.13.5
 GOFUMPT_VERSION = 0.7.0
 GOLANGCI_LINT_VERSION = 1.62.2
 GOLINES_VERSION = 0.12.2
-LICENSEI_VERSION = 0.9.0
+GO_LICENSES_VERSION = 1.6.0
+
+ALLOWED_LICENSES = "Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,MPL-2.0"
+
+GO_MODULE_NAME = github.com/anttikivi/reginald
 
 OUTPUT_NAME ?= rgl
 
@@ -72,20 +76,9 @@ golangci-lint:
 	@go run github.com/golangci/golangci-lint/cmd/golangci-lint@v$(GOLANGCI_LINT_VERSION) run ./...
 
 ## License checks
-# These are meant to be run in the CI.
 
 .PHONY: license-check
 license-check:
-	go mod vendor
-	bin/licensei cache --debug
-	bin/licensei check --debug
-	bin/licensei header --debug
-	rm -rf vendor/
-	git diff --exit-code
-
-bin/licensei: bin/licensei-$(LICENSEI_VERSION)
-	@ln -sf licensei-$(LICENSEI_VERSION) bin/licensei
-bin/licensei-$(LICENSEI_VERSION):
-	@mkdir -p bin
-	curl -sfL https://git.io/licensei | bash -s v$(LICENSEI_VERSION)
-	@mv bin/licensei $@
+	go mod verify
+	go mod download
+	go run github.com/google/go-licenses@v$(GO_LICENSES_VERSION) check --include_tests $(GO_MODULE_NAME)/... --allowed_licenses=$(ALLOWED_LICENSES)
