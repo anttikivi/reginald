@@ -116,6 +116,35 @@ var ErrConfigType = errors.New("invalid config type")
 //nolint:gochecknoglobals // Shared within the process, used like a constant.
 var EnvReplacer = strings.NewReplacer("-", "_", ".", "_")
 
+// BindString binds a Viper config value to an environment variable and,
+// optionally, to a flag. The config key must be given. If flag is an empty
+// string, it won't be bound.
+func BindString(vpr *viper.Viper, cmd *cobra.Command, key, flag string) {
+	if flag != "" {
+		if err := vpr.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
+			panic(
+				exit.New(
+					exit.CommandInitFailure,
+					fmt.Errorf("failed to bind the flag %q to config %q: %w", flag, key, err),
+				),
+			)
+		}
+	}
+
+	if err := vpr.BindEnv(key); err != nil {
+		panic(
+			exit.New(
+				exit.CommandInitFailure,
+				fmt.Errorf(
+					"failed to bind the environment variable \"REGINALD_%s\" to config: %w",
+					EnvReplacer.Replace(strings.ToUpper(key)),
+					err,
+				),
+			),
+		)
+	}
+}
+
 // Init initializes the Viper instance for the current run. It resolves the
 // configuration values needed for unmarshaling into [Config]. It returns an
 // error for errors that are caused by invalid configuration (user error), and
@@ -132,15 +161,12 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 		vpr.Set(KeyColor, false)
 	}
 
-	bindString(vpr, cmd, KeyConfigFile, "config-file")
-	bindString(vpr, cmd, KeyDirectory, "directory")
-	bindString(vpr, cmd, KeyGitProtocol, "protocol")
-	bindString(vpr, cmd, KeyGitSSHUser, "ssh-user")
-	bindString(vpr, cmd, KeyRepository, "")
-	bindString(vpr, cmd, KeyRepositoryHostname, "host")
-	bindString(vpr, cmd, logging.KeyFormat, "log-format")
-	bindString(vpr, cmd, logging.KeyLevel, "log-level")
-	bindString(vpr, cmd, logging.KeyPlain, "plain-logs")
+	BindString(vpr, cmd, KeyConfigFile, "config-file")
+	BindString(vpr, cmd, KeyDirectory, "directory")
+	BindString(vpr, cmd, KeyRepository, "")
+	BindString(vpr, cmd, logging.KeyFormat, "log-format")
+	BindString(vpr, cmd, logging.KeyLevel, "log-level")
+	BindString(vpr, cmd, logging.KeyPlain, "plain-logs")
 
 	// Check the log rotation. There are two command-line flags that can be used
 	// to disable rotating log; check if either of them have been changed and
@@ -315,33 +341,4 @@ func setDefaults(vpr *viper.Viper) {
 	vpr.SetDefault(logging.KeyLevel, logging.DefaultLevel.String())
 	vpr.SetDefault(logging.KeyOutput, logging.DefaultOutput.String())
 	vpr.SetDefault(logging.KeyRotate, logging.DefaultRotate)
-}
-
-// bindString binds a Viper config value to an environment variable and,
-// optionally, to a flag. The config key must be given. If flag is an empty
-// string, it won't be bound.
-func bindString(vpr *viper.Viper, cmd *cobra.Command, key, flag string) {
-	if flag != "" {
-		if err := vpr.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
-			panic(
-				exit.New(
-					exit.CommandInitFailure,
-					fmt.Errorf("failed to bind the flag %q to config %q: %w", flag, key, err),
-				),
-			)
-		}
-	}
-
-	if err := vpr.BindEnv(key); err != nil {
-		panic(
-			exit.New(
-				exit.CommandInitFailure,
-				fmt.Errorf(
-					"failed to bind the environment variable \"REGINALD_%s\" to config: %w",
-					EnvReplacer.Replace(strings.ToUpper(key)),
-					err,
-				),
-			),
-		)
-	}
 }

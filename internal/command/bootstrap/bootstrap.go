@@ -50,16 +50,19 @@ func NewCommand(vpr *viper.Viper) (*cobra.Command, error) {
 		config.DefaultRepositoryHostname,
 		"hostname to use for cloning the remote dotfiles repository if the given repository is not a full URL",
 	)
+	config.BindString(vpr, cmd, config.KeyRepositoryHostname, "host")
 	cmd.Flags().String(
 		"protocol",
 		config.DefaultGitProtocol.String(),
 		"protocol used in cloning the remote dotfiles repository if the given repository is not a full URL",
 	)
+	config.BindString(vpr, cmd, config.KeyGitProtocol, "protocol")
 	cmd.Flags().String(
 		"ssh-user",
 		config.DefaultGitSSHUser,
 		"SSH user used in cloning the remote dotfiles repository if the given repository is not a full URL and SSH is used for cloning",
 	)
+	config.BindString(vpr, cmd, config.KeyGitSSHUser, "ssh-user")
 	cmd.Flags().Bool(
 		"disable-https-init",
 		config.DefaultDisableHTTPSInit,
