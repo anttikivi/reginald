@@ -28,6 +28,21 @@ func NewPrinter(verbose, quiet, dryRun bool) *Printer {
 	}
 }
 
+func (p *Printer) Println(a ...any) {
+	if !p.Quiet {
+		fmt.Fprintln(p.Out, a...)
+	}
+}
+
+func (p *Printer) GrayPrintln(a ...any) {
+	if !p.Quiet {
+		gray := color.New(color.FgHiBlack)
+		s := gray.Sprint(a...)
+
+		fmt.Fprintln(p.Out, s)
+	}
+}
+
 func (p *Printer) Errorf(format string, a ...any) {
 	if !p.Quiet {
 		fmt.Fprintf(p.Err, format, a...)

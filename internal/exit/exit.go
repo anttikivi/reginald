@@ -22,6 +22,10 @@ const (
 	// Failure is the exit code for generic or unknown errors.
 	Failure Code = 1
 
+	// ExecFailure is the exit code for when a call to a [exec.Command] fails
+	// and no exit code is available.
+	ExecFailure Code = 2
+
 	// User errors.
 
 	// InvalidConfig is the exit code for when the program fails due to invalid

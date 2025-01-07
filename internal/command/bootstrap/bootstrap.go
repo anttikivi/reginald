@@ -315,6 +315,8 @@ func run(cmd *cobra.Command, _ []string) error {
 		}
 
 		slog.Debug("Conversion done", "repository", repo)
+
+		cfg.Repository = repo
 	}
 
 	slog.Debug("Checking if the directory exists", "dir", cfg.BaseDirectory)
@@ -328,6 +330,14 @@ func run(cmd *cobra.Command, _ []string) error {
 		p.RedErrorf("The file at %s already exists\n", cfg.BaseDirectory)
 
 		return exit.New(exit.InvalidConfigFile, fmt.Errorf("%w: %s", errFileExists, cfg.BaseDirectory))
+	}
+
+	if err = r.Run("git", "clone", cfg.Repository, cfg.BaseDirectory); err != nil {
+		if i, ok := runner.IsExit(err); ok {
+			return exit.New(exit.Code(i), fmt.Errorf("%w", err))
+		}
+
+		return exit.New(exit.ExecFailure, fmt.Errorf("%w", err))
 	}
 
 	return nil
