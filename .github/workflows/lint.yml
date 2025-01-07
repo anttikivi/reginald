@@ -69,33 +69,5 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Restore the cached license information
-        uses: actions/cache/restore@v4.2.0
-        with:
-          path: .licensei.cache
-          key: ${{ runner.os }}-licensei-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-licensei-
-
-      - name: Cache Licensei
-        uses: actions/cache@v4.2.0
-        with:
-          path: |
-            bin/licensei
-            bin/licensei-*
-          key: ${{ runner.os }}-make-${{ hashFiles('**/Makefile') }}
-          restore-keys: |
-            ${{ runner.os }}-make-
-
-      - name: Install Licensei
-        run: make bin/licensei
-
       - name: Check the dependency licenses
         run: make license-check
-
-      - name: Save the license information to the cache
-        uses: actions/cache/save@v4.2.0
-        if: always()
-        with:
-          path: .licensei.cache
-          key: ${{ runner.os }}-licensei-${{ hashFiles('**/go.sum') }}
