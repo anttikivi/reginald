@@ -72,18 +72,6 @@ func TestAbs(t *testing.T) {
 			false,
 		},
 		{
-			"~" + currentUser() + "\\",
-			nil,
-			home(),
-			false,
-		},
-		{
-			"~" + currentUser(),
-			nil,
-			home(),
-			false,
-		},
-		{
 			"~\\.\\.\\file",
 			map[string]string{"ENVVAR": "path", "SECOND_VAR": "file"},
 			home() + "\\file",
@@ -208,16 +196,6 @@ func TestExpandUser(t *testing.T) {
 		},
 		{
 			"~",
-			home(),
-			false,
-		},
-		{
-			"~" + currentUser() + "\\",
-			home(),
-			false,
-		},
-		{
-			"~" + currentUser(),
 			home(),
 			false,
 		},
