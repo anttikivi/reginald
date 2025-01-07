@@ -11,6 +11,7 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
+	"github.com/anttikivi/reginald/internal/output"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -39,6 +40,7 @@ func New(vpr *viper.Viper, ver string) (*cobra.Command, error) {
 		Version:           ver,
 		PersistentPreRunE: persistentPreRun,
 		RunE:              runHelp,
+		SilenceUsage:      true,
 	}
 
 	cmd.SetVersionTemplate(version.Template(ver))
@@ -217,10 +219,13 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	slog.Debug("Got the following raw settings", slog.Any("config", vpr.AllSettings()))
 	slog.Info("Running with the following configuration", slog.Any("config", cfg))
 
-	ctx := context.WithValue(cmd.Context(), config.ConfigContextKey, cfg)
-	cmd.SetContext(ctx)
+	p := output.New(cfg.Verbose, cfg.Quiet, cfg.DryRun)
 
-	slog.Debug("Set the command context with the config")
+	ctx := cmd.Context()
+	ctx = context.WithValue(ctx, config.ConfigContextKey, cfg)
+	ctx = context.WithValue(ctx, config.PrinterContextKey, p)
+
+	cmd.SetContext(ctx)
 
 	return nil
 }

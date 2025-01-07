@@ -65,8 +65,6 @@ func run(v string) exit.Code {
 	ctx := context.WithValue(context.Background(), config.ViperContextKey, vpr)
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-
 		var exitError *exit.Error
 		if errors.As(err, &exitError) {
 			return exitError.Code()
