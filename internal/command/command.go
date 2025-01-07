@@ -12,6 +12,7 @@ import (
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/output"
+	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -220,10 +221,12 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	slog.Info("Running with the following configuration", slog.Any("config", cfg))
 
 	p := output.NewPrinter(cfg.Verbose, cfg.Quiet, cfg.DryRun)
+	r := runner.New(p)
 
 	ctx := cmd.Context()
 	ctx = context.WithValue(ctx, config.ConfigContextKey, cfg)
 	ctx = context.WithValue(ctx, config.PrinterContextKey, p)
+	ctx = context.WithValue(ctx, config.RunnerContextKey, r)
 
 	cmd.SetContext(ctx)
 

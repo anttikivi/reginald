@@ -50,7 +50,8 @@ linters-settings:
       - b *testing.B
       - err error
       - i int
-      - p *printer.Printer
+      - p *output.Printer
+      - r *runner.Runner
       - s string
       - sb strings.Builder
       - T any

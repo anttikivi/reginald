@@ -14,6 +14,7 @@ import (
 	"github.com/anttikivi/reginald/internal/git"
 	"github.com/anttikivi/reginald/internal/output"
 	"github.com/anttikivi/reginald/internal/paths"
+	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -294,6 +295,13 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	slog.Debug("Got the Printer instance from context", slog.Any("printer", p))
+
+	r, ok := cmd.Context().Value(config.RunnerContextKey).(*runner.Runner)
+	if !ok || r == nil {
+		panic(exit.New(exit.CommandInitFailure, config.ErrNoRunner))
+	}
+
+	slog.Debug("Got the Runner instance from context", slog.Any("runner", r))
 
 	slog.Info("Received the repository config", "repository", cfg.Repository)
 
