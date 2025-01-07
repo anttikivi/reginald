@@ -26,7 +26,7 @@ func TestAbs(t *testing.T) {
 		{
 			"\\test\\file",
 			nil,
-			"\\test\\file",
+			"D:\\test\\file",
 			false,
 		},
 		{
@@ -56,7 +56,7 @@ func TestAbs(t *testing.T) {
 		{
 			"\\$ENVVAR\\${SECOND_VAR}",
 			map[string]string{"ENVVAR": "path", "SECOND_VAR": "file"},
-			"\\path\\file",
+			"D:\\path\\file",
 			false,
 		},
 		{
