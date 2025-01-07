@@ -7,6 +7,7 @@ import (
 
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
+	"github.com/anttikivi/reginald/internal/git"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/paths"
 	"github.com/fatih/color"
@@ -26,30 +27,83 @@ type Config struct {
 	// ConfigFile is the path to the resolved config file.
 	ConfigFile string `mapstructure:"config-file"`
 
+	// DisableHTTPSInit marks whether to disable using HTTPS during the initial
+	// repository cloning while the boostrapping. By default, the program uses
+	// HTTPS instead of the specified protocol to initially clone the dotfiles
+	// repository in order to allow using the files in dotfiles to set up the
+	// required credentials to use SSH later.
+	DisableHTTPSInit bool `mapstructure:"disable-https-init"`
+
+	// DryRun marks the current run as a "dry run" so that the command only
+	// prints what it would have done instead of actually doing anything.
+	DryRun bool `mapstructure:"dry-run"`
+
+	// GitProtocol is the protocol used in cloning the remote repository if the
+	// given repository is not a full URL.
+	GitProtocol git.Protocol `mapstructure:"git-protocol"`
+
+	// GitSSHUser is the SSH user to use in cloning the remote repository if the
+	// given repository is not a full URL and SSH is used for cloning the
+	// repository.
+	GitSSHUser string `mapstructure:"git-ssh-user"`
+
 	// Log contains the configuration for logging.
 	Log logging.Config `mapstructure:"log"`
 
-	// Repository is the remote Git repository that contains the so-called
-	// dotfiles. Initially it contains the value that the user set in the
-	// configuration but it is replaced by the resolved URL in the command.
+	// Quiet tells whether the command's output has been disabled.
+	Quiet bool `mapstructure:"quiet"`
+
+	// RepositoryName is the remote Git repository that contains the so-called
+	// dotfiles. This field contains that value the user has given. The parsed
+	// URL is stored in the Repository field.
 	Repository string `mapstructure:"repository"`
+
+	// RepositoryHostname is the Git hostname used for cloning the remote
+	// repository if the given repository is not a full URL.
+	RepositoryHostname string `mapstructure:"git-host"`
 
 	// UseColor tells whether the program should output colors to the terminal.
 	UseColor bool `mapstructure:"color"`
+
+	// Verbose tells whether the command should print more detailed output
+	// during its run.
+	Verbose bool `mapstructure:"verbose"`
 }
 
+// Configuration keys that are used to get and store that config values. The
+// program expects these same keys to be used in the config files.
 const (
-	// KeyColor is the config key for the value that enforces colors in output.
-	KeyColor = "color"
+	KeyColor              = "color"
+	KeyConfigFile         = "config-file"
+	KeyDirectory          = "directory"
+	KeyDisableHTTPSInit   = "disable-https-init"
+	KeyDryRun             = "dry-run"
+	KeyGitProtocol        = "git-protocol"
+	KeyGitSSHUser         = "git-ssh-user"
+	KeyQuiet              = "quiet"
+	KeyRepository         = "repository"
+	KeyRepositoryHostname = "git-host"
+	KeyVerbose            = "verbose"
+)
 
-	// KeyConfigFile is the config key for the config file value.
-	KeyConfigFile = "config-file"
+// Default values for the remote repository configuration.
+const (
+	// DefaultDisableHTTPSInit is the default config value for the flag that
+	// determines whether to skip the forced HTTPS clone in bootstrapping.
+	DefaultDisableHTTPSInit = false
 
-	// KeyDirectory is the config key for the base directory value.
-	KeyDirectory = "directory"
+	// DefaultGitProtocol is the default protocol used for cloning the remote
+	// repository if the given repository is not a full URL.
+	DefaultGitProtocol = git.HTTPS
 
-	// KeyRepository is the config key for the remote repository.
-	KeyRepository = "repository"
+	// DefaultGitSSHUser is the default SSH user to use for cloning the remote
+	// repository if the given repository is not a full URL and SSH is used for
+	// cloning the repository.
+	DefaultGitSSHUser = "git"
+
+	// DefaultRepositoryHostname is the default hostname to use for cloning the
+	// remote repository if the given repository is not a full URL.
+	DefaultRepositoryHostname = "github.com"
 )
 
 // ErrConfigType is error for cases where a value given in the config is the
@@ -80,7 +134,10 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 
 	bindString(vpr, cmd, KeyConfigFile, "config-file")
 	bindString(vpr, cmd, KeyDirectory, "directory")
+	bindString(vpr, cmd, KeyGitProtocol, "protocol")
+	bindString(vpr, cmd, KeyGitSSHUser, "ssh-user")
 	bindString(vpr, cmd, KeyRepository, "")
+	bindString(vpr, cmd, KeyRepositoryHostname, "host")
 	bindString(vpr, cmd, logging.KeyFormat, "log-format")
 	bindString(vpr, cmd, logging.KeyLevel, "log-level")
 	bindString(vpr, cmd, logging.KeyPlain, "plain-logs")
@@ -247,7 +304,11 @@ func setDefaults(vpr *viper.Viper) {
 	vpr.SetDefault(KeyColor, !color.NoColor)
 	vpr.SetDefault(KeyConfigFile, "")
 	vpr.SetDefault(KeyDirectory, DefaultDirectory)
+	vpr.SetDefault(KeyGitProtocol, DefaultGitProtocol.String())
+	vpr.SetDefault(KeyGitSSHUser, DefaultGitSSHUser)
 	vpr.SetDefault(KeyRepository, "")
+	vpr.SetDefault(KeyRepositoryHostname, DefaultRepositoryHostname)
+	vpr.SetDefault(KeyDisableHTTPSInit, DefaultDisableHTTPSInit)
 	vpr.SetDefault(logging.KeyPlain, logging.DefaultPlain)
 	vpr.SetDefault(logging.KeyFile, logging.DefaultFile)
 	vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat.String())

@@ -2,15 +2,14 @@ package config
 
 import "errors"
 
+// ContextKey is a key that is used with the command context within the program
+// to handle values associated with the context.
 type ContextKey string
 
+// Context keys that are used with the command context to store and get values.
 const (
-	// ConfigContextKey is the key for the config instance in the command
-	// context.
-	ConfigContextKey ContextKey = "cfg"
-
-	// ViperContextKey is the key for the Viper instance in the command context.
-	ViperContextKey ContextKey = "viper"
+	ConfigContextKey ContextKey = "cfg"   // key for the parsed config instance
+	ViperContextKey  ContextKey = "viper" // key for the Viper instance used to parse the configuration
 )
 
 var (

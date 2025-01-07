@@ -54,7 +54,33 @@ func New(vpr *viper.Viper, ver string) (*cobra.Command, error) {
 		)
 	}
 
-	cmd.AddCommand(bootstrap.NewCommand())
+	if err := vpr.BindPFlag(config.KeyQuiet, cmd.PersistentFlags().Lookup("quiet")); err != nil {
+		return nil, exit.New(
+			exit.CommandInitFailure,
+			fmt.Errorf("failed to bind the flag \"quiet\" to config %q: %w", config.KeyQuiet, err),
+		)
+	}
+
+	if err := vpr.BindPFlag(config.KeyVerbose, cmd.PersistentFlags().Lookup("verbose")); err != nil {
+		return nil, exit.New(
+			exit.CommandInitFailure,
+			fmt.Errorf("failed to bind the flag \"verbose\" to config %q: %w", config.KeyVerbose, err),
+		)
+	}
+
+	if err := vpr.BindPFlag(config.KeyDryRun, cmd.PersistentFlags().Lookup("dry-run")); err != nil {
+		return nil, exit.New(
+			exit.CommandInitFailure,
+			fmt.Errorf("failed to bind the flag \"dry-run\" to config %q: %w", config.KeyDryRun, err),
+		)
+	}
+
+	bootstrapCmd, err := bootstrap.NewCommand(vpr)
+	if err != nil {
+		return nil, exit.New(exit.CommandInitFailure, fmt.Errorf("failed to create the bootstrap command: %w", err))
+	}
+
+	cmd.AddCommand(bootstrapCmd)
 	cmd.AddCommand(version.NewCommand(ver))
 
 	return cmd, nil
@@ -68,6 +94,17 @@ func addFlags(cmd *cobra.Command) error {
 	if err := cmd.PersistentFlags().MarkHidden("no-color"); err != nil {
 		return fmt.Errorf("failed to mark the \"no-color\" flag as hidden: %w", err)
 	}
+
+	cmd.PersistentFlags().BoolP("verbose", "v", false, "print more verbose output")
+	cmd.PersistentFlags().BoolP("quiet", "q", false, "don't print output")
+	cmd.MarkFlagsMutuallyExclusive("verbose", "quiet")
+
+	cmd.PersistentFlags().BoolP(
+		"dry-run",
+		"n",
+		false,
+		"don't actually run the command but print what it would have done",
+	)
 
 	cmd.PersistentFlags().StringP("config-file", "c", "", "path to config file")
 
