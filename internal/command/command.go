@@ -219,7 +219,7 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	slog.Debug("Got the following raw settings", slog.Any("config", vpr.AllSettings()))
 	slog.Info("Running with the following configuration", slog.Any("config", cfg))
 
-	p := output.New(cfg.Verbose, cfg.Quiet, cfg.DryRun)
+	p := output.NewPrinter(cfg.Verbose, cfg.Quiet, cfg.DryRun)
 
 	ctx := cmd.Context()
 	ctx = context.WithValue(ctx, config.ConfigContextKey, cfg)

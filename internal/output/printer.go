@@ -17,8 +17,8 @@ type Printer struct {
 	Err     io.Writer // the writer for standard error output messages
 }
 
-// New creates a new instance of [Printer].
-func New(verbose, quiet, dryRun bool) *Printer {
+// NewPrinter creates a new instance of [Printer].
+func NewPrinter(verbose, quiet, dryRun bool) *Printer {
 	return &Printer{
 		Verbose: verbose,
 		Quiet:   quiet,
