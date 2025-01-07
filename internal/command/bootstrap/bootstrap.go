@@ -12,12 +12,15 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/git"
+	"github.com/anttikivi/reginald/internal/output"
+	"github.com/anttikivi/reginald/internal/paths"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var (
+	errFileExists  = errors.New("file already exists at the base directory path")
 	errNoRepo      = errors.New("no remote Git repository specified")
 	errInvalidRepo = errors.New("invalid remote Git repository")
 )
@@ -26,7 +29,7 @@ var (
 // `--help` flag.
 //
 //nolint:gochecknoglobals,lll // It is easier to have this here instead of inlining.
-var helpDescription = `Bootstrap clones the specified dotfiles directory and runs the initial installation.
+var helpDescription = `Bootstrap clones the specified dotfiles directory and runs the initial installation. It accepts two positional arguments, the remote repository and the directory where it should be cloned to, in that order. You can also specify those using the other configuration sources, please consult the documentation on configuration. Giving the remote repository and the directory using the positional arguments always takes precedence.
 
 Bootstrapping should only be run in an environment that is not set up. The command will fail if the dotfiles directory already exists.
 
@@ -38,14 +41,15 @@ After bootstrapping, please use the ` + "`install`" + ` command for subsequent r
 //nolint:lll // Cannot really make the help messages shorter.
 func NewCommand(vpr *viper.Viper) (*cobra.Command, error) {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
-		Use:               constants.BootstrapCommandName + " [repository]",
+		Use:               constants.BootstrapCommandName + " [repository] [directory]",
 		Aliases:           []string{"clone", "init", "initialise", "initialize", "setup"},
 		Short:             "Ask " + constants.Name + " to bootstrap your environment",
 		Long:              strutil.Cap(helpDescription, constants.HelpLineLen),
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(2), //nolint:mnd // Not really that magic of a number.
 		Annotations:       docsAnnotations(),
 		PersistentPreRunE: persistentPreRun,
 		RunE:              run,
+		SilenceUsage:      true,
 	}
 
 	cmd.Flags().String(
@@ -116,6 +120,24 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 	slog.Debug("Parsed the remote repository URL", "url", repo)
 
 	cfg.Repository = repo
+
+	dirArg := ""
+
+	if len(args) > 1 {
+		dirArg = args[1]
+	}
+
+	if dirArg != "" {
+		dirArg, err = paths.Abs(dirArg)
+		if err != nil {
+			return exit.New(
+				exit.InvalidConfig,
+				fmt.Errorf("failed to turn the given directory to an absolute path: %w", err),
+			)
+		}
+
+		cfg.BaseDirectory = dirArg
+	}
 
 	return nil
 }
@@ -265,6 +287,14 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
+
+	p, ok := cmd.Context().Value(config.PrinterContextKey).(*output.Printer)
+	if !ok || p == nil {
+		panic(exit.New(exit.CommandInitFailure, config.ErrNoPrinter))
+	}
+
+	slog.Debug("Got the Printer instance from context", slog.Any("printer", p))
+
 	slog.Info("Received the repository config", "repository", cfg.Repository)
 
 	repo := cfg.Repository
@@ -277,6 +307,19 @@ func run(cmd *cobra.Command, _ []string) error {
 		}
 
 		slog.Debug("Conversion done", "repository", repo)
+	}
+
+	slog.Debug("Checking if the directory exists", "dir", cfg.BaseDirectory)
+
+	exists, err := paths.Exists(cfg.BaseDirectory)
+	if err != nil {
+		return exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
+	}
+
+	if exists {
+		p.RedErrorf("The file at %s already exists\n", cfg.BaseDirectory)
+
+		return exit.New(exit.InvalidConfigFile, fmt.Errorf("%w: %s", errFileExists, cfg.BaseDirectory))
 	}
 
 	return nil

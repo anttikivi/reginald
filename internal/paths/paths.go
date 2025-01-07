@@ -1,7 +1,9 @@
 package paths
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -28,6 +30,24 @@ func Abs(path string) (string, error) {
 	}
 
 	return path, nil
+}
+
+// Exists reports whether a file exists in the given path.
+func Exists(name string) (bool, error) {
+	_, err := os.Lstat(name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+
+		if errors.Is(err, fs.ErrExist) {
+			return true, nil
+		}
+
+		return false, fmt.Errorf("failed to check if file at %s exists: %w", name, err)
+	}
+
+	return true, nil
 }
 
 // ExpandUser tries to replace "~" or "~username" in the string to match the
