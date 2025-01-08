@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Antti Kivi
+// SPDX-License-Identifier: MIT
+
 // Package bootstrap contains the `bootstrap` command of the program.
 package bootstrap
 

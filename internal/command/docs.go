@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Antti Kivi
+// SPDX-License-Identifier: MIT
+
 //nolint:lll // This file contains the input for generating documentation.
 package command
 

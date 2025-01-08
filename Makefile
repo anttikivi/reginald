@@ -1,3 +1,4 @@
+ADDLICENSE_VERSION = 1.1.1
 GCI_VERSION = 0.13.5
 GOFUMPT_VERSION = 0.7.0
 GOLANGCI_LINT_VERSION = 1.62.2
@@ -81,8 +82,13 @@ golangci-lint:
 
 ## License checks
 
+.PHONY: add-license
+add-license:
+	@go run github.com/google/addlicense@v$(ADDLICENSE_VERSION) -c "Antti Kivi" -y "(c) 2025" -l mit -s=only *.go cmd internal pkg plugins scripts
+
 .PHONY: license-check
 license-check:
 	go mod verify
 	go mod download
+	go run github.com/google/addlicense@v$(ADDLICENSE_VERSION) -check -c "Antti Kivi" -y "(c) 2025" -l mit -s=only *.go cmd internal pkg plugins scripts
 	go run github.com/google/go-licenses@v$(GO_LICENSES_VERSION) check --include_tests $(GO_MODULE_NAME)/... --allowed_licenses=$(ALLOWED_LICENSES)
