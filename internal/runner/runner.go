@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -49,28 +50,57 @@ func (r *Runner) LookPath(file string) (string, error) {
 	return path, nil
 }
 
-// Run runs the given command if this is not a dry run. It optionally, or if
+// Runf runs the given command if this is not a dry run. It optionally, or if
 // this is a dry run, prints the command before executing it.
 func (r *Runner) Run(name string, args ...string) error {
-	initialName := name
+	cmd := make([]string, 0, len(args)+1)
+	cmd = append(cmd, args...)
 
-	name, err := r.LookPath(name)
+	if err := r.Runf(cmd, "Running %s...", r.quoteCommand(name, args...)); err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	return nil
+}
+
+// Runf runs the given command if this is not a dry run. It optionally, or if
+// this is a dry run, prints the command before executing it.
+//
+// As opposed to [Runner.Run], Runf takes the command as an array and lets you
+// specify in [fmt.Printf]-style what is printed while the command is executing.
+func (r *Runner) Runf(command []string, format string, a ...any) error {
+	initialName := command[0]
+
+	name, err := r.LookPath(command[0])
 	if err != nil {
 		return fmt.Errorf("failed to look up %s from PATH: %w", initialName, err)
 	}
 
-	r.printCommand(name, args...)
+	r.printCommand(name, command[1:]...)
 
 	if r.DryRun {
 		return nil
 	}
 
-	cmd := exec.Command(name, args...)
-	cmd.Stderr = r.Printer.Err
-	cmd.Stdout = r.Printer.Out
+	cmd := exec.Command(name, command[1:]...)
 
-	if err = cmd.Run(); err != nil {
-		return fmt.Errorf("failed to run %s: %w", r.quoteCommand(name, args...), err)
+	var buf bytes.Buffer
+
+	if r.Printer.Verbose {
+		if err = r.runVerbose(cmd); err != nil {
+			return fmt.Errorf("failed to run %s: %w", r.quoteCommand(name, command[1:]...), err)
+		}
+
+		return nil
+	}
+
+	cmd.Stderr = &buf
+	cmd.Stdout = &buf
+
+	if err = r.Printer.Spinnerf(cmd.Run, format, a...); err != nil {
+		r.Printer.Error(buf.String())
+
+		return fmt.Errorf("failed to run %s: %w", r.quoteCommand(name, command[1:]...), err)
 	}
 
 	return nil
@@ -85,6 +115,20 @@ func IsExit(err error) (int, bool) {
 	}
 
 	return 0, false
+}
+
+// runVerbose is a helper to run the `exec.Cmd` if the program output is set to
+// be verbose or if you otherwise want the run to be verbose. It outputs the
+// stderr and stdout from the command to the [output.Printer] of this [Runner].
+func (r *Runner) runVerbose(cmd *exec.Cmd) error {
+	cmd.Stderr = r.Printer.Err
+	cmd.Stdout = r.Printer.Out
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	return nil
 }
 
 // printCommand prints the given command if the [Runner] is configured to print

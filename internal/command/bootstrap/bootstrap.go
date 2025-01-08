@@ -332,13 +332,19 @@ func run(cmd *cobra.Command, _ []string) error {
 		return exit.New(exit.InvalidConfigFile, fmt.Errorf("%w: %s", errFileExists, cfg.BaseDirectory))
 	}
 
-	if err = r.Run("git", "clone", cfg.Repository, cfg.BaseDirectory); err != nil {
+	if err = r.Runf([]string{"git", "clone", cfg.Repository, cfg.BaseDirectory}, "Cloning from %s...", cfg.Repository); err != nil { //nolint:lll // The message is needed.
 		if i, ok := runner.IsExit(err); ok {
 			return exit.New(exit.Code(i), fmt.Errorf("%w", err))
 		}
 
 		return exit.New(exit.ExecFailure, fmt.Errorf("%w", err))
 	}
+
+	p.Printf("Cloned the repository from %s to %s\n", cfg.Repository, cfg.BaseDirectory)
+	p.GreenPrintln("Bootstrap done")
+	p.YellowErrorln(
+		"Running the install after bootstrapping is not implemented yet!\nTo continue, please run `rgl install`",
+	)
 
 	return nil
 }
