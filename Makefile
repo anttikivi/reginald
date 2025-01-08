@@ -23,7 +23,7 @@ EXE = .exe
 endif
 
 .PHONY: all
-all: build
+all: build plugins
 
 scripts/build$(EXE): scripts/build.go
 ifeq ($(EXE),)
@@ -45,6 +45,10 @@ clean: scripts/build$(EXE)
 
 .PHONY: man
 man: scripts/build$(EXE)
+	@$< $@
+
+.PHONY: plugins
+plugins: scripts/build$(EXE)
 	@$< $@
 
 .PHONY: test
