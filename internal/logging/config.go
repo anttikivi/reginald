@@ -11,7 +11,6 @@ type Config struct {
 	Format   Format `mapstructure:"format"`
 	Level    Level  `mapstructure:"level"`
 	Output   Output `mapstructure:"output"`
-	Plain    bool   `mapstructure:"plain"`
 	Rotate   bool   `mapstructure:"rotate"`
 	UseColor bool
 }
@@ -26,10 +25,6 @@ const (
 
 	// DefaultOutput is the default config value for the logging output.
 	DefaultOutput = OutputFile
-
-	// DefaultPlain is the default value for whether logs should be printed
-	// without decorations to the terminal.
-	DefaultPlain = false
 
 	// DefaultRotate is the default value for whether to enable the built-in log
 	// rotation.
@@ -48,11 +43,6 @@ const (
 	// KeyOutput is the config key for the log output value. If it is set to
 	// `file`, the `log-file` must also be set.
 	KeyOutput = "log.output"
-
-	// KeyPlain is the config key for the log to be printed without decorations
-	// to terminal if colors are enabled and the logs are output to either
-	// stderr or stdout.
-	KeyPlain = "log.plain"
 
 	// KeyRotate is the config key for the log rotation value.
 	KeyRotate = "log.rotate"

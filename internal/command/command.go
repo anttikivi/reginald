@@ -171,8 +171,6 @@ func addFlags(cmd *cobra.Command) error {
 		return fmt.Errorf("failed to mark the \"disable-log-rotation\" flag as hidden: %w", err)
 	}
 
-	cmd.PersistentFlags().Bool("plain-logs", false, "print logs plainly if they are output to the terminal")
-
 	return nil
 }
 

@@ -10,8 +10,6 @@ import (
 
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
-	"github.com/anttikivi/reginald/internal/intutil"
-	"github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -82,53 +80,29 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 		return NullHandler{}, nil
 	}
 
-	format := cfg.Format
-	level := cfg.Level
-	decorate := (cfg.Output == OutputStderr || cfg.Output == OutputStdout) && cfg.UseColor && !cfg.Plain
-
-	var logOptions log.Options
-
-	if decorate {
-		logInt32, err := intutil.ToInt32(int(level))
-		if err != nil {
-			panic(
-				exit.New(
-					exit.Failure,
-					fmt.Errorf("failed to cast the logging level to a narrower type (int to int32): %w", err),
-				),
-			)
-		}
-
-		//nolint:exhaustruct // We want to use the default values.
-		logOptions = log.Options{
-			Level:           log.Level(logInt32),
-			ReportCaller:    false,
-			ReportTimestamp: false,
-			TimeFormat:      DefaultDecoratedTimeFormat,
-		}
+	timeFormat := DefaultJSONTimeFormat
+	if cfg.Format == FormatText {
+		timeFormat = DefaultDecoratedTimeFormat
 	}
 
-	switch format {
+	opts := slog.HandlerOptions{ //nolint:exhaustruct // We want to use the default values.
+		Level: slog.Level(cfg.Level),
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				return slog.String(slog.TimeKey, a.Value.Time().Format(timeFormat))
+			}
+
+			return a
+		},
+	}
+
+	switch cfg.Format {
 	case FormatJSON:
-		if decorate {
-			logOptions.Formatter = log.JSONFormatter
-			logOptions.ReportCaller = true
-			logOptions.ReportTimestamp = true
-			logOptions.TimeFormat = DefaultJSONTimeFormat
-
-			return log.NewWithOptions(w, logOptions), nil
-		}
-		//nolint:exhaustruct // We want to use the default values.
-		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.Level(level)}), nil
+		return slog.NewJSONHandler(w, &opts), nil
 	case FormatText:
-		if decorate {
-			return log.NewWithOptions(w, logOptions), nil
-		}
-
-		//nolint:exhaustruct // We want to use the default values.
-		return slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.Level(level)}), nil
+		return slog.NewTextHandler(w, &opts), nil
 	default:
-		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %v", errInvalidFormat, format))
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("%w: %v", errInvalidFormat, cfg.Format))
 	}
 }
 

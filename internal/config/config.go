@@ -166,7 +166,6 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 	BindString(vpr, cmd, KeyRepository, "")
 	BindString(vpr, cmd, logging.KeyFormat, "log-format")
 	BindString(vpr, cmd, logging.KeyLevel, "log-level")
-	BindString(vpr, cmd, logging.KeyPlain, "plain-logs")
 
 	// Check the log rotation. There are two command-line flags that can be used
 	// to disable rotating log; check if either of them have been changed and
@@ -335,7 +334,6 @@ func setDefaults(vpr *viper.Viper) {
 	vpr.SetDefault(KeyRepository, "")
 	vpr.SetDefault(KeyRepositoryHostname, DefaultRepositoryHostname)
 	vpr.SetDefault(KeyDisableHTTPSInit, DefaultDisableHTTPSInit)
-	vpr.SetDefault(logging.KeyPlain, logging.DefaultPlain)
 	vpr.SetDefault(logging.KeyFile, logging.DefaultFile)
 	vpr.SetDefault(logging.KeyFormat, logging.DefaultFormat.String())
 	vpr.SetDefault(logging.KeyLevel, logging.DefaultLevel.String())
