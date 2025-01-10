@@ -10,11 +10,11 @@ import (
 )
 
 type Config struct {
-	File     string `mapstructure:"file"`
-	Format   Format `mapstructure:"format"`
-	Level    Level  `mapstructure:"level"`
-	Output   Output `mapstructure:"output"`
-	Rotate   bool   `mapstructure:"rotate"`
+	File     string
+	Format   Format
+	Level    Level
+	Output   Output
+	Rotate   bool
 	UseColor bool
 }
 

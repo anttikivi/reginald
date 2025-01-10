@@ -4,6 +4,7 @@
 package constants
 
 const (
+	ApplyCommandName     = "apply"
 	BootstrapCommandName = "bootstrap"
 	VersionCommandName   = "version"
 )

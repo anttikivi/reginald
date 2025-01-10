@@ -37,10 +37,10 @@ type TaskPlugin struct {
 	Impl task.Task
 }
 
-func (t *TaskRPC) Name() string {
-	var resp string
+func (t *TaskRPC) Check(cfg *task.Config) bool {
+	var resp bool
 
-	if err := t.client.Call("Plugin.Name", new(any), &resp); err != nil {
+	if err := t.client.Call("Plugin.Check", cfg, &resp); err != nil {
 		panic(err)
 	}
 
@@ -57,14 +57,30 @@ func (t *TaskRPC) Run() error {
 	return resp
 }
 
-func (s *TaskRPCServer) Name(_ any, resp *string) error {
-	*resp = s.Impl.Name()
+func (t *TaskRPC) Type() string {
+	var resp string
+
+	if err := t.client.Call("Plugin.Type", new(any), &resp); err != nil {
+		panic(err)
+	}
+
+	return resp
+}
+
+func (s *TaskRPCServer) Check(cfg *task.Config, resp *bool) error {
+	*resp = s.Impl.Check(cfg)
 
 	return nil
 }
 
 func (s *TaskRPCServer) Run(_ any, resp *error) error { //nolint:gocritic // `resp` has to be pointer for RCP.
 	*resp = s.Impl.Run()
+
+	return nil
+}
+
+func (s *TaskRPCServer) Type(_ any, resp *string) error {
+	*resp = s.Impl.Type()
 
 	return nil
 }

@@ -108,7 +108,7 @@ func (s *Server) Describe() {
 
 	if len(s.tasks) > 0 {
 		for _, t := range s.tasks {
-			tasks = append(tasks, t.Name())
+			tasks = append(tasks, t.Type())
 		}
 	}
 
@@ -140,13 +140,13 @@ func (s *Server) Serve() error {
 		}
 	}
 
-	if len(s.cmds) > 0 {
+	if len(s.tasks) > 0 {
 		if plugins == nil {
 			plugins = plugin.PluginSet{}
 		}
 
 		for _, t := range s.tasks {
-			plugins["task-"+t.Name()] = &TaskPlugin{Impl: t}
+			plugins["task-"+t.Type()] = &TaskPlugin{Impl: t}
 		}
 	}
 

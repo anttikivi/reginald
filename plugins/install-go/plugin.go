@@ -11,24 +11,24 @@ import (
 	"github.com/anttikivi/reginald/pkg/task"
 )
 
-type InstallHomebrew struct{}
+type InstallGo struct{}
 
-func (p *InstallHomebrew) Name() string {
-	return "install-homebrew"
+func (p *InstallGo) Check(cfg *task.Config) bool {
+	return cfg != nil
 }
 
-func (p *InstallHomebrew) Run() error {
-	fmt.Fprintln(os.Stdout, "Installing Homebrew")
-
+func (p *InstallGo) Run() error {
 	return nil
 }
 
+func (p *InstallGo) Type() string {
+	return "install-go"
+}
+
 func main() {
-	server := plugin.NewTaskServer("install-homebrew", []task.Task{&InstallHomebrew{}})
+	server := plugin.NewTaskServer("install-go", []task.Task{&InstallGo{}})
 
 	server.Describe()
-
-	fmt.Fprintln(os.Stdout, "Hello from plugin")
 
 	if err := server.Serve(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error while running the plugin server: %v", err)

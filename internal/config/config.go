@@ -14,6 +14,7 @@ import (
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/paths"
 	"github.com/anttikivi/reginald/internal/plugins"
+	"github.com/anttikivi/reginald/pkg/task"
 	"github.com/fatih/color"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
@@ -26,7 +27,7 @@ import (
 type Config struct {
 	// BaseDirectory is the directory of operations for the program. It should
 	// be the local directory with the so-called dotfiles.
-	BaseDirectory string `mapstructure:"directory"`
+	BaseDirectory string `mapstructure:"base-directory"`
 
 	// ConfigFile is the path to the resolved config file.
 	ConfigFile string `mapstructure:"config-file"`
@@ -52,33 +53,36 @@ type Config struct {
 	GitSSHUser string `mapstructure:"git-ssh-user"`
 
 	// Log contains the configuration for logging.
-	Log logging.Config `mapstructure:"log"`
+	Log logging.Config
 
 	// PluginInfos contains the parsed information on the available plugins.
 	PluginInfos []plugins.PluginInfo
 
 	// PluginsDir is the directory where the program tries to find the plugin
 	// executables.
-	PluginsDir string `mapstructure:"plugins-dir"`
+	PluginsDir string `mapstructure:"plugins-directory"`
 
 	// Quiet tells whether the command's output has been disabled.
-	Quiet bool `mapstructure:"quiet"`
+	Quiet bool
 
 	// RepositoryName is the remote Git repository that contains the so-called
 	// dotfiles. This field contains that value the user has given. The parsed
 	// URL is stored in the Repository field.
-	Repository string `mapstructure:"repository"`
+	Repository string
 
 	// RepositoryHostname is the Git hostname used for cloning the remote
 	// repository if the given repository is not a full URL.
 	RepositoryHostname string `mapstructure:"git-host"`
+
+	// Tasks contains the task configs.
+	Tasks []task.Config
 
 	// UseColor tells whether the program should output colors to the terminal.
 	UseColor bool `mapstructure:"color"`
 
 	// Verbose tells whether the command should print more detailed output
 	// during its run.
-	Verbose bool `mapstructure:"verbose"`
+	Verbose bool
 }
 
 // Configuration keys that are used to get and store that config values. The
@@ -86,12 +90,12 @@ type Config struct {
 const (
 	KeyColor              = "color"
 	KeyConfigFile         = "config-file"
-	KeyDirectory          = "directory"
+	KeyDirectory          = "base-directory"
 	KeyDisableHTTPSInit   = "disable-https-init"
 	KeyDryRun             = "dry-run"
 	KeyGitProtocol        = "git-protocol"
 	KeyGitSSHUser         = "git-ssh-user"
-	KeyPluginsDir         = "plugins-dir"
+	KeyPluginsDir         = "plugins-directory"
 	KeyQuiet              = "quiet"
 	KeyRepository         = "repository"
 	KeyRepositoryHostname = "git-host"

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/anttikivi/reginald/internal/command/apply"
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
 	"github.com/anttikivi/reginald/internal/command/version"
 	"github.com/anttikivi/reginald/internal/config"
@@ -82,6 +83,8 @@ func New(vpr *viper.Viper, ver string) (*cobra.Command, error) {
 			fmt.Errorf("failed to bind the flag \"dry-run\" to config %q: %w", config.KeyDryRun, err),
 		)
 	}
+
+	cmd.AddCommand(apply.NewCommand(vpr))
 
 	bootstrapCmd, err := bootstrap.NewCommand(vpr)
 	if err != nil {
