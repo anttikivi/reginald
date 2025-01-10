@@ -52,14 +52,24 @@ var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks ca
 			return fmt.Errorf("failed to read the directory ./plugins: %w", err)
 		}
 
+		destDir, err := filepath.Abs("./share/reginald")
+		if err != nil {
+			return fmt.Errorf("failed to make the destination directory absolute: %w", err)
+		}
+
+		pluginsDir, err := filepath.Abs("./plugins")
+		if err != nil {
+			return fmt.Errorf("failed to make the plugins directory absolute: %w", err)
+		}
+
 		for _, f := range files {
 			if f.IsDir() {
 				err := run(
 					"go",
 					"build",
 					"-o",
-					"./bin/reginald-plugin-"+f.Name(),
-					"./plugins/%s"+f.Name(),
+					filepath.Join(destDir, "reginald-plugin-"+f.Name()),
+					filepath.Join(pluginsDir, f.Name()),
 				)
 				if err != nil {
 					return fmt.Errorf("failed to build %s: %w", f.Name(), err)

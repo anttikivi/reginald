@@ -65,7 +65,7 @@ var ErrEmptyPlugin = errors.New("plugin specified no commands or tasks")
 
 // NewServer returns a new plugins server. You can pass the commands and tasks
 // this plugin serves as parameters. If the plugin only serves the other, you
-// can pass a nil [PluginSet] to the other parameter.
+// can pass a nil [Set] to the other parameter.
 func NewServer(name string, cmds []command.Command, tasks []task.Task) Server {
 	return Server{
 		name:            name,
@@ -125,7 +125,7 @@ func (s *Server) Describe() {
 		os.Exit(ExitMarshalError)
 	}
 
-	fmt.Fprint(os.Stdout, string(out))
+	fmt.Fprintln(os.Stdout, string(out))
 	os.Exit(0)
 }
 

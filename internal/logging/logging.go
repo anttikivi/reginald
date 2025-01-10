@@ -11,9 +11,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
-	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -54,26 +52,13 @@ func (h NullHandler) WithGroup(_ string) slog.Handler {
 	return h
 }
 
-// CanFastInit reports whether the given command can skip parsing the
-// configuration for logging and instead default to using [NullHandler].
-func CanFastInit(cmd *cobra.Command) bool {
-	return cmd == nil || cmd.Name() == constants.VersionCommandName
-}
-
 // FastInit skip the normal logger initialization and defaults to using
 // [NullHandler] instead. Some commands (like `version`) don't require logging
-// or are better of running fast without parsing the config, so the parsing is
-// skipped and null logging is used instead. The function returns whether the
-// fast initialization was performed or not.
-func FastInit(cmd *cobra.Command) bool {
-	if CanFastInit(cmd) {
-		logger := slog.New(NullHandler{})
-		slog.SetDefault(logger)
-
-		return true
-	}
-
-	return false
+// or are better off running fast without parsing the config, so the parsing is
+// skipped and null logging is used instead.
+func FastInit() {
+	logger := slog.New(NullHandler{})
+	slog.SetDefault(logger)
 }
 
 // Handler creates an slog.Handler for the given options.

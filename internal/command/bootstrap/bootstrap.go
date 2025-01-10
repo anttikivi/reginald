@@ -53,6 +53,7 @@ func NewCommand(vpr *viper.Viper) (*cobra.Command, error) {
 		Annotations:       docsAnnotations(),
 		PersistentPreRunE: persistentPreRun,
 		RunE:              run,
+		SilenceErrors:     true,
 		SilenceUsage:      true,
 	}
 

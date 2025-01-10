@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Antti Kivi
 // SPDX-License-Identifier: MIT
 
-package plugin
+package plugins
 
 import (
 	"encoding/json"
@@ -13,13 +13,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/paths"
 	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/ui"
 	"github.com/anttikivi/reginald/pkg/plugin"
 )
 
-type Plugin struct {
+// PluginInfo is information on a found plugin.
+type PluginInfo struct {
 	Name            string
 	Executable      string
 	ProtocolVersion uint
@@ -27,8 +29,8 @@ type Plugin struct {
 	Tasks           plugin.Set
 }
 
-type PluginsInfo []Plugin
-
+// discoveryConfig is the settings passed to the [discover] function during the
+// plugin search.
 type discoveryConfig struct {
 	files   []os.DirEntry
 	dir     string
@@ -36,12 +38,45 @@ type discoveryConfig struct {
 	run     *runner.Runner
 }
 
+// DefaultDir is the default search directory for plugins.
+//
+//nolint:gochecknoglobals // Value is used as a constant.
+var DefaultDir string
+
+// Errors returned by the plugin search.
 var (
 	errDirectoryInPlugins = errors.New("plugin directory entry is a directory")
 	errInvalidPluginName  = errors.New("plugin name does not have the required prefix")
 )
 
-func Search(dir string, p *ui.Printer, r *runner.Runner) (PluginsInfo, error) {
+func init() { //nolint:gochecknoinits // The default directory has to be initialized.
+	var (
+		dir string
+		err error
+	)
+
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome != "" {
+		if dir, err = paths.Abs("${XDG_DATA_HOME}/reginald"); err != nil {
+			panic(exit.New(exit.CommandInitFailure, fmt.Errorf("failed to construct absolute path: %w", err)))
+		}
+	}
+
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			panic(exit.New(exit.CommandInitFailure, fmt.Errorf("failed to get the user home directory: %w", err)))
+		}
+
+		dir = filepath.Join(home, ".local", "share", "reginald")
+	}
+
+	DefaultDir = dir
+}
+
+// Search searches the given directory for valid plugins and returns a slice of
+// [PluginInfo]s on the plugins found.
+func Search(dir string, p *ui.Printer, r *runner.Runner) ([]PluginInfo, error) {
 	original := dir
 
 	dir, err := paths.Abs(dir)
@@ -73,11 +108,11 @@ func Search(dir string, p *ui.Printer, r *runner.Runner) (PluginsInfo, error) {
 	return plugins, nil
 }
 
-func discover(opts discoveryConfig) (PluginsInfo, error) {
+func discover(opts discoveryConfig) ([]PluginInfo, error) {
 	var (
 		p        = opts.printer
-		plugins  = make(PluginsInfo, 0)
-		pluginCh = make(chan *Plugin, len(opts.files))
+		plugins  = make([]PluginInfo, 0)
+		pluginCh = make(chan *PluginInfo, len(opts.files))
 		wg       sync.WaitGroup
 	)
 
@@ -130,7 +165,7 @@ func discover(opts discoveryConfig) (PluginsInfo, error) {
 	return plugins, nil
 }
 
-func checkPath(r *runner.Runner, f os.DirEntry, dir string) (*Plugin, error) {
+func checkPath(r *runner.Runner, f os.DirEntry, dir string) (*PluginInfo, error) {
 	fullPath := filepath.Join(dir, f.Name())
 	slog.Debug("Checking if an entry is a plugin", "name", f.Name(), "path", fullPath)
 
@@ -151,12 +186,14 @@ func checkPath(r *runner.Runner, f os.DirEntry, dir string) (*Plugin, error) {
 		return nil, fmt.Errorf("failed to run the plugin executable: %w", err)
 	}
 
+	slog.Debug("Ran the plugin description", "out", out)
+
 	var desc plugin.Descriptor
 	if err := json.Unmarshal(out, &desc); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the plugin executable descriptor: %w", err)
 	}
 
-	result := &Plugin{
+	result := &PluginInfo{
 		Name:            desc.Name,
 		Executable:      fullPath,
 		ProtocolVersion: desc.ProtocolVersion,

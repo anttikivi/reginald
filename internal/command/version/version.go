@@ -24,9 +24,13 @@ func NewCommand(v string) *cobra.Command {
 	return &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:   constants.VersionCommandName,
 		Short: "Print the version information of " + constants.Name,
+		Annotations: map[string]string{
+			"cmd_fast_init": "true",
+		},
 		Run: func(_ *cobra.Command, _ []string) {
 			fmt.Fprintln(os.Stdout, s)
 		},
+		SilenceErrors: true,
 	}
 }
 

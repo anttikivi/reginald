@@ -13,6 +13,7 @@ import (
 	"github.com/anttikivi/reginald/internal/git"
 	"github.com/anttikivi/reginald/internal/logging"
 	"github.com/anttikivi/reginald/internal/paths"
+	"github.com/anttikivi/reginald/internal/plugins"
 	"github.com/fatih/color"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
@@ -53,6 +54,11 @@ type Config struct {
 	// Log contains the configuration for logging.
 	Log logging.Config `mapstructure:"log"`
 
+	// PluginInfos contains the parsed information on the available plugins.
+	PluginInfos []plugins.PluginInfo
+
+	// PluginsDir is the directory where the program tries to find the plugin
+	// executables.
 	PluginsDir string `mapstructure:"plugins-dir"`
 
 	// Quiet tells whether the command's output has been disabled.
@@ -85,6 +91,7 @@ const (
 	KeyDryRun             = "dry-run"
 	KeyGitProtocol        = "git-protocol"
 	KeyGitSSHUser         = "git-ssh-user"
+	KeyPluginsDir         = "plugins-dir"
 	KeyQuiet              = "quiet"
 	KeyRepository         = "repository"
 	KeyRepositoryHostname = "git-host"
@@ -150,6 +157,24 @@ func BindString(vpr *viper.Viper, cmd *cobra.Command, key, flag string) {
 	}
 }
 
+// HasFastInit reports whether the given command should skip the lengthy
+// initialization steps, e.g. plugin search and logging initialization.
+func HasFastInit(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+
+	if cmd.Annotations == nil {
+		return false
+	}
+
+	if fastInit, ok := cmd.Annotations["cmd_fast_init"]; ok {
+		return fastInit == "true"
+	}
+
+	return false
+}
+
 // Init initializes the Viper instance for the current run. It resolves the
 // configuration values needed for unmarshaling into [Config]. It returns an
 // error for errors that are caused by invalid configuration (user error), and
@@ -168,6 +193,7 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 
 	BindString(vpr, cmd, KeyConfigFile, "config-file")
 	BindString(vpr, cmd, KeyDirectory, "directory")
+	BindString(vpr, cmd, KeyPluginsDir, "plugins-dir")
 	BindString(vpr, cmd, KeyRepository, "")
 	BindString(vpr, cmd, logging.KeyFormat, "log-format")
 	BindString(vpr, cmd, logging.KeyLevel, "log-level")
@@ -223,7 +249,7 @@ func Init(vpr *viper.Viper, cmd *cobra.Command) error {
 		return fmt.Errorf("%w", err)
 	}
 
-	if !logging.CanFastInit(cmd) {
+	if !HasFastInit(cmd) {
 		if err := parseLoggingConfig(vpr, cmd); err != nil {
 			return exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
 		}
@@ -336,6 +362,7 @@ func setDefaults(vpr *viper.Viper) {
 	vpr.SetDefault(KeyDirectory, DefaultDirectory)
 	vpr.SetDefault(KeyGitProtocol, DefaultGitProtocol.String())
 	vpr.SetDefault(KeyGitSSHUser, DefaultGitSSHUser)
+	vpr.SetDefault(KeyPluginsDir, plugins.DefaultDir)
 	vpr.SetDefault(KeyRepository, "")
 	vpr.SetDefault(KeyRepositoryHostname, DefaultRepositoryHostname)
 	vpr.SetDefault(KeyDisableHTTPSInit, DefaultDisableHTTPSInit)

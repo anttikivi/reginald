@@ -14,7 +14,7 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
-	"github.com/anttikivi/reginald/internal/plugin"
+	"github.com/anttikivi/reginald/internal/plugins"
 	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/anttikivi/reginald/internal/ui"
@@ -45,6 +45,7 @@ func New(vpr *viper.Viper, ver string) (*cobra.Command, error) {
 		Version:           ver,
 		PersistentPreRunE: persistentPreRun,
 		RunE:              runHelp,
+		SilenceErrors:     true,
 		SilenceUsage:      true,
 	}
 
@@ -123,6 +124,12 @@ func addFlags(cmd *cobra.Command) error {
 
 	if err := cmd.MarkPersistentFlagDirname("directory"); err != nil {
 		return fmt.Errorf("failed to mark the \"directory\" flag as a dirname: %w", err)
+	}
+
+	cmd.PersistentFlags().String("plugins-dir", plugins.DefaultDir, "path to the plugins search directory")
+
+	if err := cmd.MarkPersistentFlagDirname("plugins-dir"); err != nil {
+		return fmt.Errorf("failed to mark the \"plugins-dir\" flag as a dirname: %w", err)
 	}
 
 	// Logging options.
@@ -205,7 +212,9 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 		color.NoColor = true
 	}
 
-	if ok := logging.FastInit(cmd); !ok {
+	if config.HasFastInit(cmd) {
+		logging.FastInit()
+	} else {
 		if err := logging.Init(&cfg.Log); err != nil {
 			panic(fmt.Sprintf("failed to initialize logging: %v", err))
 		}
@@ -225,9 +234,13 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	p := ui.NewPrinter(cfg.Verbose, cfg.Quiet)
 	r := runner.New(p, cfg.DryRun)
 
-	_, err = plugin.Search("./bin", p, r)
-	if err != nil {
-		return fmt.Errorf("plugin search failed: %w", err)
+	if !config.HasFastInit(cmd) {
+		infos, err := plugins.Search(cfg.PluginsDir, p, r)
+		if err != nil {
+			return fmt.Errorf("plugin search failed: %w", err)
+		}
+
+		cfg.PluginInfos = infos
 	}
 
 	ctx := cmd.Context()
