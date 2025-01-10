@@ -96,8 +96,8 @@ func runCheck(info plugins.PluginInfo, cfgs []task.Config) (bool, error) {
 
 		// We should have a Greeter now! This feels like a normal interface
 		// implementation but is in fact over an RPC connection.
-		greeter := raw.(task.Task)
-		fmt.Println(greeter.Check(&t))
+		task := raw.(task.Task)
+		fmt.Println(task.Check(&t))
 	}
 
 	return true, nil
