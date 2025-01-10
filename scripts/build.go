@@ -46,7 +46,7 @@ var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks ca
 		// return run("go", "run", "-ldflags", ldflags, "./cmd/docs", "--man", "--path", "./share/man/man1/")
 		return run("go", "run", "./cmd/docs", "--man", "--path", "./share/man/man1/")
 	},
-	"plugins": func(exe string) error {
+	"plugins": func(_ string) error {
 		files, err := os.ReadDir("./plugins")
 		if err != nil {
 			return fmt.Errorf("failed to read the directory ./plugins: %w", err)
@@ -54,9 +54,14 @@ var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks ca
 
 		for _, f := range files {
 			if f.IsDir() {
-				fmt.Println(f.Name())
-
-				if err := run("go", "build", "-o", fmt.Sprintf("./bin/%s", f.Name()), fmt.Sprintf("./plugins/%s", f.Name())); err != nil {
+				err := run(
+					"go",
+					"build",
+					"-o",
+					"./bin/reginald-plugin-"+f.Name(),
+					"./plugins/%s"+f.Name(),
+				)
+				if err != nil {
 					return fmt.Errorf("failed to build %s: %w", f.Name(), err)
 				}
 			}

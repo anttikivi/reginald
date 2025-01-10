@@ -11,21 +11,21 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anttikivi/reginald/internal/output"
+	"github.com/anttikivi/reginald/internal/ui"
 )
 
 // Runner is a helper for running external processes.
 type Runner struct {
-	DryRun        bool            // whether this is a dry run
-	PrintCommands bool            // whether to print commands before running them, separate from dry run
-	Printer       *output.Printer // the [output.Printer] of this run for printing from the runner
-	Prompt        string          // prompt to print before commands when printing them.
+	DryRun        bool        // whether this is a dry run
+	PrintCommands bool        // whether to print commands before running them, separate from dry run
+	Printer       *ui.Printer // the [ui.Printer] of this run for printing from the runner
+	Prompt        string      // prompt to print before commands when printing them
 }
 
 // New creates a new instance of [Runner].
-func New(p *output.Printer) *Runner {
+func New(p *ui.Printer, dryRun bool) *Runner {
 	return &Runner{
-		DryRun:        p.DryRun,
+		DryRun:        dryRun,
 		PrintCommands: p.Verbose,
 		Printer:       p,
 		Prompt:        "+",
@@ -100,13 +100,38 @@ func (r *Runner) Runf(command []string, format string, a ...any) error {
 	cmd.Stderr = &buf
 	cmd.Stdout = &buf
 
-	if err = r.Printer.Spinnerf(cmd.Run, format, a...); err != nil {
-		r.Printer.Error(buf.String())
+	if err = ui.Spinnerf(r.Printer, cmd.Run, format, a...); err != nil {
+		ui.PrintToErr(r.Printer, buf.String())
 
 		return fmt.Errorf("failed to run %s: %w", r.quoteCommand(name, command[1:]...), err)
 	}
 
 	return nil
+}
+
+// Output runs the command and returns its standard output.
+func (r *Runner) Output(name string, args ...string) ([]byte, error) {
+	initialName := name
+
+	name, err := r.LookPath(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up %s from PATH: %w", initialName, err)
+	}
+
+	r.printCommand(name, args...)
+
+	if r.DryRun {
+		return nil, nil
+	}
+
+	cmd := exec.Command(name, args...)
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to run %s: %w", r.quoteCommand(name, args...), err)
+	}
+
+	return out, nil
 }
 
 // IsExit returns a boolean indicating if the given error is an [exec.ExitError]
@@ -122,10 +147,10 @@ func IsExit(err error) (int, bool) {
 
 // runVerbose is a helper to run the `exec.Cmd` if the program output is set to
 // be verbose or if you otherwise want the run to be verbose. It outputs the
-// stderr and stdout from the command to the [output.Printer] of this [Runner].
+// stderr and stdout from the command to the [ui.Printer] of this [Runner].
 func (r *Runner) runVerbose(cmd *exec.Cmd) error {
-	cmd.Stderr = r.Printer.Err
-	cmd.Stdout = r.Printer.Out
+	cmd.Stderr = r.Printer.Err()
+	cmd.Stdout = r.Printer.Out()
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%w", err)
@@ -137,10 +162,8 @@ func (r *Runner) runVerbose(cmd *exec.Cmd) error {
 // printCommand prints the given command if the [Runner] is configured to print
 // commands.
 func (r *Runner) printCommand(name string, args ...string) {
-	if r.DryRun {
-		r.Printer.Println(r.quoteCommand(name, args...))
-	} else if r.PrintCommands {
-		r.Printer.GrayPrintln(r.quoteCommand(name, args...))
+	if r.DryRun || r.PrintCommands {
+		ui.Hintln(r.Printer, r.quoteCommand(name, args...))
 	}
 }
 

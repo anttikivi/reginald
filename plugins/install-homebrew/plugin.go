@@ -13,6 +13,10 @@ import (
 
 type InstallHomebrew struct{}
 
+func (p *InstallHomebrew) Name() string {
+	return "install-homebrew"
+}
+
 func (p *InstallHomebrew) Run() error {
 	fmt.Fprintln(os.Stdout, "Installing Homebrew")
 
@@ -20,11 +24,14 @@ func (p *InstallHomebrew) Run() error {
 }
 
 func main() {
-	fmt.Fprintln(os.Stdout, "Hello from plugin")
-	p := &InstallHomebrew{}
-	plugins := map[string]plugin.Plugin{
-		"install-homebrew": &task.TaskPlugin{Impl: p},
-	}
+	server := plugin.NewTaskServer("install-homebrew", []task.Task{&InstallHomebrew{}})
 
-	plugin.ServeTask(plugins)
+	server.Describe()
+
+	fmt.Fprintln(os.Stdout, "Hello from plugin")
+
+	if err := server.Serve(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error while running the plugin server: %v", err)
+		os.Exit(1)
+	}
 }

@@ -52,6 +52,10 @@ const (
 	// CommandRunFailure is the exit code when the command run fails due to an
 	// unexpected error.
 	CommandRunFailure Code = 13
+
+	// PrinterTypeFailure is the exit code when the program tries to use or get
+	// a wrong printer type or a printer through a wrong implementation.
+	PrinterTypeFailure Code = 14
 )
 
 var (
@@ -65,6 +69,15 @@ func (e *Error) Code() Code {
 
 func (e *Error) Error() string {
 	return fmt.Sprintf("%v (%d)", e.err.Error(), e.c)
+}
+
+func As(err error) (*Error, bool) {
+	var exitError *Error
+	if errors.As(err, &exitError) {
+		return exitError, true
+	}
+
+	return nil, false
 }
 
 func New(c Code, err error) *Error {

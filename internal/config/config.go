@@ -53,6 +53,8 @@ type Config struct {
 	// Log contains the configuration for logging.
 	Log logging.Config `mapstructure:"log"`
 
+	PluginsDir string `mapstructure:"plugins-dir"`
+
 	// Quiet tells whether the command's output has been disabled.
 	Quiet bool `mapstructure:"quiet"`
 

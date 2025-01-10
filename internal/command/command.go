@@ -14,9 +14,10 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/logging"
-	"github.com/anttikivi/reginald/internal/output"
+	"github.com/anttikivi/reginald/internal/plugin"
 	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/strutil"
+	"github.com/anttikivi/reginald/internal/ui"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -221,8 +222,13 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	slog.Debug("Got the following raw settings", slog.Any("config", vpr.AllSettings()))
 	slog.Info("Running with the following configuration", slog.Any("config", cfg))
 
-	p := output.NewPrinter(cfg.Verbose, cfg.Quiet, cfg.DryRun)
-	r := runner.New(p)
+	p := ui.NewPrinter(cfg.Verbose, cfg.Quiet)
+	r := runner.New(p, cfg.DryRun)
+
+	_, err = plugin.Search("./bin", p, r)
+	if err != nil {
+		return fmt.Errorf("plugin search failed: %w", err)
+	}
 
 	ctx := cmd.Context()
 	ctx = context.WithValue(ctx, config.ConfigContextKey, cfg)

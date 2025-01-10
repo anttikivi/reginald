@@ -15,10 +15,10 @@ import (
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/git"
-	"github.com/anttikivi/reginald/internal/output"
 	"github.com/anttikivi/reginald/internal/paths"
 	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/strutil"
+	"github.com/anttikivi/reginald/internal/ui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -292,7 +292,7 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
 
-	p, ok := cmd.Context().Value(config.PrinterContextKey).(*output.Printer)
+	p, ok := cmd.Context().Value(config.PrinterContextKey).(*ui.Printer)
 	if !ok || p == nil {
 		panic(exit.New(exit.CommandInitFailure, config.ErrNoPrinter))
 	}
@@ -330,22 +330,28 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	if exists {
-		p.RedErrorf("The file at %s already exists\n", cfg.BaseDirectory)
+		ui.Errorf(p, "The file at %s already exists\n", cfg.BaseDirectory)
 
 		return exit.New(exit.InvalidConfigFile, fmt.Errorf("%w: %s", errFileExists, cfg.BaseDirectory))
 	}
 
-	if err = r.Runf([]string{"git", "clone", cfg.Repository, cfg.BaseDirectory}, "Cloning from %s...", cfg.Repository); err != nil { //nolint:lll // The message is needed.
-		if i, ok := runner.IsExit(err); ok {
-			return exit.New(exit.Code(i), fmt.Errorf("%w", err))
-		}
+	if _, err := git.Lookup(r); err != nil {
+		ui.Errorf(p, "Git is not installed, and %s doesn't currently automatically install it\n", constants.Name)
 
-		return exit.New(exit.ExecFailure, fmt.Errorf("%w", err))
+		return exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
 	}
 
-	p.Printf("Cloned the repository from %s to %s\n", cfg.Repository, cfg.BaseDirectory)
-	p.GreenPrintln("Bootstrap done")
-	p.YellowErrorln(
+	if err := git.Clone(r, cfg.Repository, cfg.BaseDirectory); err != nil {
+		if err, ok := exit.As(err); ok {
+			return err
+		}
+
+		return fmt.Errorf("failed to clone the repository: %w", err)
+	}
+
+	ui.Printf(p, "Cloned the repository from %s to %s\n", cfg.Repository, cfg.BaseDirectory)
+	ui.Successln(p, "Bootstrap done")
+	ui.Warnln(p,
 		"Running the install after bootstrapping is not implemented yet!\nTo continue, please run `rgl install`",
 	)
 
