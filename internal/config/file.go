@@ -63,7 +63,7 @@ func tryConfigDir(vpr *viper.Viper, dir string, names []string) (bool, error) {
 // reads the first that matches.
 // The first return value is a boolean telling whether a file was found and
 // read.
-func resolveConfigFile(vpr *viper.Viper) (bool, error) {
+func resolveConfigFile(vpr *viper.Viper) (bool, error) { //nolint:cyclop // The function is still simple enough.
 	// Reginald is flexible about the configuration file to use. You can
 	// use multiple types of configuration files so the extensions are
 	// omitted from the following examples.
@@ -113,6 +113,19 @@ func resolveConfigFile(vpr *viper.Viper) (bool, error) {
 			filepath.Join("${XDG_CONFIG_HOME}", strings.ToLower(constants.Name)),
 			[]string{"config"},
 		)
+		if err != nil {
+			return configFound, fmt.Errorf("%w", err)
+		}
+	}
+
+	// User's default config directory and a platform-dependent directory.
+	if !configFound {
+		dir, err := defaultConfigDir()
+		if err != nil {
+			return false, fmt.Errorf("%w", err)
+		}
+
+		configFound, err := tryConfigDir(vpr, dir, []string{"config"})
 		if err != nil {
 			return configFound, fmt.Errorf("%w", err)
 		}
