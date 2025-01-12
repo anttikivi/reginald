@@ -4,14 +4,18 @@
 package plugin
 
 import (
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/anttikivi/reginald/pkg/command"
+	"github.com/anttikivi/reginald/pkg/logging"
 	"github.com/anttikivi/reginald/pkg/task"
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 )
 
@@ -40,6 +44,10 @@ type Descriptor struct {
 	Tasks           []string `json:"tasks"`           // tasks the plugin provided, can be empty or nil
 }
 
+// registerTask is a helper type used while registering [task.Config] for binary
+// exchange.
+type registerTask struct{}
+
 // Helper values for creating the handshake configuration for the plugin server.
 const (
 	ProtocolVersion uint = 1
@@ -62,6 +70,10 @@ var HandshakeConfig = plugin.HandshakeConfig{ //nolint:gochecknoglobals // Used 
 }
 
 var ErrEmptyPlugin = errors.New("plugin specified no commands or tasks")
+
+func init() { //nolint:gochecknoinits // The binary values must be registered once, and, thus, we use init here.
+	gob.Register(task.NewInvalidType(&registerTask{}, "key", "value", "type"))
+}
 
 // NewServer returns a new plugins server. You can pass the commands and tasks
 // this plugin serves as parameters. If the plugin only serves the other, you
@@ -154,10 +166,34 @@ func (s *Server) Serve() error {
 		return fmt.Errorf("failed to serve %s: %w", s.name, ErrEmptyPlugin)
 	}
 
+	hclogger := hclog.New(&hclog.LoggerOptions{ //nolint:exhaustruct // We want to use the default values.
+		Name:  s.name,
+		Level: hclog.Debug,
+	})
+	logger := slog.New(logging.NewHCLogAdapter(hclogger))
+
+	slog.SetDefault(logger)
 	plugin.Serve(&plugin.ServeConfig{ //nolint:exhaustruct // We use the default values.
 		HandshakeConfig: HandshakeConfig,
 		Plugins:         plugins,
+		Logger:          hclogger,
 	})
 
 	return nil
+}
+
+func (t *registerTask) Check(_ task.Settings) error {
+	return nil
+}
+
+func (t *registerTask) CheckDefaults(_ task.Settings) error {
+	return nil
+}
+
+func (t *registerTask) Run(_ *task.Config) error {
+	return nil
+}
+
+func (t *registerTask) Type() string {
+	return "for-register"
 }

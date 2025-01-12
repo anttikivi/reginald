@@ -5,6 +5,8 @@
 package apply
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/anttikivi/reginald/internal/config"
@@ -20,13 +22,11 @@ import (
 // helpDescription is the description printed when the command is run with the
 // `--help` flag.
 //
-//nolint:gochecknoglobals,lll // It is easier to have this here instead of inlining.
+//nolint:gochecknoglobals // It is easier to have this here instead of inlining.
 var helpDescription = ``
 
 // NewCommand creates a new instance of the bootstrap command.
-//
-//nolint:lll // Cannot really make the help messages shorter.
-func NewCommand(vpr *viper.Viper) *cobra.Command {
+func NewCommand(_ *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{ //nolint:exhaustruct // we want to use the default values
 		Use:               constants.ApplyCommandName,
 		Aliases:           []string{"install"},
@@ -41,7 +41,7 @@ func NewCommand(vpr *viper.Viper) *cobra.Command {
 	return cmd
 }
 
-func persistentPreRun(cmd *cobra.Command, args []string) error {
+func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	slog.Info("Running the persistent pre-run", "cmd", constants.ApplyCommandName)
 
 	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
@@ -58,8 +58,45 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 
 	slog.Debug("Got the Printer instance from context", slog.Any("printer", p))
 
-	if _, err := ui.Spinner(p, checkPluginConfigs, "Checking the plugin configs...", cfg); err != nil {
-		return err
+	if err := assignTaskNames(cfg); err != nil {
+		return fmt.Errorf("failed to assign the task names: %w", err)
+	}
+
+	slog.Debug("Assigned the task names", "tasks", cfg.Tasks)
+
+	opts := checkOptions{
+		printer: p,
+		cfg:     cfg,
+	}
+
+	if err := ui.Spinner(p, checkTaskDefaults, "Checking the task defaults...", opts); err != nil {
+		if errors.Is(err, errCheckDefaults) {
+			ui.Errorf(p, "%v\n", err)
+
+			return exit.New(exit.InvalidConfig, fmt.Errorf("%w", errCheckDefaults))
+		}
+
+		panic(
+			exit.New(
+				exit.CommandInitFailure,
+				fmt.Errorf("unexpected error while checking the defaults for tasks: %w", err),
+			),
+		)
+	}
+
+	if err := ui.Spinner(p, checkTaskConfigs, "Checking the task configs...", opts); err != nil {
+		if errors.Is(err, errCheckConfigs) {
+			ui.Errorf(p, "%v\n", err)
+
+			return exit.New(exit.InvalidConfig, fmt.Errorf("%w", errCheckConfigs))
+		}
+
+		panic(
+			exit.New(
+				exit.CommandInitFailure,
+				fmt.Errorf("unexpected error while checking the configs for tasks: %w", err),
+			),
+		)
 	}
 
 	return nil

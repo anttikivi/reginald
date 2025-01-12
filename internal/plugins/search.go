@@ -38,6 +38,12 @@ type discoveryConfig struct {
 	run     *runner.Runner
 }
 
+// discoveryResult is the return value from [discover].
+type discoveryResult struct {
+	pluginInfos []PluginInfo
+	err         error
+}
+
 // DefaultDir is the default search directory for plugins.
 //
 //nolint:gochecknoglobals // Value is used as a constant.
@@ -98,17 +104,18 @@ func Search(dir string, p *ui.Printer, r *runner.Runner) ([]PluginInfo, error) {
 		run:     r,
 	}
 
-	plugins, err := ui.Spinner(p, discover, fmt.Sprintf("Searching for plugins from %s...", dir), opts)
-	if err != nil {
-		ui.Errorf(p, "The plugin search failed: %v\n", err)
+	result := ui.Spinner(p, discover, fmt.Sprintf("Searching for plugins from %s...", dir), opts)
+	if result.err != nil {
+		ui.Errorf(p, "The plugin search failed: %v\n", result.err)
 
+		//nolint:nilerr // TODO: For now, the desired functionality is the continue even if plugins are not found.
 		return nil, nil
 	}
 
-	return plugins, nil
+	return result.pluginInfos, nil
 }
 
-func discover(opts discoveryConfig) ([]PluginInfo, error) {
+func discover(opts discoveryConfig) discoveryResult {
 	var (
 		p        = opts.printer
 		plugins  = make([]PluginInfo, 0)
@@ -162,7 +169,7 @@ func discover(opts discoveryConfig) ([]PluginInfo, error) {
 		}
 	}
 
-	return plugins, nil
+	return discoveryResult{pluginInfos: plugins, err: nil}
 }
 
 func checkPath(r *runner.Runner, f os.DirEntry, dir string) (*PluginInfo, error) {
@@ -186,7 +193,7 @@ func checkPath(r *runner.Runner, f os.DirEntry, dir string) (*PluginInfo, error)
 		return nil, fmt.Errorf("failed to run the plugin executable: %w", err)
 	}
 
-	slog.Debug("Ran the plugin description", "out", out)
+	slog.Debug("Ran the plugin description", "out", string(out))
 
 	var desc plugin.Descriptor
 	if err := json.Unmarshal(out, &desc); err != nil {

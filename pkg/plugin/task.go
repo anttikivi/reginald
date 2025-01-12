@@ -1,10 +1,10 @@
 // Copyright (c) 2025 Antti Kivi
 // SPDX-License-Identifier: MIT
 
-//nolint:dupl // Task and command need to be separate but duplicate.
 package plugin
 
 import (
+	"fmt"
 	"net/rpc"
 
 	"github.com/anttikivi/reginald/pkg/task"
@@ -37,24 +37,34 @@ type TaskPlugin struct {
 	Impl task.Task
 }
 
-func (t *TaskRPC) Check(cfg *task.Config) bool {
-	var resp bool
+func (t *TaskRPC) Check(settings task.Settings) error {
+	var resp error
 
-	if err := t.client.Call("Plugin.Check", cfg, &resp); err != nil {
-		panic(err)
+	if err := t.client.Call("Plugin.Check", settings, &resp); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 
 	return resp
 }
 
-func (t *TaskRPC) Run() error {
+func (t *TaskRPC) CheckDefaults(settings task.Settings) error {
 	var resp error
 
-	if err := t.client.Call("Plugin.Run", new(any), &resp); err != nil {
-		panic(err)
+	if err := t.client.Call("Plugin.CheckDefaults", settings, &resp); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 
 	return resp
+}
+
+func (t *TaskRPC) Run(cfg *task.Config) error {
+	var resp any
+
+	if err := t.client.Call("Plugin.Run", cfg, &resp); err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	return nil
 }
 
 func (t *TaskRPC) Type() string {
@@ -67,14 +77,25 @@ func (t *TaskRPC) Type() string {
 	return resp
 }
 
-func (s *TaskRPCServer) Check(cfg *task.Config, resp *bool) error {
-	*resp = s.Impl.Check(cfg)
+//nolint:gocritic // `resp` needs to be a pointer for the RPC implementation.
+func (s *TaskRPCServer) Check(settings task.Settings, resp *error) error {
+	*resp = s.Impl.Check(settings)
 
 	return nil
 }
 
-func (s *TaskRPCServer) Run(_ any, resp *error) error { //nolint:gocritic // `resp` has to be pointer for RCP.
-	*resp = s.Impl.Run()
+//nolint:gocritic // `resp` needs to be a pointer for the RPC implementation.
+func (s *TaskRPCServer) CheckDefaults(settings task.Settings, resp *error) error {
+	*resp = s.Impl.CheckDefaults(settings)
+
+	return nil
+}
+
+//nolint:gocritic // `resp` needs to be a pointer for the RPC implementation.
+func (s *TaskRPCServer) Run(cfg *task.Config, resp *any) error { //nolint:revive // TODO: `resp` will be needed.
+	if err := s.Impl.Run(cfg); err != nil {
+		return fmt.Errorf("%w", err)
+	}
 
 	return nil
 }

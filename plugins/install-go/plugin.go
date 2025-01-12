@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/anttikivi/reginald/pkg/plugin"
@@ -13,15 +14,37 @@ import (
 
 type InstallGo struct{}
 
-func (p *InstallGo) Check(cfg *task.Config) bool {
-	return cfg != nil
-}
+func (t *InstallGo) Check(settings task.Settings) error {
+	slog.Debug("Checking the task config", "task", t.Type(), "settings", settings)
 
-func (p *InstallGo) Run() error {
+	if len(settings) > 0 {
+		for k := range settings {
+			//nolint:wrapcheck // The return value cannot be wrapped to catch it at host.
+			return task.NewInvalidKey(t, k)
+		}
+	}
+
 	return nil
 }
 
-func (p *InstallGo) Type() string {
+func (t *InstallGo) CheckDefaults(settings task.Settings) error {
+	slog.Debug("Checking the task defaults", "task", t.Type(), "settings", settings)
+
+	if len(settings) > 0 {
+		for k := range settings {
+			//nolint:wrapcheck // The return value cannot be wrapped to catch it at host.
+			return task.NewInvalidKey(t, k)
+		}
+	}
+
+	return nil
+}
+
+func (t *InstallGo) Run(_ *task.Config) error {
+	return nil
+}
+
+func (t *InstallGo) Type() string {
 	return "install-go"
 }
 

@@ -42,7 +42,11 @@ build: bin/$(OUTPUT_NAME)$(EXE)
 
 .PHONY: clean
 clean: scripts/build$(EXE)
+	# TODO: This is stupid.
+	rm scripts/build$(EXE)
+	make scripts/build$(EXE)
 	@$< $@
+	rm scripts/build$(EXE)
 
 .PHONY: man
 man: scripts/build$(EXE)

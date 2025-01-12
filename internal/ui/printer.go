@@ -4,7 +4,6 @@
 package ui
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,8 +17,6 @@ type Printer struct {
 	Verbose bool // whether verbose output is enabled
 	Quiet   bool // whether the program is configured to suppress output
 }
-
-var errInvalidReturnType = errors.New("spinner function result has invalid type")
 
 // NewPrinter creates a new [Printer] for the program run.
 func NewPrinter(verbose, quiet bool) *Printer {
@@ -158,13 +155,12 @@ func Spinnerf(printer *Printer, fn func() error, format string, a ...any) error 
 }
 
 //nolint:ireturn // Need to accept any return type.
-func Spinner[T, R any](printer *Printer, fn func(R) (T, error), msg string, a R) (T, error) {
-	done := make(chan any)
+func Spinner[T, R any](printer *Printer, fn func(R) T, msg string, a R) T {
+	done := make(chan T)
 
 	go func() {
-		t, err := fn(a)
+		t := fn(a)
 		done <- t
-		done <- err
 		close(done)
 	}()
 
@@ -173,6 +169,9 @@ func Spinner[T, R any](printer *Printer, fn func(R) (T, error), msg string, a R)
 	go func() {
 		chars := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
 		i := 0
+
+		printToOut(printer, "\033[?25l")
+		// defer printToOut(printer, "\033[?25h")
 
 		for {
 			select {
@@ -192,22 +191,14 @@ func Spinner[T, R any](printer *Printer, fn func(R) (T, error), msg string, a R)
 		}
 	}()
 
-	result, ok := (<-done).(T)
-	if !ok {
-		return result, fmt.Errorf("%w", errInvalidReturnType)
-	}
-
-	err := (<-done)
+	result := <-done
 
 	close(stop)
 	printToOut(printer, "\033[s")
 	printToOut(printer, "\033[u\033[K")
+	printToOut(printer, "\033[?25h")
 
-	if err, ok := err.(error); ok && err != nil {
-		return result, fmt.Errorf("%w", err)
-	}
-
-	return result, nil
+	return result
 }
 
 func printToOut(p *Printer, a ...any) {

@@ -1,7 +1,6 @@
 // Copyright (c) 2025 Antti Kivi
 // SPDX-License-Identifier: MIT
 
-//nolint:dupl // Task and command need to be separate but duplicate.
 package plugin
 
 import (

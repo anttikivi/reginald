@@ -32,6 +32,9 @@ type Config struct {
 	// ConfigFile is the path to the resolved config file.
 	ConfigFile string `mapstructure:"config-file"`
 
+	// Defaults contains the default settings for tasks.
+	Defaults map[string]task.Settings
+
 	// DisableHTTPSInit marks whether to disable using HTTPS during the initial
 	// repository cloning while the boostrapping. By default, the program uses
 	// HTTPS instead of the specified protocol to initially clone the dotfiles
@@ -75,7 +78,7 @@ type Config struct {
 	RepositoryHostname string `mapstructure:"git-host"`
 
 	// Tasks contains the task configs.
-	Tasks []task.Config
+	Tasks task.ConfigList
 
 	// UseColor tells whether the program should output colors to the terminal.
 	UseColor bool `mapstructure:"color"`
