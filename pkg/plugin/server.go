@@ -167,10 +167,13 @@ func (s *Server) Serve() error {
 	}
 
 	hclogger := hclog.New(&hclog.LoggerOptions{ //nolint:exhaustruct // We want to use the default values.
-		Name:  s.name,
-		Level: hclog.Debug,
+		Name:       s.name,
+		Level:      hclog.Debug,
+		JSONFormat: true,
+		TimeFormat: hclog.TimeFormatJSON,
 	})
 	logger := slog.New(logging.NewHCLogAdapter(hclogger))
+	logger = logger.With("plugin", s.name)
 
 	slog.SetDefault(logger)
 	plugin.Serve(&plugin.ServeConfig{ //nolint:exhaustruct // We use the default values.

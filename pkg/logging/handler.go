@@ -20,7 +20,7 @@ import (
 // outputs the logs.
 type HCLogHandler struct {
 	logger hclog.Logger
-	prefix string
+	name   string
 }
 
 var levels = map[slog.Level]hclog.Level{ //nolint:gochecknoglobals // Used like a constant.
@@ -32,7 +32,7 @@ var levels = map[slog.Level]hclog.Level{ //nolint:gochecknoglobals // Used like 
 }
 
 func NewHCLogAdapter(logger hclog.Logger) *HCLogHandler {
-	return &HCLogHandler{logger: logger, prefix: logger.Name()}
+	return &HCLogHandler{logger: logger, name: logger.Name()}
 }
 
 func (h *HCLogHandler) Enabled(_ context.Context, l slog.Level) bool {
@@ -56,7 +56,7 @@ func (h *HCLogHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 	var i int
 
 	r.Attrs(func(attr slog.Attr) bool {
-		attrs = append(attrs, h.processAttribute(i, h.prefix, attr)...)
+		attrs = append(attrs, h.processAttribute(i, h.name, attr)...)
 		i++
 
 		return true
@@ -71,30 +71,34 @@ func (h *HCLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	newAttrs := make([]any, 0, len(attrs))
 
 	for i, attr := range attrs {
-		newAttrs = append(newAttrs, h.processAttribute(i, h.prefix, attr)...)
+		newAttrs = append(newAttrs, h.processAttribute(i, h.name, attr)...)
 	}
 
 	return &HCLogHandler{
 		logger: h.logger.With(newAttrs...),
-		prefix: h.prefix,
+		name:   h.name,
 	}
 }
 
 func (h *HCLogHandler) WithGroup(name string) slog.Handler {
-	prefix := h.prefix
+	prefix := h.name
 
 	if name != "" {
-		prefix = h.prefix + name + "."
+		prefix = h.name + name + "."
 	}
 
 	return &HCLogHandler{
 		logger: h.logger,
-		prefix: prefix,
+		name:   prefix,
 	}
 }
 
 func (h *HCLogHandler) processAttribute(pos int, prefix string, attr slog.Attr) []any {
 	val := attr.Value.Resolve()
+
+	if prefix == h.name {
+		prefix = ""
+	}
 
 	var attrs []any
 	if val.Kind() == slog.KindGroup {
@@ -119,6 +123,10 @@ func (h *HCLogHandler) processAttribute(pos int, prefix string, attr slog.Attr) 
 
 func (h *HCLogHandler) processGroup(prefix string, attr slog.Attr) []any {
 	var attrs []any
+
+	if prefix == h.name {
+		prefix = ""
+	}
 
 	if attr.Key == "" {
 		for _, subAttr := range attr.Value.Group() {

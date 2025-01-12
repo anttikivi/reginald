@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/anttikivi/reginald/internal/exit"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -17,6 +18,7 @@ import (
 
 type NullHandler struct{}
 
+// Default values for the logging.
 const (
 	DefaultTimeFormat                      = "2006-01-02T15:04:05.000-07:00"
 	DefaultDecoratedTimeFormat             = "2006-01-02 15:04:05"
@@ -24,6 +26,11 @@ const (
 	defaultFilePerm            os.FileMode = 0o644
 )
 
+// pluginServerTimeFormat is the time format the logger expects in the server
+// timestamps.
+const pluginServerTimeFormat = "2006-01-02T15:04:05.999-0700"
+
+// Default values for the log rotation.
 const (
 	defaultMaxSize    = 10
 	defaultMaxBackups = 5
@@ -31,8 +38,9 @@ const (
 )
 
 var (
-	errInvalidOutput = errors.New("invalid log output")
-	errInvalidFormat = errors.New("invalid log format")
+	errInvalidOutput     = errors.New("invalid log output")
+	errInvalidFormat     = errors.New("invalid log format")
+	errInvalidServerTime = errors.New("received invalid time format from the plugin server")
 )
 
 func (h NullHandler) Enabled(_ context.Context, _ slog.Level) bool {
@@ -78,6 +86,19 @@ func Handler(w io.Writer, cfg *Config) (slog.Handler, error) {
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.String(slog.TimeKey, a.Value.Time().Format(timeFormat))
+			}
+
+			// The key "timestamp" is used by [hclog] on the plugin server, so
+			// we replace it with a key that describes it better.
+			if a.Key == "timestamp" {
+				t, err := time.Parse(pluginServerTimeFormat, a.Value.String())
+				if err != nil {
+					panic(
+						exit.New(exit.CommandRunFailure, fmt.Errorf("%w: %s", errInvalidServerTime, a.Value.String())),
+					)
+				}
+
+				return slog.String("server_time", t.Format(timeFormat))
 			}
 
 			return a

@@ -15,7 +15,7 @@ import (
 type InstallGo struct{}
 
 func (t *InstallGo) Check(settings task.Settings) error {
-	slog.Debug("Checking the task config", "task", t.Type(), "settings", settings)
+	slog.Info("Checking the task config", "task", t.Type(), "settings", settings)
 
 	if len(settings) > 0 {
 		for k := range settings {
@@ -28,7 +28,7 @@ func (t *InstallGo) Check(settings task.Settings) error {
 }
 
 func (t *InstallGo) CheckDefaults(settings task.Settings) error {
-	slog.Debug("Checking the task defaults", "task", t.Type(), "settings", settings)
+	slog.Info("Checking the task defaults", "task", t.Type(), "settings", settings)
 
 	if len(settings) > 0 {
 		for k := range settings {

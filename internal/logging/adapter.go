@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"strings"
 
 	"github.com/hashicorp/go-hclog"
 )
@@ -22,6 +23,19 @@ type SlogAdapter struct {
 	impliedArgs []any
 }
 
+// hclogLevelStrings contains level strings that might be included in the
+// messages passed from the server. They are used for fixing the levels of some
+// messages manually.
+//
+//nolint:gochecknoglobals // Used like a constant.
+var hclogLevelStrings = map[string]hclog.Level{
+	"TRACE": hclog.Trace,
+	"DEBUG": hclog.Debug,
+	"INFO":  hclog.Info,
+	"WARN":  hclog.Warn,
+	"ERR":   hclog.Error,
+}
+
 func NewSlogAdapter(logger *slog.Logger, level slog.Level, name string) *SlogAdapter {
 	return &SlogAdapter{
 		logger:      logger,
@@ -32,6 +46,17 @@ func NewSlogAdapter(logger *slog.Logger, level slog.Level, name string) *SlogAda
 }
 
 func (l *SlogAdapter) Log(level hclog.Level, msg string, args ...any) {
+	// Check for prefixes in the message that contain a level set by [hclog]. It
+	// is simpler to do this here instead of ReplaceAttr in [slog.HandlerOptions].
+	for k, v := range hclogLevelStrings {
+		prefix := "[" + k + "]"
+		if strings.HasPrefix(msg, prefix) {
+			l.Log(v, strings.TrimPrefix(msg, prefix+" "), args...)
+
+			return
+		}
+	}
+
 	switch level {
 	case hclog.Trace, hclog.Debug:
 		l.logger.Debug(msg, args...)
