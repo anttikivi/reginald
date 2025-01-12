@@ -354,3 +354,38 @@ func checkPluginDefaults(info plugins.PluginInfo, taskType string, settings task
 
 	return nil
 }
+
+// mergeDefaults merges the defaults for tasks into the task configs.
+func mergeDefaults(cfg *config.Config) *config.Config {
+	modified := make(task.ConfigList, len(cfg.Tasks))
+
+	for taskName, settings := range cfg.Defaults {
+		for i, t := range cfg.Tasks {
+			if taskName != t.Type {
+				continue
+			}
+
+			for k, v := range settings {
+				if _, ok := t.Settings[k]; !ok {
+					t.Settings[k] = v
+				}
+			}
+
+			modified[i] = t
+		}
+	}
+
+	result := make(task.ConfigList, len(cfg.Tasks))
+
+	for i, t := range modified {
+		if t == nil {
+			result[i] = cfg.Tasks[i]
+		} else {
+			result[i] = t
+		}
+	}
+
+	cfg.Tasks = result
+
+	return cfg
+}
