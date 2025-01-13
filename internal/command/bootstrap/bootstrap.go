@@ -11,12 +11,12 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/anttikivi/reginald/internal/command/cmdutil"
 	"github.com/anttikivi/reginald/internal/config"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/anttikivi/reginald/internal/git"
 	"github.com/anttikivi/reginald/internal/paths"
-	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/anttikivi/reginald/internal/ui"
 	"github.com/spf13/cobra"
@@ -95,13 +95,8 @@ func NewCommand(vpr *viper.Viper) (*cobra.Command, error) {
 func persistentPreRun(cmd *cobra.Command, args []string) error {
 	slog.Info("Running the persistent pre-run", "cmd", constants.BootstrapCommandName)
 
-	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
-	if !ok || cfg == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoConfig))
-	}
-
-	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
-
+	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextConfig|cmdutil.ContextPrinter)
+	cfg := ctxv.Cfg
 	repoArg := ""
 
 	if len(args) > 0 {
@@ -286,26 +281,13 @@ func simplifyRepoURL(u *url.URL) *url.URL {
 func run(cmd *cobra.Command, _ []string) error {
 	slog.Info("Running the command", "cmd", constants.BootstrapCommandName)
 
-	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
-	if !ok || cfg == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoConfig))
-	}
+	ctxv := cmdutil.AllContextValues(cmd)
 
-	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
-
-	p, ok := cmd.Context().Value(config.PrinterContextKey).(*ui.Printer)
-	if !ok || p == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoPrinter))
-	}
-
-	slog.Debug("Got the Printer instance from context", slog.Any("printer", p))
-
-	r, ok := cmd.Context().Value(config.RunnerContextKey).(*runner.Runner)
-	if !ok || r == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoRunner))
-	}
-
-	slog.Debug("Got the Runner instance from context", slog.Any("runner", r))
+	var (
+		cfg = ctxv.Cfg
+		p   = ctxv.Printer
+		run = ctxv.Runner
+	)
 
 	repo := cfg.Repository
 	if strings.HasPrefix(repo, "ssh://") && !cfg.DisableHTTPSInit {
@@ -334,13 +316,13 @@ func run(cmd *cobra.Command, _ []string) error {
 		return exit.New(exit.InvalidConfigFile, fmt.Errorf("%w: %s", errFileExists, cfg.BaseDirectory))
 	}
 
-	if _, err := git.Lookup(r); err != nil {
+	if _, err := git.Lookup(run); err != nil {
 		ui.Errorf(p, "Git is not installed, and %s doesn't currently automatically install it\n", constants.Name)
 
 		return exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
 	}
 
-	if err := git.Clone(r, cfg.Repository, cfg.BaseDirectory); err != nil {
+	if err := git.Clone(run, cfg.Repository, cfg.BaseDirectory); err != nil {
 		if err, ok := exit.As(err); ok {
 			return err
 		}

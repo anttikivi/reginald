@@ -9,10 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/anttikivi/reginald/internal/config"
+	"github.com/anttikivi/reginald/internal/command/cmdutil"
 	"github.com/anttikivi/reginald/internal/constants"
 	"github.com/anttikivi/reginald/internal/exit"
-	"github.com/anttikivi/reginald/internal/runner"
 	"github.com/anttikivi/reginald/internal/strutil"
 	"github.com/anttikivi/reginald/internal/ui"
 	"github.com/spf13/cobra"
@@ -44,19 +43,12 @@ func NewCommand(_ *viper.Viper) *cobra.Command {
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	slog.Info("Running the persistent pre-run", "cmd", constants.ApplyCommandName)
 
-	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
-	if !ok || cfg == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoConfig))
-	}
+	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextConfig|cmdutil.ContextPrinter)
 
-	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
-
-	p, ok := cmd.Context().Value(config.PrinterContextKey).(*ui.Printer)
-	if !ok || p == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoPrinter))
-	}
-
-	slog.Debug("Got the Printer instance from context", slog.Any("printer", p))
+	var (
+		cfg = ctxv.Cfg
+		p   = ctxv.Printer
+	)
 
 	if err := assignTaskNames(cfg); err != nil {
 		return fmt.Errorf("failed to assign the task names: %w", err)
@@ -109,26 +101,9 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 func run(cmd *cobra.Command, _ []string) error {
 	slog.Info("Running the command", "cmd", constants.ApplyCommandName)
 
-	cfg, ok := cmd.Context().Value(config.ConfigContextKey).(*config.Config)
-	if !ok || cfg == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoConfig))
-	}
+	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextPrinter)
 
-	slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
-
-	p, ok := cmd.Context().Value(config.PrinterContextKey).(*ui.Printer)
-	if !ok || p == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoPrinter))
-	}
-
-	slog.Debug("Got the Printer instance from context", slog.Any("printer", p))
-
-	r, ok := cmd.Context().Value(config.RunnerContextKey).(*runner.Runner)
-	if !ok || r == nil {
-		panic(exit.New(exit.CommandInitFailure, config.ErrNoRunner))
-	}
-
-	slog.Debug("Got the Runner instance from context", slog.Any("runner", r))
+	p := ctxv.Printer
 
 	ui.Successln(p, "Apply done")
 
