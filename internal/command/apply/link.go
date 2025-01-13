@@ -21,12 +21,12 @@ func (l *link) CheckDefaults(settings task.Settings) error {
 		switch k {
 		case "create", "force":
 			if _, ok := v.(bool); !ok {
-				slog.Info("Value in the defaults for link has invalid type", "key", k, "value", v)
+				slog.Info("value in the defaults for link has invalid type", "key", k, "value", v)
 
 				return fmt.Errorf("%w", task.NewInvalidType(l, k, v, "boolean"))
 			}
 		default:
-			slog.Info("Invalid key in the defaults for link", "key", k, "value", v)
+			slog.Info("invalid key in the defaults for link", "key", k, "value", v)
 
 			return fmt.Errorf("%w", task.NewInvalidKey(l, k))
 		}

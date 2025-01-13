@@ -147,14 +147,14 @@ func checkTaskConfigs(opts checkOptions) error {
 
 	go func() {
 		wg.Wait()
-		slog.Debug("All of the task config checks are complete, closing channel")
+		slog.Debug("all of the task config checks are complete, closing channel")
 		close(resultCh)
 	}()
 
 	var configErrs error
 
 	for r := range resultCh {
-		slog.Debug("Received results for task config check", "result", r)
+		slog.Debug("received results for task config check", "result", r)
 
 		if r.err != nil {
 			if errors.Is(r.err, errInvalidTaskType) {
@@ -165,7 +165,7 @@ func checkTaskConfigs(opts checkOptions) error {
 
 			var cfgErr *task.ConfigError
 			if errors.As(r.err, &cfgErr) {
-				slog.Debug("Task returned a ConfigError", "task", r.taskType, "err", cfgErr.Error())
+				slog.Debug("task returned a ConfigError", "task", r.taskType, "err", cfgErr.Error())
 
 				configErrs = errors.Join(configErrs, cfgErr)
 
@@ -274,14 +274,14 @@ func checkTaskDefaults(opts checkOptions) error {
 
 	go func() {
 		wg.Wait()
-		slog.Debug("All of the default config checks are complete, closing channel")
+		slog.Debug("all of the default config checks are complete, closing channel")
 		close(resultCh)
 	}()
 
 	var configErrs error
 
 	for r := range resultCh {
-		slog.Debug("Received results for task defaults check", "result", r)
+		slog.Debug("received results for task defaults check", "result", r)
 
 		if r.err != nil {
 			if errors.Is(r.err, errInvalidTaskType) {
@@ -292,7 +292,7 @@ func checkTaskDefaults(opts checkOptions) error {
 
 			var cfgErr *task.ConfigError
 			if errors.As(r.err, &cfgErr) {
-				slog.Debug("Task returned a ConfigError", "task", r.taskType, "err", cfgErr.Error())
+				slog.Debug("task returned a ConfigError", "task", r.taskType, "err", cfgErr.Error())
 
 				configErrs = errors.Join(configErrs, cfgErr)
 

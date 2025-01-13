@@ -90,7 +90,7 @@ func Search(dir string, p *ui.Printer, r *runner.Runner) ([]PluginInfo, error) {
 		return nil, fmt.Errorf("failed to convert %s into absolute path: %w", original, err)
 	}
 
-	slog.Info("Starting the plugin discovery", "path", dir)
+	slog.Info("starting the plugin discovery", "path", dir)
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -174,16 +174,16 @@ func discover(opts discoveryConfig) discoveryResult {
 
 func checkPath(r *runner.Runner, f os.DirEntry, dir string) (*PluginInfo, error) {
 	fullPath := filepath.Join(dir, f.Name())
-	slog.Debug("Checking if an entry is a plugin", "name", f.Name(), "path", fullPath)
+	slog.Debug("checking if an entry is a plugin", "name", f.Name(), "path", fullPath)
 
 	if !strings.HasPrefix(f.Name(), "reginald-plugin-") {
-		slog.Info("Plugin directory entry with an invalid name", "name", f.Name(), "path", fullPath)
+		slog.Info("plugin directory entry with an invalid name", "name", f.Name(), "path", fullPath)
 
 		return nil, fmt.Errorf("%w: %s", errInvalidPluginName, f.Name())
 	}
 
 	if f.IsDir() {
-		slog.Warn("Found a directory in the plugins path", "path", fullPath)
+		slog.Warn("found a directory in the plugins path", "path", fullPath)
 
 		return nil, fmt.Errorf("%w %s", errDirectoryInPlugins, fullPath)
 	}
@@ -193,7 +193,7 @@ func checkPath(r *runner.Runner, f os.DirEntry, dir string) (*PluginInfo, error)
 		return nil, fmt.Errorf("failed to run the plugin executable: %w", err)
 	}
 
-	slog.Debug("Ran the plugin description", "out", string(out))
+	slog.Debug("ran the plugin description", "out", string(out))
 
 	var desc plugin.Descriptor
 	if err := json.Unmarshal(out, &desc); err != nil {

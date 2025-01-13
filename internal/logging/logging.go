@@ -131,7 +131,7 @@ func Init(cfg *Config) error {
 
 	slog.SetDefault(logger)
 	slog.Info(
-		"Logging initialized",
+		"logging initialized",
 		"output",
 		cfg.Output,
 		"format",

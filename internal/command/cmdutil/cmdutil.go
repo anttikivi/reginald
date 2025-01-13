@@ -49,7 +49,7 @@ func ContextValues(cmd *cobra.Command, values CtxValue) CtxValues {
 			panic(exit.New(exit.CommandInitFailure, config.ErrNoConfig))
 		}
 
-		slog.Debug("Got the Config instance from context", slog.Any("cfg", cfg))
+		slog.Debug("got the Config instance from context", slog.Any("cfg", cfg))
 
 		ctxValues.Cfg = cfg
 	}
@@ -60,7 +60,7 @@ func ContextValues(cmd *cobra.Command, values CtxValue) CtxValues {
 			panic(exit.New(exit.CommandInitFailure, config.ErrNoPrinter))
 		}
 
-		slog.Debug("Got the Printer instance from context", slog.Any("printer", p))
+		slog.Debug("got the Printer instance from context", slog.Any("printer", p))
 
 		ctxValues.Printer = p
 	}
@@ -71,7 +71,7 @@ func ContextValues(cmd *cobra.Command, values CtxValue) CtxValues {
 			panic(exit.New(exit.CommandInitFailure, config.ErrNoRunner))
 		}
 
-		slog.Debug("Got the Runner instance from context", slog.Any("runner", r))
+		slog.Debug("got the Runner instance from context", slog.Any("runner", r))
 
 		ctxValues.Runner = r
 	}

@@ -93,7 +93,7 @@ func NewCommand(vpr *viper.Viper) (*cobra.Command, error) {
 }
 
 func persistentPreRun(cmd *cobra.Command, args []string) error {
-	slog.Info("Running the persistent pre-run", "cmd", constants.BootstrapCommandName)
+	slog.Info("running the persistent pre-run", "cmd", constants.BootstrapCommandName)
 
 	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextConfig|cmdutil.ContextPrinter)
 	cfg := ctxv.Cfg
@@ -117,7 +117,7 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 		return exit.New(exit.InvalidConfig, fmt.Errorf("%w", err))
 	}
 
-	slog.Debug("Parsed the remote repository URL", "url", repo)
+	slog.Debug("parsed the remote repository URL", "url", repo)
 
 	cfg.Repository = repo
 
@@ -279,7 +279,7 @@ func simplifyRepoURL(u *url.URL) *url.URL {
 }
 
 func run(cmd *cobra.Command, _ []string) error {
-	slog.Info("Running the command", "cmd", constants.BootstrapCommandName)
+	slog.Info("running the command", "cmd", constants.BootstrapCommandName)
 
 	ctxv := cmdutil.AllContextValues(cmd)
 
@@ -291,19 +291,19 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	repo := cfg.Repository
 	if strings.HasPrefix(repo, "ssh://") && !cfg.DisableHTTPSInit {
-		slog.Debug("Converting the repository to HTTPS for cloning")
+		slog.Debug("converting the repository to HTTPS for cloning")
 
 		repo, err := toHTTPS(repo)
 		if err != nil {
 			return exit.New(exit.InvalidConfig, fmt.Errorf("cannot convert repository from SSH to HTTPS: %w", err))
 		}
 
-		slog.Debug("Conversion done", "repository", repo)
+		slog.Debug("conversion done", "repository", repo)
 
 		cfg.Repository = repo
 	}
 
-	slog.Debug("Checking if the directory exists", "dir", cfg.BaseDirectory)
+	slog.Debug("checking if the directory exists", "dir", cfg.BaseDirectory)
 
 	exists, err := paths.Exists(cfg.BaseDirectory)
 	if err != nil {

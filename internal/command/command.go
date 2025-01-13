@@ -223,16 +223,16 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	slog.Info("Starting a new Reginald run", "command", cmd.Name())
+	slog.Info("starting a new Reginald run", "command", cmd.Name())
 
 	if config.FileFound(vpr) {
-		slog.Info("Config file read", "path", vpr.ConfigFileUsed())
+		slog.Info("config file read", "path", vpr.ConfigFileUsed())
 	} else {
-		slog.Warn("Config file not found")
+		slog.Warn("config file not found")
 	}
 
-	slog.Debug("Got the following raw settings", slog.Any("config", vpr.AllSettings()))
-	slog.Info("Running with the following configuration", slog.Any("config", cfg))
+	slog.Debug("got the following raw settings", slog.Any("config", vpr.AllSettings()))
+	slog.Info("running with the following configuration", slog.Any("config", cfg))
 
 	p := ui.NewPrinter(cfg.Verbose, cfg.Quiet)
 	r := runner.New(p, cfg.DryRun)

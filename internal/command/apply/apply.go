@@ -41,7 +41,7 @@ func NewCommand(_ *viper.Viper) *cobra.Command {
 }
 
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
-	slog.Info("Running the persistent pre-run", "cmd", constants.ApplyCommandName)
+	slog.Info("running the persistent pre-run", "cmd", constants.ApplyCommandName)
 
 	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextConfig|cmdutil.ContextPrinter)
 
@@ -54,7 +54,7 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to assign the task names: %w", err)
 	}
 
-	slog.Debug("Assigned the task names", "tasks", cfg.Tasks)
+	slog.Debug("assigned the task names", "tasks", cfg.Tasks)
 
 	opts := checkOptions{
 		printer: p,
@@ -78,7 +78,7 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 
 	cfg = mergeDefaults(cfg)
 
-	slog.Debug("Merged the default settings", "cfg", cfg)
+	slog.Debug("merged the default settings", "cfg", cfg)
 
 	if err := ui.Spinner(p, checkTaskConfigs, "Checking the task configs...", opts); err != nil {
 		if errors.Is(err, errCheckConfigs) {
@@ -99,7 +99,7 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 }
 
 func run(cmd *cobra.Command, _ []string) error {
-	slog.Info("Running the command", "cmd", constants.ApplyCommandName)
+	slog.Info("running the command", "cmd", constants.ApplyCommandName)
 
 	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextPrinter)
 

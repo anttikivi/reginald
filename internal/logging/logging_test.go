@@ -17,7 +17,7 @@ import (
 func BenchmarkNullHandler(b *testing.B) {
 	logger := slog.New(logging.NullHandler{})
 	for range b.N {
-		logger.Info("Random integer message", "n", rand.Int()) //nolint:gosec // this is `math/rand`
+		logger.Info("random integer message", "n", rand.Int()) //nolint:gosec // this is `math/rand`
 	}
 }
 
@@ -28,7 +28,7 @@ func BenchmarkDiscardJSONHandler(b *testing.B) {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	for range b.N {
 		//nolint:gosec // this is `math/rand`
-		logger.Info("Random integer message", "n", rand.Int())
+		logger.Info("random integer message", "n", rand.Int())
 	}
 }
 
@@ -39,6 +39,6 @@ func BenchmarkDiscardTextHandler(b *testing.B) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	for range b.N {
 		//nolint:gosec // this is `math/rand`
-		logger.Info("Random integer message", "n", rand.Int())
+		logger.Info("random integer message", "n", rand.Int())
 	}
 }
