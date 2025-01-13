@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,12 +19,23 @@ import (
 	"github.com/cli/safeexec"
 )
 
-const moduleName = "github.com/anttikivi/reginald"
+const (
+	moduleName   = "github.com/anttikivi/reginald"
+	pluginsDir   = "./plugins"
+	pluginsDest  = "./share/reginald"
+	pluginPrefix = "reginald-plugin-"
+)
 
 var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks can as well be global, we don't modify it
 	"bin/reginald": func(exe string) error {
+		skipped := []string{
+			"bin",
+			"plugins",
+			"share",
+		}
+
 		info, err := os.Stat(exe)
-		if err == nil && !sourceFilesLaterThan(info.ModTime()) {
+		if err == nil && !sourceFilesLaterThan(info.ModTime(), skipped, nil) {
 			fmt.Fprintf(os.Stdout, "%s: `%s` is up to date.\n", self, exe)
 
 			return nil
@@ -39,11 +51,6 @@ var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks ca
 		return rmrf("bin", "share")
 	},
 	"man": func(_ string) error {
-		// ldflags := os.Getenv("GO_LDFLAGS")
-		// ldflags = fmt.Sprintf("-X %s/internal/build.Version=%s %s", moduleName, version(), ldflags)
-		// ldflags = fmt.Sprintf("-X %s/internal/build.Date=%s %s", moduleName, date(), ldflags)
-		//
-		// return run("go", "run", "-ldflags", ldflags, "./cmd/docs", "--man", "--path", "./share/man/man1/")
 		return run("go", "run", "./cmd/docs", "--man", "--path", "./share/man/man1/")
 	},
 	"plugins": func(_ string) error {
@@ -52,36 +59,21 @@ var tasks = map[string]func(string) error{ //nolint:gochecknoglobals // tasks ca
 			return fmt.Errorf("failed to read the directory ./plugins: %w", err)
 		}
 
-		destDir, err := filepath.Abs("./share/reginald")
-		if err != nil {
-			return fmt.Errorf("failed to make the destination directory absolute: %w", err)
-		}
-
-		pluginsDir, err := filepath.Abs("./plugins")
-		if err != nil {
-			return fmt.Errorf("failed to make the plugins directory absolute: %w", err)
-		}
-
 		for _, f := range files {
 			if f.IsDir() {
-				err := run(
-					"go",
-					"build",
-					"-o",
-					filepath.Join(destDir, "reginald-plugin-"+f.Name()),
-					filepath.Join(pluginsDir, f.Name()),
-				)
+				err := buildPlugin(f.Name())
 				if err != nil {
-					return fmt.Errorf("failed to build %s: %w", f.Name(), err)
+					return fmt.Errorf("failed to build plugin/%s: %w", f.Name(), err)
 				}
 			}
 		}
 
 		return nil
 	},
+	"plugin": buildPlugin,
 }
 
-var self string //nolint:gochecknoglobals // self is shared within this script
+var self string //nolint:gochecknoglobals // Self is shared within this script.
 
 func main() {
 	args := os.Args[:1]
@@ -94,7 +86,7 @@ func main() {
 		}
 	}
 
-	if len(args) < 2 { //nolint:mnd // args contains only the name of this script
+	if len(args) < 2 { //nolint:mnd // Args contains only the name of this script.
 		if isWindowsTarget() {
 			args = append(args, filepath.Join("bin", "rgl.exe"))
 		} else {
@@ -108,13 +100,25 @@ func main() {
 	}
 
 	for _, task := range args[1:] {
-		t := tasks[normalizeTask(task)]
-		if t == nil {
+		tn := normalizeTask(task)
+		t := tasks[tn]
+
+		// Include "plugin" here to catch invalid call straight to the "plugin"
+		// task. The full name must be used in order to build the correct
+		// plugin.
+		if t == nil || task == "plugin" {
 			fmt.Fprintf(os.Stderr, "Don't know how to build task `%s`.\n", task)
 			os.Exit(1)
 		}
 
-		err := t(task)
+		var err error
+
+		if tn == "plugin" {
+			err = t(strings.TrimPrefix(task, "plugin/"))
+		} else {
+			err = t(task)
+		}
+
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			fmt.Fprintf(os.Stderr, "%s: building task `%s` failed.\n", self, task)
@@ -161,7 +165,13 @@ func date() string {
 	return t.Format("2006-01-02")
 }
 
-func sourceFilesLaterThan(t time.Time) bool { //nolint:varnamelen // t is good enough
+// sourceFilesLaterThan checks if the project files have been modified since the
+// given time t. If exclude is given and is not nil, the given files and
+// directories will be excluded. If include is given and is not nil, only the
+// given files and directoies are checked.
+//
+//nolint:cyclop,gocognit,varnamelen // t is good enough, and there is no need to simplify the function.
+func sourceFilesLaterThan(t time.Time, exclude, include []string) bool {
 	foundLater := false
 
 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
@@ -187,6 +197,16 @@ func sourceFilesLaterThan(t time.Time) bool { //nolint:varnamelen // t is good e
 			}
 
 			return nil
+		}
+
+		if include != nil && path != "." && info.IsDir() && !slices.ContainsFunc(include, func(s string) bool {
+			return path == s || strings.HasPrefix(path, s)
+		}) {
+			return filepath.SkipDir
+		}
+
+		if slices.Contains(exclude, path) {
+			return filepath.SkipDir
 		}
 
 		if info.IsDir() {
@@ -215,7 +235,8 @@ func sourceFilesLaterThan(t time.Time) bool { //nolint:varnamelen // t is good e
 
 func isAccessDenied(err error) bool {
 	var pe *os.PathError
-	// We would use `syscall.ERROR_ACCESS_DENIED` if this script supported build tags.
+	// We would use `syscall.ERROR_ACCESS_DENIED` if this script supported build
+	// tags.
 	return errors.As(err, &pe) && strings.Contains(pe.Err.Error(), "Access is denied")
 }
 
@@ -273,6 +294,10 @@ func normalizeTask(t string) string {
 		return "bin/reginald"
 	}
 
+	if strings.HasPrefix(tn, "plugin/") {
+		return "plugin"
+	}
+
 	return tn
 }
 
@@ -292,4 +317,45 @@ func run(args ...string) error {
 	}
 
 	return nil
+}
+
+func buildPlugin(name string) error {
+	name = strings.TrimPrefix(name, "plugins/")
+
+	_, err := os.ReadDir(filepath.Join(pluginsDir, name))
+	if err != nil {
+		return fmt.Errorf("failed to read the directory ./plugins/%s: %w", name, err)
+	}
+
+	destDir, err := filepath.Abs(pluginsDest)
+	if err != nil {
+		return fmt.Errorf("failed to make the destination directory absolute: %w", err)
+	}
+
+	srcDir := strings.TrimPrefix(pluginsDir, "./") + "/" + name
+	include := []string{
+		"pkg",
+		"plugins",
+		srcDir,
+		"scripts",
+	}
+	exe := filepath.Join(destDir, pluginPrefix+name)
+
+	if isWindowsTarget() {
+		exe += ".exe"
+	}
+
+	info, err := os.Stat(exe)
+	if err == nil && !sourceFilesLaterThan(info.ModTime(), nil, include) {
+		fmt.Fprintf(os.Stdout, "%s: `%s` is up to date.\n", self, exe)
+
+		return nil
+	}
+
+	srcDir = "./" + filepath.Join(pluginsDir, name)
+
+	// TODO: Implement date and version similar to the main executable.
+	ldflags := os.Getenv("GO_LDFLAGS")
+
+	return run("go", "build", "-trimpath", "-ldflags", ldflags, "-o", exe, srcDir)
 }

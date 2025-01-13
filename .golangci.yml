@@ -39,6 +39,9 @@ linters-settings:
     lines: 100
     statements: 50
     ignore-comments: true
+  goconst:
+    match-constant: true
+    min-occurrences: 5
   gocritic:
     enable-all: true
     disabled-checks:

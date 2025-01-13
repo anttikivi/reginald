@@ -52,6 +52,10 @@ clean: scripts/build$(EXE)
 man: scripts/build$(EXE)
 	@$< $@
 
+.PHONY: plugin/install-go
+plugin/install-go: scripts/build$(EXE)
+	@$< $@
+
 .PHONY: plugins
 plugins: scripts/build$(EXE)
 	@$< $@
