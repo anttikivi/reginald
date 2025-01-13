@@ -307,8 +307,6 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	slog.Debug("Got the Runner instance from context", slog.Any("runner", r))
 
-	slog.Info("Received the repository config", "repository", cfg.Repository)
-
 	repo := cfg.Repository
 	if strings.HasPrefix(repo, "ssh://") && !cfg.DisableHTTPSInit {
 		slog.Debug("Converting the repository to HTTPS for cloning")
