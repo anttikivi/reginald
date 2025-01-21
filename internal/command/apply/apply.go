@@ -101,9 +101,14 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 func run(cmd *cobra.Command, _ []string) error {
 	slog.Info("running the command", "cmd", constants.ApplyCommandName)
 
-	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextPrinter)
+	ctxv := cmdutil.ContextValues(cmd, cmdutil.ContextConfig|cmdutil.ContextPrinter)
 
+	cfg := ctxv.Cfg
 	p := ctxv.Printer
+
+	if err := runTasks(p, cfg); err != nil {
+		return exit.New(exit.TaskRunFailure, fmt.Errorf("running tasks failed: %w", err))
+	}
 
 	ui.Successln(p, "Apply done")
 

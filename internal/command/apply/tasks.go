@@ -43,14 +43,23 @@ var errDuplicateNames = errors.New("two tasks were given the same name")
 // errNoPlugins           = errors.New("no plugins provided")
 // errInvalidPluginConfig = errors.New("invalid plugin config")
 
-// Errors to return from checking the configs. If the config itself is wrong,
-// the task's function should return [task.ConfigError].
+// Errors to return from checking the configs and running the task. If the
+// config itself is wrong, the task's function should return [task.ConfigError].
 var (
 	errCheckConfigs      = errors.New("errors while checking configurations for tasks")
 	errCheckDefaults     = errors.New("errors while checking default configurations for tasks")
 	errInvalidTaskType   = errors.New("no task matches the given task type")
 	errTaskTypeAssertion = errors.New("type assertion to task failed")
 )
+
+// builtin contains the built-in tasks of the program. The program assumes that
+// rest of the tasks are found from the plugins.
+//
+//nolint:gochecknoglobals // Used like a constant.
+var builtin = taskSet{
+	"clean": &clean{},
+	"link":  &link{},
+}
 
 // assignTaskNames assigns every task a unique name and returns an error if the
 // user has given two tasks the same name.
@@ -95,20 +104,12 @@ func assignTaskNames(cfg *config.Config) error {
 	return nil
 }
 
-// builtinTasks returns the builtin tasks in the program.
-func builtinTasks() taskSet {
-	return taskSet{
-		"link": &link{},
-	}
-}
-
 // checkTaskConfigs validates the configs for each task. It returns any error
 // that occurred. A nil return value means that the configs are valid.
 func checkTaskConfigs(opts checkOptions) error {
 	var (
 		printer  = opts.printer
 		infos    = opts.cfg.PluginInfos
-		builtin  = builtinTasks()
 		resultCh = make(chan checkResult)
 		wg       sync.WaitGroup
 	)
@@ -235,7 +236,6 @@ func checkTaskDefaults(opts checkOptions) error {
 		printer  = opts.printer
 		infos    = opts.cfg.PluginInfos
 		defaults = opts.cfg.Defaults
-		builtin  = builtinTasks()
 		resultCh = make(chan checkDefaultsResult)
 		wg       sync.WaitGroup
 	)
@@ -388,4 +388,74 @@ func mergeDefaults(cfg *config.Config) *config.Config {
 	cfg.Tasks = result
 
 	return cfg
+}
+
+func runTasks(_ *ui.Printer, cfg *config.Config) error {
+	slog.Info("starting to run the tasks")
+
+	for _, taskCfg := range cfg.Tasks {
+		slog.Info("handling task", "task", taskCfg.Name, "type", taskCfg.Type)
+
+		if t, ok := builtin[taskCfg.Type]; ok {
+			slog.Debug("running from built-in tasks", "task", taskCfg.Name, "type", taskCfg.Type)
+
+			if err := t.Run(taskCfg); err != nil {
+				return fmt.Errorf("running task %s failed: %w", taskCfg.Name, err)
+			}
+
+			continue
+		}
+
+		i := slices.IndexFunc(cfg.PluginInfos, func(info plugins.PluginInfo) bool {
+			_, ok := info.Tasks[taskCfg.Type]
+
+			return ok
+		})
+
+		if i == -1 {
+			return fmt.Errorf("running task %s failed: %w %s", taskCfg.Name, errInvalidTaskType, taskCfg.Type)
+		}
+
+		info := cfg.PluginInfos[i]
+
+		slog.Debug("running task from plugin", "plugin", info.Name, "task", taskCfg.Name, "type", taskCfg.Type)
+
+		if err := runPluginTask(info, taskCfg); err != nil {
+			return fmt.Errorf("running task %s failed: %w", taskCfg.Name, err)
+		}
+	}
+
+	slog.Info("successfully ran the tasks")
+
+	return nil
+}
+
+func runPluginTask(info plugins.PluginInfo, cfg *task.Config) error {
+	client, err := plugins.NewClient(info)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+	defer client.Kill()
+
+	rpcClient, err := client.Client()
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	raw, err := rpcClient.Dispense("task-" + cfg.Type)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	t, ok := raw.(task.Task)
+	if !ok {
+		return fmt.Errorf("%w: %s", errTaskTypeAssertion, cfg.Type)
+	}
+
+	err = t.Run(cfg)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	return nil
 }

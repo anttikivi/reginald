@@ -53,9 +53,8 @@ const (
 	// unexpected error.
 	CommandRunFailure Code = 13
 
-	// PrinterTypeFailure is the exit code when the program tries to use or get
-	// a wrong printer type or a printer through a wrong implementation.
-	PrinterTypeFailure Code = 14
+	// TaskRunFailure is the exit code when a task run fails.
+	TaskRunFailure Code = 14
 )
 
 var (

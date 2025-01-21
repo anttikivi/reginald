@@ -66,6 +66,7 @@ type ConfigError struct {
 	Key      string          // the key that caused the error
 	Value    any             // the value that caused the error
 	ShouldBe string          // the type the config should have
+	Err      error           // custom error to use instead of the predefined ones
 }
 
 // Types that [ConfigError] uses to determine if it is caused by an invalid key
@@ -74,6 +75,7 @@ const (
 	InvalidKey   ConfigViolation = iota // the config contains an invalid key
 	InvalidValue                        // the config contains an invalid value
 	InvalidType                         // the config contains a setting that has invalid type
+	OtherViolation
 )
 
 func (c ConfigList) LogValue() slog.Value {
@@ -103,6 +105,7 @@ func NewInvalidKey(t Task, key string) error {
 		Key:      key,
 		Value:    nil,
 		ShouldBe: "",
+		Err:      nil,
 	}
 }
 
@@ -115,6 +118,7 @@ func NewInvalidValue(t Task, key string, value any) error {
 		Key:      key,
 		Value:    value,
 		ShouldBe: "",
+		Err:      nil,
 	}
 }
 
@@ -125,6 +129,18 @@ func NewInvalidType(t Task, key string, value any, shouldBe string) error {
 		Key:      key,
 		Value:    value,
 		ShouldBe: shouldBe,
+		Err:      nil,
+	}
+}
+
+func NewError(t Task, err error) error {
+	return &ConfigError{
+		Type:     OtherViolation,
+		Task:     t.Type(),
+		Key:      "",
+		Value:    "",
+		ShouldBe: "",
+		Err:      err,
 	}
 }
 
@@ -142,6 +158,8 @@ func (e *ConfigError) Error() string {
 			e.Value,
 			e.ShouldBe,
 		)
+	case OtherViolation:
+		return fmt.Sprintf("invalid config for task %s: %v", e.Task, e.Err)
 	default:
 		return "invalid config"
 	}
