@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/anttikivi/reginald/internal/command/apply"
 	"github.com/anttikivi/reginald/internal/command/bootstrap"
@@ -236,6 +237,9 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 
 	p := ui.NewPrinter(cfg.Verbose, cfg.Quiet)
 	r := runner.New(p, cfg.DryRun)
+
+	os.Chdir(cfg.BaseDirectory)
+	ui.Vhintf(p, "Changed the currect working directory to %v\n", cfg.BaseDirectory)
 
 	if !config.HasFastInit(cmd) {
 		infos, err := plugins.Search(cfg.PluginsDir, p, r)

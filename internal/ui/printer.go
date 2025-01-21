@@ -104,6 +104,12 @@ func Warnln(p *Printer, a ...any) {
 	}
 }
 
+func Vhintf(p *Printer, format string, a ...any) {
+	if p.Verbose {
+		colorPrintfToOut(p, color.Faint, format, a...)
+	}
+}
+
 func Vwarnf(p *Printer, format string, a ...any) {
 	if p.Verbose {
 		colorPrintfToErr(p, color.FgYellow, format, a...)
@@ -154,12 +160,11 @@ func Spinnerf(printer *Printer, fn func() error, format string, a ...any) error 
 	return nil
 }
 
-//nolint:ireturn // Need to accept any return type.
-func Spinner[T, R any](printer *Printer, fn func(R) T, msg string, a R) T {
+func Spinner[T, R any](printer *Printer, fn func(R) T, msg string, arg R) T {
 	done := make(chan T)
 
 	go func() {
-		t := fn(a)
+		t := fn(arg)
 		done <- t
 		close(done)
 	}()
