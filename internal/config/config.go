@@ -6,6 +6,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+	"reflect"
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/constants"
@@ -17,6 +19,7 @@ import (
 	"github.com/anttikivi/reginald/pkg/task"
 	"github.com/fatih/color"
 	"github.com/mitchellh/mapstructure"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -128,6 +131,21 @@ const (
 // ErrConfigType is error for cases where a value given in the config is the
 // wrong type.
 var ErrConfigType = errors.New("invalid config type")
+
+// Errors for fixing the configuration keys manually.
+var (
+	// errConfigFileType is error for cases where we try to manually read the
+	// config file for fixing the keys but the file type is unsupported.
+	errConfigFileType = errors.New("the config file uses unsupported file type")
+
+	// errInvalidValueType is error for cases where a config entry has invalid
+	// type during fixing the keys.
+	errInvalidValueType = errors.New("value in the configuration has an invalid type")
+
+	// errMissingTaskKey is error for when a task config doesn't have a key it
+	// is supposed to have.
+	errMissingTaskKey = errors.New("a task does not contain key")
+)
 
 // EnvReplacer is the [strings.Replacer] used to format the config key for
 // binding with environment variables.
@@ -309,7 +327,15 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 		),
 	)
 
-	if err := cleanVpr.UnmarshalExact(&cfg, decoderOpts); err != nil {
+	if err := cleanVpr.UnmarshalExact(&cfg, decoderOpts, func(c *mapstructure.DecoderConfig) {
+		c.MatchName = func(mapKey, fieldName string) bool {
+			if strings.Contains(mapKey, "/") || strings.Contains(mapKey, "\\") || strings.Contains(mapKey, "$") || strings.Contains(mapKey, "%") {
+				return mapKey == fieldName
+			}
+
+			return strings.EqualFold(mapKey, fieldName)
+		}
+	}); err != nil {
 		return nil, exit.New(
 			exit.InvalidConfig,
 			fmt.Errorf("%w: failed to convert the parsed config to `Config`: %w", ErrConfigType, err),
@@ -320,10 +346,127 @@ func Parse(vpr *viper.Viper) (*Config, error) {
 	// to the logging init.
 	cfg.Log.UseColor = cfg.UseColor
 
-	cfg, err := cleanPaths(cfg)
+	cfg, err := fixKeys(vpr, cfg)
+	if err != nil {
+		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("failed to fix config keys: %w", err))
+	}
+
+	cfg, err = cleanPaths(cfg)
 	if err != nil {
 		return nil, exit.New(exit.InvalidConfig, fmt.Errorf("failed to clean config paths: %w", err))
 	}
+
+	return cfg, nil
+}
+
+// fixKeys fixes the configuration keys that need to be case-sensitive but are
+// converted to lower case by Viper.
+//
+// NOTE: This is quite inefficient but probably fine for the use case.
+func fixKeys(vpr *viper.Viper, cfg *Config) (*Config, error) {
+	if !FileFound(vpr) {
+		return cfg, nil
+	}
+
+	file := vpr.ConfigFileUsed()
+
+	// NOTE: Right now, we only support TOML files.
+	if !strings.HasSuffix(file, ".toml") {
+		return nil, fmt.Errorf("%w: %v", errConfigFileType, file)
+	}
+
+	var fileMap map[string]any
+
+	cfgFileContents, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open the config file: %w", err)
+	}
+
+	if err := toml.Unmarshal(cfgFileContents, &fileMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the config file: %w", err)
+	}
+
+	if _, ok := fileMap["tasks"]; !ok {
+		return cfg, nil
+	}
+
+	fileTasks, ok := fileMap["tasks"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("%w: key %q, got %v: %v", errInvalidValueType, "tasks", reflect.TypeOf(fileMap["tasks"]), fileMap["tasks"])
+	}
+
+	fileLinkTasks := make([]map[string]any, 0)
+
+	for i, rawFileTask := range fileTasks {
+		fileTaskCfg, ok := rawFileTask.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%w: key %q.[%d], got %v: %v", errInvalidValueType, "tasks", i, reflect.TypeOf(rawFileTask), rawFileTask)
+		}
+
+		fileTaskType, ok := fileTaskCfg["type"]
+		if !ok {
+			return nil, fmt.Errorf("%w: %q: %v", errMissingTaskKey, "type", fileTaskCfg)
+		}
+
+		if t, ok := fileTaskType.(string); !ok {
+			return nil, fmt.Errorf("%w: the type of the task is not a string but %v", errInvalidValueType, reflect.TypeOf(fileTaskType))
+		} else if t != "link" {
+			// NOTE: Right now, the only task that required this is the "link"
+			// task.
+			continue
+		}
+
+		fileLinkTasks = append(fileLinkTasks, fileTaskCfg)
+	}
+
+	newTasksCfg := make(task.ConfigList, 0)
+
+	for _, taskCfg := range cfg.Tasks {
+		if taskCfg.Type != "link" {
+			newTasksCfg = append(newTasksCfg, taskCfg)
+
+			continue
+		}
+
+		for _, fileTask := range fileLinkTasks {
+			rawFileLinks, ok := fileTask["links"]
+			if !ok {
+				return nil, fmt.Errorf("%w: %q: %v", errMissingTaskKey, "links", fileTask)
+			}
+
+			fileLinks, ok := rawFileLinks.(map[string]any)
+			if !ok {
+				// Just skip the entry as they are validated elsewhere.
+				continue
+			}
+
+			for key := range fileLinks {
+				cfgLinks, ok := taskCfg.Settings["links"]
+				if !ok {
+					return nil, fmt.Errorf("%w: %q: %v", errMissingTaskKey, "links", taskCfg)
+				}
+
+				cfgLinkMap, ok := cfgLinks.(map[string]any)
+				if !ok {
+					continue
+				}
+
+				newLinks := make(map[string]any, 0)
+
+				for target, value := range cfgLinkMap {
+					if strings.EqualFold(key, target) {
+						newLinks[key] = value
+					}
+				}
+
+				taskCfg.Settings["links"] = newLinks
+			}
+		}
+
+		newTasksCfg = append(newTasksCfg, taskCfg)
+	}
+
+	cfg.Tasks = newTasksCfg
 
 	return cfg, nil
 }

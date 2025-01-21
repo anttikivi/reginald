@@ -67,6 +67,8 @@ func (l *link) Check(settings task.Settings) error {
 		return fmt.Errorf("failed to check the config for %s: %w", l.Type(), err)
 	}
 
+	slog.Debug("decoding", "settings", settings)
+
 	if err := decoder.Decode(settings); err != nil {
 		slog.Error("failed to unmarshal link config", "settings", settings)
 
@@ -81,14 +83,18 @@ func (l *link) Check(settings task.Settings) error {
 		_, valid = linkStrings(v, linkCfg)
 	case map[string]any:
 		_, err = linkMap(v, linkCfg)
-		if err == nil {
-			valid = true
+		if err != nil {
+			return task.NewError(l, err)
 		}
+
+		valid = true
 	case []map[string]any:
 		_, err = linkMapSlice(v, linkCfg)
-		if err == nil {
-			valid = true
+		if err != nil {
+			return task.NewError(l, err)
 		}
+
+		valid = true
 	default:
 		slog.Error("value in the config for link has invalid type", "type", reflect.TypeOf(v), "key", "links", "value", linkCfg.Links)
 
@@ -137,6 +143,13 @@ func decoderConfig(result any) *mapstructure.DecoderConfig {
 		ErrorUnused:      true,
 		WeaklyTypedInput: true,
 		Result:           result,
+		MatchName: func(mapKey, fieldName string) bool {
+			if strings.Contains(mapKey, "/") || strings.Contains(mapKey, "\\") || strings.Contains(mapKey, "$") || strings.Contains(mapKey, "%") {
+				return mapKey == fieldName
+			}
+
+			return strings.EqualFold(mapKey, fieldName)
+		},
 	}
 }
 

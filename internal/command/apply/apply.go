@@ -80,6 +80,15 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 
 	slog.Debug("merged the default settings", "cfg", cfg)
 
+	cfg = mergeGlobalConfig(cfg)
+
+	slog.Debug("merged the global configs", "cfg", cfg)
+
+	opts = checkOptions{
+		printer: p,
+		cfg:     cfg,
+	}
+
 	if err := ui.Spinner(p, checkTaskConfigs, "Checking the task configs...", opts); err != nil {
 		if errors.Is(err, errCheckConfigs) {
 			ui.Errorf(p, "%v\n", err)

@@ -104,6 +104,18 @@ func assignTaskNames(cfg *config.Config) error {
 	return nil
 }
 
+// mergeGlobalConfig sets the global config values required by the tasks to
+// the task configs.
+func mergeGlobalConfig(cfg *config.Config) *config.Config {
+	for _, taskCfg := range cfg.Tasks {
+		if taskCfg.Type == "link" {
+			taskCfg.Settings["base-directory"] = cfg.BaseDirectory
+		}
+	}
+
+	return cfg
+}
+
 // checkTaskConfigs validates the configs for each task. It returns any error
 // that occurred. A nil return value means that the configs are valid.
 func checkTaskConfigs(opts checkOptions) error {
@@ -119,6 +131,8 @@ func checkTaskConfigs(opts checkOptions) error {
 
 		go func() {
 			defer wg.Done()
+
+			slog.Debug("going to check task settings", "settings", cfg.Settings)
 
 			if t, ok := builtin[cfg.Type]; ok {
 				err := t.Check(cfg.Settings)
