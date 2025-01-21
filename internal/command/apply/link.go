@@ -48,8 +48,13 @@ type linkFile struct {
 
 // Errors returned from parsing the links configuration.
 var (
-	// When the map config for links is used but an entry is not a map.
+	// errInvalidMapEntry is returned when the map config for links is used but
+	// an entry is not a map.
 	errInvalidMapEntry = errors.New("entry in the links map is not a map")
+
+	// errMissingTarget is returned when a link entry in an array of maps does
+	// not have a target value.
+	errMissingTarget = errors.New("link entry does not have a target value")
 )
 
 func (l *link) Check(settings task.Settings) error {
@@ -75,9 +80,15 @@ func (l *link) Check(settings task.Settings) error {
 	case []any:
 		_, valid = linkStrings(v, linkCfg)
 	case map[string]any:
-		valid = true
+		_, err = linkMap(v, linkCfg)
+		if err == nil {
+			valid = true
+		}
 	case []map[string]any:
-		valid = true
+		_, err = linkMapSlice(v, linkCfg)
+		if err == nil {
+			valid = true
+		}
 	default:
 		slog.Error("value in the config for link has invalid type", "type", reflect.TypeOf(v), "key", "links", "value", linkCfg.Links)
 
@@ -249,6 +260,91 @@ func linkMap(links map[string]any, cfg linkConfig) ([]linkFile, error) {
 		} else {
 			return nil, fmt.Errorf("%w: %s", errInvalidMapEntry, target)
 		}
+	}
+
+	return result, nil
+}
+
+func linkMapSlice(links []map[string]any, cfg linkConfig) ([]linkFile, error) {
+	result := make([]linkFile, 0, len(links))
+
+	for _, m := range links {
+		if _, ok := m["target"]; !ok {
+			return nil, fmt.Errorf("%w: %v", errMissingTarget, m)
+		}
+
+		if _, ok := m["create"]; !ok {
+			m["create"] = cfg.Create
+		}
+
+		if _, ok := m["force"]; !ok {
+			m["force"] = cfg.Force
+		}
+
+		if _, ok := m["platform"]; !ok {
+			m["platform"] = cfg.Platform
+		}
+
+		var entry struct {
+			Src      string
+			Target   string
+			Create   bool
+			Force    bool
+			Platform []string
+			Contents bool
+			Exclude  []string
+		}
+		decoderCfg := decoderConfig(&entry)
+
+		decoder, err := mapstructure.NewDecoder(decoderCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check a link entry for %v: %w", m, err)
+		}
+
+		if err := decoder.Decode(m); err != nil {
+			slog.Error("failed to unmarshal a link entry", "entry", m)
+
+			return nil, fmt.Errorf("%w", err)
+		}
+
+		slog.Debug("decoded link entry", "entry", entry)
+
+		if entry.Src == "" {
+			src, err := parseLinkSrc(entry.Target, cfg)
+			if err != nil {
+				slog.Error("failed to parse link src", "m", m, "err", err)
+
+				return nil, fmt.Errorf("failed to parse link source: %w", err)
+			}
+
+			entry.Src = src
+		}
+
+		src, err := paths.Abs(entry.Src)
+		if err != nil {
+			slog.Error("failed to parse link src", "src", entry.Src, "err", err)
+
+			return nil, fmt.Errorf("%w", err)
+		}
+
+		entry.Src = src
+
+		entry.Target, err = paths.Abs(entry.Target)
+		if err != nil {
+			slog.Error("failed to parse link target", "err", err)
+
+			return nil, fmt.Errorf("%w", err)
+		}
+
+		result = append(result, linkFile{
+			Src:      entry.Src,
+			Target:   entry.Target,
+			Create:   entry.Create,
+			Force:    entry.Force,
+			Platform: entry.Platform,
+			Contents: entry.Contents,
+			Exclude:  entry.Exclude,
+		})
 	}
 
 	return result, nil
