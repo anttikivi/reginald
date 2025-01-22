@@ -4,8 +4,13 @@
 package rgl
 
 import (
+	"errors"
+	"fmt"
+	"os"
+
 	"github.com/anttikivi/go-semver"
 	"github.com/anttikivi/reginald/internal/build"
+	"github.com/anttikivi/reginald/internal/cmd/base"
 	"github.com/anttikivi/reginald/internal/exit"
 )
 
@@ -42,6 +47,29 @@ func run(v string) exit.Code {
 		// TODO: Change to a nicer value.
 		v = "INVALID"
 	}
+
+	_, err := base.New()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+
+		var exitError *exit.Error
+		if errors.As(err, &exitError) {
+			return exitError.Code()
+		}
+
+		return exit.Failure
+	}
+
+	// if err := cli.Execute(cmd); err != nil {
+	// 	fmt.Fprintf(os.Stderr, "exiting: %v\n", err)
+	//
+	// 	var exitError *exit.Error
+	// 	if errors.As(err, &exitError) {
+	// 		return exitError.Code()
+	// 	}
+	//
+	// 	return exit.Failure
+	// }
 
 	return exit.Success
 }
