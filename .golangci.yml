@@ -27,14 +27,6 @@ linters-settings:
         allow:
           - $gostd
           - github.com/anttikivi
-          - github.com/cli/safeexec
-          - github.com/fatih/color
-          - github.com/hashicorp/go-hclog
-          - github.com/hashicorp/go-plugin
-          - github.com/mitchellh/mapstructure
-          - github.com/spf13/cobra
-          - github.com/spf13/pflag
-          - github.com/spf13/viper
   funlen:
     lines: 100
     statements: 50

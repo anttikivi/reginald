@@ -15,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/cli/safeexec"
 )
 
 const (
@@ -273,7 +271,7 @@ func rmrf(targets ...string) error {
 }
 
 func cmdOutput(args ...string) (string, error) {
-	exe, err := safeexec.LookPath(args[0])
+	exe, err := exec.LookPath(args[0])
 	if err != nil {
 		return "", fmt.Errorf("%w", err)
 	}
@@ -302,7 +300,7 @@ func normalizeTask(t string) string {
 }
 
 func run(args ...string) error {
-	exe, err := safeexec.LookPath(args[0])
+	exe, err := exec.LookPath(args[0])
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
