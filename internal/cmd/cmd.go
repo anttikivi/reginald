@@ -9,6 +9,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,10 @@ import (
 
 	"github.com/anttikivi/reginald/internal/exit"
 )
+
+// ContextKey is a key that is used for settings values for the command's
+// context.
+type ContextKey string
 
 // Command is an implementation of a CLI command. In addition to the base
 // command, all of the subcommands should be Commands.
@@ -36,14 +41,19 @@ type Command struct {
 	// parent functions are run first, starting from the root.
 	Setup func(cmd *Command, args []string) error
 
-	commands               []*Command    // list of children commands
-	flags                  *flag.FlagSet // flag set containing all of the flags for this command
-	globalFlags            *flag.FlagSet // flag set of the command that is inherited by children
-	mutuallyExclusiveFlags [][]string    // each of the flag names marked as mutually exclusive
-	parent                 *Command      // parent of this command, if this is a child command
+	commands               []*Command      // list of children commands
+	ctx                    context.Context // context associated with this command
+	flags                  *flag.FlagSet   // flag set containing all of the flags for this command
+	globalFlags            *flag.FlagSet   // flag set of the command that is inherited by children
+	mutuallyExclusiveFlags [][]string      // each of the flag names marked as mutually exclusive
+	parent                 *Command        // parent of this command, if this is a child command
 }
 
 var (
+	// errContextValue is the error returned when trying to get a nil value from
+	// the command context.
+	errContextValue = errors.New("no value associated with the key in the command context")
+
 	// errFlagName is the error returned when an operation is performed on a flag
 	// that does not exist.
 	errFlagName = errors.New("flag does not exist")
@@ -52,6 +62,34 @@ var (
 	// command as a child of itself.
 	errRecursiveChildCmd = errors.New("command cannot be a child of itself")
 )
+
+// Context returns the command context. If no context has been set, the context
+// is [context.Background] by default.
+func (c *Command) Context() context.Context {
+	if c.ctx == nil {
+		c.ctx = context.Background()
+	}
+
+	return c.ctx
+}
+
+// Value returns the value associated with the command's context for key, or nil
+// if no value is associated with key. Successive calls to Value with the same
+// key returns the same result. The function panics if the value is nil.
+func (c *Command) Value(key ContextKey) any {
+	val := c.ctx.Value(key)
+	if val == nil {
+		panic(exit.New(exit.CommandRunFailure, fmt.Errorf("%w: %v", errContextValue, key)))
+	}
+
+	return val
+}
+
+// WithValue sets the command context to a copy of itself in which the value
+// associated with key is val.
+func (c *Command) WithValue(key ContextKey, val any) {
+	c.ctx = context.WithValue(c.ctx, key, val)
+}
 
 // Name returns the commands name.
 func (c *Command) Name() string {
