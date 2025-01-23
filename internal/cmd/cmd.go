@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Antti Kivi
+// SPDX-License-Identifier: MIT
+
 // Package cmd implements the command type for Reginald.
 //
 // Parts of the code in this package are based on `spf13/cobra`, licensed under

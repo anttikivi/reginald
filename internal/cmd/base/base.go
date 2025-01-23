@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Antti Kivi
+// SPDX-License-Identifier: MIT
+
 // Package base implements the base command for Reginald.
 package base
 
