@@ -1,5 +1,9 @@
 <p align="center">
-  <img alt="Reginald the gopher valet" src="https://github.com/anttikivi/reginald/blob/main/.github/reginald.svg?raw=true" width="200" style="max-width: 100%;">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/anttikivi/reginald/blob/main/.github/reginald-gray-suit.svg?raw=true">
+    <source media="(prefers-color-scheme: light)" srcset="https://github.com/anttikivi/reginald/blob/main/.github/reginald-black-suit.svg?raw=true">
+    <img alt="Reginald the gopher valet" src="https://github.com/anttikivi/reginald/blob/main/.github/reginald-black-suit.svg?raw=true" width="200" style="max-width: 100%;">
+  </picture>
 </p>
 
 <h1 align="center">
