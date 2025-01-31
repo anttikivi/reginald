@@ -67,6 +67,10 @@ var (
 	// from a non-root command.
 	errGlobalFlags = errors.New("failed to get the global flags as the command is not the root command")
 
+	// errSubcommand is the error returned when running with an invalid
+	// subcommand.
+	errSubcommand = errors.New("invalid subcommand")
+
 	// errRecursiveChildCmd is the error returned when the user attempts to add a
 	// command as a child of itself.
 	errRecursiveChildCmd = errors.New("command cannot be a child of itself")
@@ -128,6 +132,18 @@ func (c *Command) HasAlias(s string) bool {
 	return false
 }
 
+// Lookup returns the subcommand for this command for the given name, if any.
+// Otherwise it returns nil.
+func (c *Command) Lookup(name string) *Command {
+	for _, cmd := range c.commands {
+		if cmd.Name() == name {
+			return cmd
+		}
+	}
+
+	return nil
+}
+
 // Add adds the given commands as children of this command.
 func (c *Command) Add(cmds ...*Command) {
 	for i, cmd := range cmds {
@@ -183,6 +199,27 @@ func (c *Command) Execute(ctx context.Context) error {
 	if err := c.GlobalFlags().Parse(args); err != nil {
 		return fmt.Errorf("%w", err)
 	}
+
+	args = c.GlobalFlags().Args()
+	cmd := c
+
+	// We stop looking for the subcommand at the first flag.
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		cmd = cmd.Lookup(args[0])
+		if cmd == nil {
+			return exit.New(exit.InvalidArgs, fmt.Errorf("%w: %s", errSubcommand, args[0]))
+		}
+
+		args = args[1:]
+	}
+
+	cmd.mergeFlags()
+
+	if err := cmd.Flags().Parse(args); err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	cmd.Run(cmd, args)
 
 	return nil
 }
