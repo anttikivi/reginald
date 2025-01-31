@@ -47,7 +47,9 @@ func New(v string) (*cmd.Command, error) {
 	return c, nil
 }
 
-func run(_ *cmd.Command, _ []string) error {
+func run(c *cmd.Command, _ []string) error {
+	c.Flags().Usage()
+
 	return nil
 }
 
