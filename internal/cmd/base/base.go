@@ -8,15 +8,18 @@ import (
 	"fmt"
 
 	"github.com/anttikivi/reginald/internal/cmd"
+	"github.com/anttikivi/reginald/internal/cmd/version"
 	"github.com/anttikivi/reginald/internal/exit"
 )
 
 // Name of base command.
 const Name = "rgl"
 
-func New() (*cmd.Command, error) {
+// New returns a new Reginald command with version v.
+func New(v string) (*cmd.Command, error) {
 	c := &cmd.Command{
 		UsageLine: Name,
+		Version:   v,
 		Run:       run,
 		Setup:     setup,
 	}
@@ -33,6 +36,13 @@ func New() (*cmd.Command, error) {
 	}
 
 	c.GlobalFlags().Bool("n", false, "Print the commands but do not run them.")
+
+	versionCmd, err := version.New(v)
+	if err != nil {
+		return nil, exit.New(exit.CommandInitFailure, fmt.Errorf("failed to initialize the %q command: %w", version.Name, err))
+	}
+
+	c.Add(versionCmd)
 
 	return c, nil
 }
