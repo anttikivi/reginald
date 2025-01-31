@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="Reginald the gopher valet" src="https://github.com/anttikivi/reginald/blob/main/.github/reginald.svg?raw=true" width="350" style="max-width: 100%;">
+  <img alt="Reginald the gopher valet" src="https://github.com/anttikivi/reginald/blob/main/.github/reginald.svg?raw=true" heigth="350" style="max-width: 100%;">
 </p>
 
 <h1 align="center">
