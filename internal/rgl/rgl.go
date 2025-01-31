@@ -4,6 +4,7 @@
 package rgl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -48,7 +49,7 @@ func run(v string) exit.Code {
 		v = "INVALID"
 	}
 
-	_, err := base.New()
+	base, err := base.New(v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
@@ -60,16 +61,16 @@ func run(v string) exit.Code {
 		return exit.Failure
 	}
 
-	// if err := cli.Execute(cmd); err != nil {
-	// 	fmt.Fprintf(os.Stderr, "exiting: %v\n", err)
-	//
-	// 	var exitError *exit.Error
-	// 	if errors.As(err, &exitError) {
-	// 		return exitError.Code()
-	// 	}
-	//
-	// 	return exit.Failure
-	// }
+	if err := base.Execute(context.TODO()); err != nil {
+		fmt.Fprintf(os.Stderr, "exiting: %v\n", err)
+
+		var exitError *exit.Error
+		if errors.As(err, &exitError) {
+			return exitError.Code()
+		}
+
+		return exit.Failure
+	}
 
 	return exit.Success
 }

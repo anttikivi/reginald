@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 // Package cmd implements the command type for Reginald.
-//
-// Parts of the code in this package are based on `spf13/cobra`, licensed under
-// Apache-2.0. You can find the original source and license at
-// https://github.com/spf13/cobra.
 package cmd
 
 import (
@@ -13,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/exit"
@@ -29,6 +26,13 @@ type Command struct {
 	// with the command name without including the parent commands.
 	UsageLine string
 
+	// Aliases are aliases for this command that can be used instead of the
+	// first word in UsageLine.
+	Aliases []string
+
+	// Version is the version of this command.
+	Version string
+
 	// Run runs the command. This should only execute the actual work that the
 	// command does. The Setup function is used for setting up the command,
 	// for example parsing the configuration.
@@ -44,7 +48,8 @@ type Command struct {
 	commands               []*Command      // list of children commands
 	ctx                    context.Context // context associated with this command
 	flags                  *flag.FlagSet   // flag set containing all of the flags for this command
-	globalFlags            *flag.FlagSet   // flag set of the command that is inherited by children
+	persistentFlags        *flag.FlagSet   // flag set of the command that is inherited by children
+	globalFlags            *flag.FlagSet   // global flags in the root command that can be set before the subcommand
 	mutuallyExclusiveFlags [][]string      // each of the flag names marked as mutually exclusive
 	parent                 *Command        // parent of this command, if this is a child command
 }
@@ -57,6 +62,10 @@ var (
 	// errFlagName is the error returned when an operation is performed on a flag
 	// that does not exist.
 	errFlagName = errors.New("flag does not exist")
+
+	// errGlobalFlags is the error returned when trying to get the global flags
+	// from a non-root command.
+	errGlobalFlags = errors.New("failed to get the global flags as the command is not the root command")
 
 	// errRecursiveChildCmd is the error returned when the user attempts to add a
 	// command as a child of itself.
@@ -108,6 +117,17 @@ func (c *Command) HasParent() bool {
 	return c.parent != nil
 }
 
+// HasAlias returns whether the given string is an alias for the command.
+func (c *Command) HasAlias(s string) bool {
+	for _, a := range c.Aliases {
+		if commandNameMatches(a, s) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Add adds the given commands as children of this command.
 func (c *Command) Add(cmds ...*Command) {
 	for i, cmd := range cmds {
@@ -119,6 +139,11 @@ func (c *Command) Add(cmds ...*Command) {
 				),
 			)
 		}
+
+		// As child commands cannot have global flags, move them to the root
+		// before adding the command to the root.
+		addFlagSet(c.Root().GlobalFlags(), cmd.GlobalFlags())
+		cmd.globalFlags = nil
 
 		cmds[i].parent = c
 		c.commands = append(c.commands, cmd)
@@ -134,6 +159,36 @@ func (c *Command) Root() *Command {
 	return c
 }
 
+// Execute finds the commands to run from the command tree by checking the
+// command-line arguments, parses the command-line arguments, and sets up and
+// runs the command.
+func (c *Command) Execute(ctx context.Context) error {
+	if c.HasParent() {
+		// Always start the execution from the root.
+		if err := c.Root().Execute(ctx); err != nil {
+			return fmt.Errorf("%w", err)
+		}
+
+		return nil
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.ctx = ctx
+
+	args := c.collectGlobalFlags(os.Args[1:])
+
+	if err := c.GlobalFlags().Parse(args); err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	return nil
+}
+
+func (c *Command) findCmd() {}
+
 // VisitParents executes the function fn on all of the command's parents.
 func (c *Command) VisitParents(fn func(*Command)) {
 	if c.HasParent() {
@@ -142,8 +197,8 @@ func (c *Command) VisitParents(fn func(*Command)) {
 	}
 }
 
-// Flags returns the set of flags that contains all of the flags associated with
-// this command.
+// Flags returns the set of flags that contains all of the flags but the global
+// flags associated with this command.
 func (c *Command) Flags() *flag.FlagSet {
 	if c.flags == nil {
 		c.flags = c.flagSet()
@@ -152,9 +207,23 @@ func (c *Command) Flags() *flag.FlagSet {
 	return c.flags
 }
 
-// GlobalFlags returns the set of flags of this command that are inherited by
-// the child commands.
+// PersistentFlags returns the set of flags of this command that are inherited
+// by the child commands.
+func (c *Command) PersistentFlags() *flag.FlagSet {
+	if c.persistentFlags == nil {
+		c.persistentFlags = c.flagSet()
+	}
+
+	return c.persistentFlags
+}
+
+// GlobalFlags returns the set of global flags in the root command that can be
+// set before the subcommand.
 func (c *Command) GlobalFlags() *flag.FlagSet {
+	if c.HasParent() {
+		panic(exit.New(exit.CommandInitFailure, fmt.Errorf("%w: %s", errGlobalFlags, c.Name())))
+	}
+
 	if c.globalFlags == nil {
 		c.globalFlags = c.flagSet()
 	}
@@ -199,13 +268,13 @@ func (c *Command) flagSet() *flag.FlagSet {
 func (c *Command) mergeFlags() error {
 	var err error
 
-	err = addFlagSet(c.Root().GlobalFlags(), flag.CommandLine)
+	err = addFlagSet(c.Root().PersistentFlags(), flag.CommandLine)
 	if err != nil {
 		return fmt.Errorf("failed to merge flags: %w", err)
 	}
 
 	c.VisitParents(func(p *Command) {
-		e := addFlagSet(c.GlobalFlags(), p.GlobalFlags())
+		e := addFlagSet(c.PersistentFlags(), p.PersistentFlags())
 		if e != nil {
 			err = e
 		}
@@ -215,10 +284,91 @@ func (c *Command) mergeFlags() error {
 		return fmt.Errorf("failed to merge flags: %w", err)
 	}
 
-	err = addFlagSet(c.Flags(), c.GlobalFlags())
+	err = addFlagSet(c.Flags(), c.PersistentFlags())
 	if err != nil {
 		return fmt.Errorf("failed to merge flags: %w", err)
 	}
 
 	return nil
+}
+
+// collectGlobalFlags finds the global flags in the global flags from the args
+// and moves them first for the global flag parser. The function returns a new
+// slice with the modified arguments.
+func (c *Command) collectGlobalFlags(args []string) []string {
+	newArgs := make([]string, 0, len(args))
+	rest := make([]string, 0)
+
+	c.mergeFlags()
+
+Loop:
+	for len(args) > 0 {
+		s := args[0]
+		dashes := strings.IndexFunc(s, func(r rune) bool { return r != '-' })
+		equal := strings.Index(s, "=")
+
+		args = args[1:]
+
+		switch {
+		case s == "--":
+			// Two dashes marks the end of the command-line flags.
+			break Loop
+		case dashes != 1 && dashes != 2:
+			// Not a flag.
+			rest = append(rest, s)
+		case equal > 0:
+			// Flag with an equals sign.
+			name := s[dashes:equal]
+
+			f := c.GlobalFlags().Lookup(name)
+			if f != nil {
+				newArgs = append(newArgs, s)
+			} else {
+				rest = append(rest, s)
+			}
+		case isNonBool(s[dashes:], c.Flags()) && isNonBool(s[dashes:], c.GlobalFlags()):
+			// "--flag arg" or "-flag arg"
+			// The user gave two dashes in front of the flag (as Go allows) and
+			// the flag is not a boolean, so we have a value for the flag as the
+			// next argument.
+			f := c.GlobalFlags().Lookup(s[dashes:])
+			if f != nil {
+				newArgs = append(newArgs, s)
+			} else {
+				rest = append(rest, s)
+			}
+
+			if len(args) <= 1 {
+				break Loop
+			}
+
+			if f != nil {
+				newArgs = append(newArgs, args[0])
+			} else {
+				rest = append(rest, args[0])
+			}
+
+			args = args[1:]
+		case s != "":
+			// "--flag" or "-flag"
+			f := c.GlobalFlags().Lookup(s[dashes:])
+			if f != nil {
+				newArgs = append(newArgs, s)
+			} else {
+				rest = append(rest, s)
+			}
+		}
+	}
+
+	newArgs = append(newArgs, rest...)
+
+	return newArgs
+}
+
+// commandNameMatches checks if the two command names are equal.
+//
+// NOTE: This is implemented as a separate function in order to maybe extend it
+// with case-insensitivity later.
+func commandNameMatches(a, b string) bool {
+	return a == b
 }
