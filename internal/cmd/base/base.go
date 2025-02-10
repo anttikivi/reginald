@@ -24,9 +24,9 @@ func New(v string) (*cmd.Command, error) {
 		Setup:     setup,
 	}
 
-	c.GlobalFlags().Bool("no-color", false, "Disable colors in the command line output.")
-	c.GlobalFlags().Bool("v", false, "Print more verbose output.")
-	c.GlobalFlags().Bool("q", false, "Disable printing output.")
+	c.PersistentFlags().Bool("no-color", false, "Disable colors in the command line output.")
+	c.PersistentFlags().Bool("v", false, "Print more verbose output.")
+	c.PersistentFlags().Bool("q", false, "Disable printing output.")
 
 	if err := c.MarkMutuallyExclusive("v", "q"); err != nil {
 		return nil, exit.New(
@@ -35,7 +35,7 @@ func New(v string) (*cmd.Command, error) {
 		)
 	}
 
-	c.GlobalFlags().Bool("n", false, "Print the commands but do not run them.")
+	c.PersistentFlags().Bool("n", false, "Print the commands but do not run them.")
 
 	versionCmd, err := version.New(v)
 	if err != nil {
