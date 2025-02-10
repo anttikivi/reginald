@@ -34,7 +34,7 @@ jobs:
           go mod download
 
       - name: Run the linter
-        uses: golangci/golangci-lint-action@v6.2.0
+        uses: golangci/golangci-lint-action@v6.3.2
         with:
           version: v1.62.2
 
