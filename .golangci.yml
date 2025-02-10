@@ -27,14 +27,6 @@ linters-settings:
         allow:
           - $gostd
           - github.com/anttikivi
-          - github.com/cli/safeexec
-          - github.com/fatih/color
-          - github.com/hashicorp/go-hclog
-          - github.com/hashicorp/go-plugin
-          - github.com/mitchellh/mapstructure
-          - github.com/spf13/cobra
-          - github.com/spf13/pflag
-          - github.com/spf13/viper
   funlen:
     lines: 100
     statements: 50
@@ -54,11 +46,7 @@ linters-settings:
       - b *testing.B
       - err error
       - i int
-      - p *ui.Printer
-      - r *runner.Runner
-      - s string
       - sb strings.Builder
-      - T any
       - t *testing.T
       - w io.Writer
       - wg sync.WaitGroup

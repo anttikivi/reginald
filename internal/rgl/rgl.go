@@ -11,10 +11,8 @@ import (
 
 	"github.com/anttikivi/go-semver"
 	"github.com/anttikivi/reginald/internal/build"
-	"github.com/anttikivi/reginald/internal/command"
-	"github.com/anttikivi/reginald/internal/config"
+	"github.com/anttikivi/reginald/internal/cmd/base"
 	"github.com/anttikivi/reginald/internal/exit"
-	"github.com/spf13/viper"
 )
 
 // Run runs Reginald with the standard version number set with the build script.
@@ -51,9 +49,7 @@ func run(v string) exit.Code {
 		v = "INVALID"
 	}
 
-	vpr := viper.New()
-
-	cmd, err := command.New(vpr, v)
+	base, err := base.New(v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
@@ -65,9 +61,7 @@ func run(v string) exit.Code {
 		return exit.Failure
 	}
 
-	ctx := context.WithValue(context.Background(), config.ViperContextKey, vpr)
-
-	if err := cmd.ExecuteContext(ctx); err != nil {
+	if err := base.Execute(context.TODO()); err != nil {
 		fmt.Fprintf(os.Stderr, "exiting: %v\n", err)
 
 		var exitError *exit.Error

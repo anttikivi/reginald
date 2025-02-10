@@ -31,13 +31,17 @@ const (
 
 	// User errors.
 
+	// InvalidArgs is the exit code for when the user has given invalid
+	// command-line arguments.
+	InvalidArgs Code = 3
+
 	// InvalidConfig is the exit code for when the program fails due to invalid
 	// configuration.
-	InvalidConfig Code = 3
+	InvalidConfig Code = 4
 
 	// InvalidConfigFile is the exit code for when the program fails to read the
 	// config file.
-	InvalidConfigFile Code = 4
+	InvalidConfigFile Code = 5
 
 	// Internal errors.
 
