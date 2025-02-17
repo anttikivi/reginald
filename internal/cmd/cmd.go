@@ -32,6 +32,10 @@ type Command struct {
 	// Version is the version of this command.
 	Version string
 
+	// Whether to disable the persistent flags for this command and only use the
+	// given local flags.
+	DisablePersistentFlags bool
+
 	// Run runs the command. This should only execute the actual work that the
 	// command does. The Setup function is used for setting up the command,
 	// for example parsing the configuration.
@@ -287,13 +291,6 @@ func (c *Command) MarkMutuallyExclusive(flags ...string) error {
 	return nil
 }
 
-//	func (c *Command) CheckFlagGroups() error {
-//		for _, group := range c.mutuallyExclusiveFlags {
-//		}
-//
-//		return nil
-//	}
-//
 // flagSet returns a new [flag.flagSet] for the command.
 func (c *Command) flagSet() *flag.FlagSet {
 	return flag.NewFlagSet(c.Name(), flag.ContinueOnError)
@@ -302,6 +299,10 @@ func (c *Command) flagSet() *flag.FlagSet {
 // mergeFlags merges the global flags of this command to the flags and adds the
 // global flags from parents.
 func (c *Command) mergeFlags() error {
+	if c.DisablePersistentFlags {
+		return nil
+	}
+
 	var err error
 
 	err = addFlagSet(c.Root().PersistentFlags(), flag.CommandLine)

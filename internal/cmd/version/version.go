@@ -17,8 +17,9 @@ const Name = "version"
 // New returns a new version command with version v.
 func New(v string) (*cmd.Command, error) {
 	c := &cmd.Command{
-		UsageLine: Name,
-		Version:   v,
+		UsageLine:              Name,
+		Version:                v,
+		DisablePersistentFlags: true,
 		Run: func(cmd *cmd.Command, args []string) error {
 			fmt.Fprintln(os.Stdout, versionString(cmd.Version))
 

@@ -18,10 +18,11 @@ const Name = "reggie"
 // New returns a new Reginald command with version v.
 func New(v string) (*cmd.Command, error) {
 	c := &cmd.Command{
-		UsageLine: Name,
-		Version:   v,
-		Run:       run,
-		Setup:     setup,
+		UsageLine:              Name,
+		Version:                v,
+		DisablePersistentFlags: false,
+		Run:                    run,
+		Setup:                  setup,
 	}
 
 	c.PersistentFlags().Bool("no-color", false, "Disable colors in the command line output.")
