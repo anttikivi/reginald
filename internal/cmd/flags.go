@@ -46,22 +46,3 @@ func addFlagSet(flags, src *flag.FlagSet) error {
 
 	return nil
 }
-
-// isNonBool returns whether the given flag is not a boolean flag.
-//
-// TODO: Do the return values need checking?
-func isNonBool(name string, flags *flag.FlagSet) bool {
-	f := flags.Lookup(name)
-	if f == nil {
-		return true
-	}
-
-	v, ok := f.Value.(flag.Getter)
-	if !ok {
-		return true
-	}
-
-	_, ok = v.Get().(bool)
-
-	return !ok
-}
