@@ -51,7 +51,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -v ./cmd/rgl
+        run: go build -v ./cmd/reggie
 
       - name: Run the version command
         if:
@@ -59,7 +59,7 @@ jobs:
           (matrix.goarch == '386' || matrix.goarch == 'amd64')) || (matrix.goos
           == 'darwin' && (matrix.goarch == 'arm64' || matrix.goarch == 'amd64'))
           }}
-        run: ./rgl version
+        run: ./reggie version
 
   make-build:
     runs-on: ${{ matrix.os }}
@@ -108,10 +108,10 @@ jobs:
           (matrix.goarch == '386' || matrix.goarch == 'amd64')) || (matrix.goos
           == 'darwin' && (matrix.goarch == 'arm64' || matrix.goarch ==
           'amd64'))) }}
-        run: ./bin/rgl version
+        run: ./bin/reggie version
 
       - name: Run the version command on Windows
         if:
           ${{ runner.os == 'Windows' && (matrix.goarch == '386' || matrix.goarch
           == 'amd64') }}
-        run: .\bin\rgl.exe version
+        run: .\bin\reggie.exe version
