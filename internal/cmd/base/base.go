@@ -5,6 +5,7 @@
 package base
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/anttikivi/reginald/internal/cmd"
@@ -17,12 +18,12 @@ const Name = "reggie"
 
 // New returns a new Reginald command with version v.
 func New(v string) (*cmd.Command, error) {
+	//nolint:exhaustruct // Using default values for other fields.
 	c := &cmd.Command{
-		UsageLine:              Name,
-		Version:                v,
-		DisablePersistentFlags: false,
-		Run:                    run,
-		Setup:                  setup,
+		UsageLine: Name,
+		Version:   v,
+		Run:       run,
+		Setup:     setup,
 	}
 
 	c.PersistentFlags().Bool("no-color", false, "Disable colors in the command line output.")
@@ -40,7 +41,10 @@ func New(v string) (*cmd.Command, error) {
 
 	versionCmd, err := version.New(v)
 	if err != nil {
-		return nil, exit.New(exit.CommandInitFailure, fmt.Errorf("failed to initialize the %q command: %w", version.Name, err))
+		return nil, exit.New(
+			exit.CommandInitFailure,
+			fmt.Errorf("failed to initialize the %q command: %w", version.Name, err),
+		)
 	}
 
 	c.Add(versionCmd)
@@ -48,12 +52,12 @@ func New(v string) (*cmd.Command, error) {
 	return c, nil
 }
 
-func run(c *cmd.Command, _ []string) error {
+func run(_ context.Context, c *cmd.Command, _ []string) error {
 	c.Flags().Usage()
 
 	return nil
 }
 
-func setup(_ *cmd.Command, _ []string) error {
+func setup(_ context.Context, _ *cmd.Command, _ []string) error {
 	return nil
 }

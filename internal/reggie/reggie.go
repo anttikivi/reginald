@@ -49,7 +49,7 @@ func run(v string) exit.Code {
 		v = "INVALID"
 	}
 
-	base, err := base.New(v)
+	reggie, err := base.New(v)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
@@ -61,7 +61,7 @@ func run(v string) exit.Code {
 		return exit.Failure
 	}
 
-	if err := base.Execute(context.TODO()); err != nil {
+	if err := reggie.Execute(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "exiting: %v\n", err)
 
 		var exitError *exit.Error

@@ -39,35 +39,31 @@ type Command struct {
 	// Run runs the command. This should only execute the actual work that the
 	// command does. The Setup function is used for setting up the command,
 	// for example parsing the configuration.
-	Run func(cmd *Command, args []string) error
+	Run func(ctx context.Context, cmd *Command, args []string) error
 
 	// Setup runs the setup required for the command. This includes tasks like
 	// parsing the configuration.
 	//
 	// If the command is a child of another command, the Setup functions of the
 	// parent functions are run first, starting from the root.
-	Setup func(cmd *Command, args []string) error
+	Setup func(ctx context.Context, cmd *Command, args []string) error
 
-	commands               []*Command      // list of children commands
-	ctx                    context.Context // context associated with this command
-	flags                  *flag.FlagSet   // flag set containing all of the flags for this command
-	persistentFlags        *flag.FlagSet   // flag set of the command that is inherited by children
-	mutuallyExclusiveFlags [][]string      // each of the flag names marked as mutually exclusive
-	parent                 *Command        // parent of this command, if this is a child command
+	commands               []*Command    // list of children commands
+	flags                  *flag.FlagSet // flag set containing all of the flags for this command
+	persistentFlags        *flag.FlagSet // flag set of the command that is inherited by children
+	mutuallyExclusiveFlags [][]string    // each of the flag names marked as mutually exclusive
+	parent                 *Command      // parent of this command, if this is a child command
 }
 
 var (
 	// errContextValue is the error returned when trying to get a nil value from
 	// the command context.
-	errContextValue = errors.New("no value associated with the key in the command context")
+	// TODO: This will be used.
+	// errContextValue = errors.New("no value associated with the key in the command context").
 
 	// errFlagName is the error returned when an operation is performed on a flag
 	// that does not exist.
 	errFlagName = errors.New("flag does not exist")
-
-	// errGlobalFlags is the error returned when trying to get the global flags
-	// from a non-root command.
-	errGlobalFlags = errors.New("failed to get the global flags as the command is not the root command")
 
 	// errSubcommand is the error returned when running with an invalid
 	// subcommand.
@@ -77,34 +73,6 @@ var (
 	// command as a child of itself.
 	errRecursiveChildCmd = errors.New("command cannot be a child of itself")
 )
-
-// Context returns the command context. If no context has been set, the context
-// is [context.Background] by default.
-func (c *Command) Context() context.Context {
-	if c.ctx == nil {
-		c.ctx = context.Background()
-	}
-
-	return c.ctx
-}
-
-// Value returns the value associated with the command's context for key, or nil
-// if no value is associated with key. Successive calls to Value with the same
-// key returns the same result. The function panics if the value is nil.
-func (c *Command) Value(key ContextKey) any {
-	val := c.ctx.Value(key)
-	if val == nil {
-		panic(exit.New(exit.CommandRunFailure, fmt.Errorf("%w: %v", errContextValue, key)))
-	}
-
-	return val
-}
-
-// WithValue sets the command context to a copy of itself in which the value
-// associated with key is val.
-func (c *Command) WithValue(key ContextKey, val any) {
-	c.ctx = context.WithValue(c.ctx, key, val)
-}
 
 // Name returns the commands name.
 func (c *Command) Name() string {
@@ -190,13 +158,10 @@ func (c *Command) Execute(ctx context.Context) error {
 		return nil
 	}
 
-	if ctx == nil {
-		ctx = context.Background()
+	if err := c.mergeFlags(); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 
-	c.ctx = ctx
-
-	c.mergeFlags()
 	flag.Parse()
 
 	args := flag.Args()
@@ -209,8 +174,7 @@ func (c *Command) Execute(ctx context.Context) error {
 
 	if args[0] == "help" {
 		// If the subcommand is "help", run it and exit early.
-		fmt.Println("TODO: HELP")
-
+		// TODO: Implement help.
 		return nil
 	}
 
@@ -225,13 +189,17 @@ func (c *Command) Execute(ctx context.Context) error {
 		args = args[1:]
 	}
 
-	cmd.mergeFlags()
+	if err := cmd.mergeFlags(); err != nil {
+		return fmt.Errorf("%w", err)
+	}
 
 	if err := cmd.Flags().Parse(args); err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	cmd.Run(cmd, args)
+	if err := cmd.Run(ctx, cmd, args); err != nil {
+		return fmt.Errorf("failed to run the command: %w", err)
+	}
 
 	return nil
 }

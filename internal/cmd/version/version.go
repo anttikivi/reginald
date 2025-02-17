@@ -1,6 +1,7 @@
 package version
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -16,11 +17,12 @@ const Name = "version"
 
 // New returns a new version command with version v.
 func New(v string) (*cmd.Command, error) {
+	//nolint:exhaustruct // Using default values for other fields.
 	c := &cmd.Command{
 		UsageLine:              Name,
 		Version:                v,
 		DisablePersistentFlags: true,
-		Run: func(cmd *cmd.Command, args []string) error {
+		Run: func(_ context.Context, cmd *cmd.Command, _ []string) error {
 			fmt.Fprintln(os.Stdout, versionString(cmd.Version))
 
 			return nil
