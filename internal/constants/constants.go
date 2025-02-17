@@ -5,7 +5,7 @@ package constants
 
 const (
 	// Name of executable.
-	CommandName = "rgl"
+	CommandName = "reggie"
 
 	// HelpLineLen is the maximum length of the help lines printed.
 	HelpLineLen = 80

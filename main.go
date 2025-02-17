@@ -6,10 +6,10 @@ package main
 import (
 	"os"
 
-	"github.com/anttikivi/reginald/internal/rgl"
+	"github.com/anttikivi/reginald/internal/reggie"
 )
 
 func main() {
-	code := int(rgl.Run())
+	code := int(reggie.Run())
 	os.Exit(code)
 }

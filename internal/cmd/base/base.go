@@ -13,7 +13,7 @@ import (
 )
 
 // Name of base command.
-const Name = "rgl"
+const Name = "reggie"
 
 // New returns a new Reginald command with version v.
 func New(v string) (*cmd.Command, error) {

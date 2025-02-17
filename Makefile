@@ -9,7 +9,7 @@ ALLOWED_LICENSES = "Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,MPL-2.0"
 
 GO_MODULE_NAME = github.com/anttikivi/reginald
 
-OUTPUT_NAME ?= rgl
+OUTPUT_NAME ?= reggie
 
 CGO_CPPFLAGS ?= ${CPPFLAGS}
 export CGO_CPPFLAGS
