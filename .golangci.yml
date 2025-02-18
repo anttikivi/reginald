@@ -27,6 +27,7 @@ linters-settings:
         allow:
           - $gostd
           - github.com/anttikivi
+          - github.com/spf13/pflag
   funlen:
     lines: 100
     statements: 50
