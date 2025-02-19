@@ -26,18 +26,18 @@ func New(v string) (*cmd.Command, error) {
 		Setup:     setup,
 	}
 
-	c.PersistentFlags().Bool("no-color", false, "Disable colors in the command line output.")
-	c.PersistentFlags().Bool("v", false, "Print more verbose output.")
-	c.PersistentFlags().Bool("q", false, "Disable printing output.")
+	// c.Flags().Bool("no-color", false, "Disable colors in the command line output.")
+	c.Flags().BoolP("verbose", "v", false, "Print more verbose output.")
+	c.Flags().BoolP("quiet", "q", false, "Disable printing output.")
 
-	if err := c.MarkMutuallyExclusive("v", "q"); err != nil {
+	if err := c.MarkMutuallyExclusive("verbose", "quiet"); err != nil {
 		return nil, exit.New(
 			exit.CommandInitFailure,
 			fmt.Errorf("failed to mark %q and %q as mutually exclusive: %w", "v", "q", err),
 		)
 	}
 
-	c.PersistentFlags().Bool("n", false, "Print the commands but do not run them.")
+	c.Flags().BoolP("dry-run", "n", false, "Print the commands but do not run them.")
 
 	versionCmd, err := version.New(v)
 	if err != nil {

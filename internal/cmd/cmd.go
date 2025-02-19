@@ -7,11 +7,12 @@ package cmd
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/anttikivi/reginald/internal/exit"
+	"github.com/spf13/pflag"
 )
 
 // ContextKey is a key that is used for settings values for the command's
@@ -48,11 +49,10 @@ type Command struct {
 	// parent functions are run first, starting from the root.
 	Setup func(ctx context.Context, cmd *Command, args []string) error
 
-	commands               []*Command    // list of children commands
-	flags                  *flag.FlagSet // flag set containing all of the flags for this command
-	persistentFlags        *flag.FlagSet // flag set of the command that is inherited by children
-	mutuallyExclusiveFlags [][]string    // each of the flag names marked as mutually exclusive
-	parent                 *Command      // parent of this command, if this is a child command
+	commands               []*Command     // list of children commands
+	flags                  *pflag.FlagSet // flag set containing all of the flags for this command
+	mutuallyExclusiveFlags [][]string     // each of the flag names marked as mutually exclusive
+	parent                 *Command       // parent of this command, if this is a child command
 }
 
 var (
@@ -158,25 +158,22 @@ func (c *Command) Execute(ctx context.Context) error {
 		return nil
 	}
 
-	if err := c.mergeFlags(); err != nil {
-		return fmt.Errorf("%w", err)
-	}
+	// TODO: Should the global flag set be merged into the root command's flags?
+	// pflag.Parse()
 
-	flag.Parse()
+	args := os.Args[1:]
+	// if len(args) < 1 {
+	// 	// TODO: Add a custom usage function.
+	// 	c.Flags().Usage()
+	//
+	// 	return nil
+	// }
 
-	args := flag.Args()
-	if len(args) < 1 {
-		// TODO: Add a custom usage function.
-		c.flags.Usage()
-
-		return nil
-	}
-
-	if args[0] == "help" {
-		// If the subcommand is "help", run it and exit early.
-		// TODO: Implement help.
-		return nil
-	}
+	// if args[0] == "help" {
+	// 	// If the subcommand is "help", run it and exit early.
+	// 	// TODO: Implement help.
+	// 	return nil
+	// }
 
 	cmd := c
 	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -187,10 +184,6 @@ func (c *Command) Execute(ctx context.Context) error {
 		}
 
 		args = args[1:]
-	}
-
-	if err := cmd.mergeFlags(); err != nil {
-		return fmt.Errorf("%w", err)
 	}
 
 	if err := cmd.Flags().Parse(args); err != nil {
@@ -212,33 +205,24 @@ func (c *Command) VisitParents(fn func(*Command)) {
 	}
 }
 
-// Flags returns the set of flags that contains all of the flags but the global
-// flags associated with this command.
-func (c *Command) Flags() *flag.FlagSet {
+// Flags returns the set of flags that contains the flags associated with this
+// command.
+func (c *Command) Flags() *pflag.FlagSet {
 	if c.flags == nil {
-		c.flags = c.flagSet()
+		f := pflag.NewFlagSet(c.Name(), pflag.ContinueOnError)
+		c.flags = f
+		c.flags.Usage = func() {
+			fmt.Fprintf(os.Stderr, "Usage of %s:\n", c.Name())
+			c.flags.PrintDefaults()
+		}
 	}
 
 	return c.flags
 }
 
-// PersistentFlags returns the set of flags of this command that are inherited
-// by the child commands.
-func (c *Command) PersistentFlags() *flag.FlagSet {
-	if c.persistentFlags == nil {
-		c.persistentFlags = c.flagSet()
-	}
-
-	return c.persistentFlags
-}
-
 // MarkMutuallyExclusive marks the flags with the given names as mutually
 // exclusive. It returns an error if one of the flags does not exist.
 func (c *Command) MarkMutuallyExclusive(flags ...string) error {
-	if err := c.mergeFlags(); err != nil {
-		return fmt.Errorf("%w", err)
-	}
-
 	group := make([]string, 0, len(flags))
 
 	for _, name := range flags {
@@ -255,44 +239,6 @@ func (c *Command) MarkMutuallyExclusive(flags ...string) error {
 	}
 
 	c.mutuallyExclusiveFlags = append(c.mutuallyExclusiveFlags, group)
-
-	return nil
-}
-
-// flagSet returns a new [flag.flagSet] for the command.
-func (c *Command) flagSet() *flag.FlagSet {
-	return flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-}
-
-// mergeFlags merges the global flags of this command to the flags and adds the
-// global flags from parents.
-func (c *Command) mergeFlags() error {
-	if c.DisablePersistentFlags {
-		return nil
-	}
-
-	var err error
-
-	err = addFlagSet(c.Root().PersistentFlags(), flag.CommandLine)
-	if err != nil {
-		return fmt.Errorf("failed to merge flags: %w", err)
-	}
-
-	c.VisitParents(func(p *Command) {
-		e := addFlagSet(c.PersistentFlags(), p.PersistentFlags())
-		if e != nil {
-			err = e
-		}
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to merge flags: %w", err)
-	}
-
-	err = addFlagSet(c.Flags(), c.PersistentFlags())
-	if err != nil {
-		return fmt.Errorf("failed to merge flags: %w", err)
-	}
 
 	return nil
 }
