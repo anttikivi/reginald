@@ -5,11 +5,10 @@
 package base
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/anttikivi/reginald/internal/cmd"
-	"github.com/anttikivi/reginald/internal/cmd/version"
+	"github.com/anttikivi/reginald/internal/cmd/apply"
 	"github.com/anttikivi/reginald/internal/exit"
 )
 
@@ -26,6 +25,9 @@ func New(v string) (*cmd.Command, error) {
 		Setup:     setup,
 	}
 
+	c.Flags().BoolP("version", "V", false, "Print the version information and exit.")
+	c.Flags().BoolP("help", "h", false, "Print this help message and exit.")
+
 	// c.Flags().Bool("no-color", false, "Disable colors in the command line output.")
 	c.Flags().BoolP("verbose", "v", false, "Print more verbose output.")
 	c.Flags().BoolP("quiet", "q", false, "Disable printing output.")
@@ -39,25 +41,20 @@ func New(v string) (*cmd.Command, error) {
 
 	c.Flags().BoolP("dry-run", "n", false, "Print the commands but do not run them.")
 
-	versionCmd, err := version.New(v)
-	if err != nil {
-		return nil, exit.New(
-			exit.CommandInitFailure,
-			fmt.Errorf("failed to initialize the %q command: %w", version.Name, err),
-		)
-	}
+	applyCmd := apply.New()
 
-	c.Add(versionCmd)
+	c.Add(applyCmd)
 
 	return c, nil
 }
 
-func run(_ context.Context, c *cmd.Command, _ []string) error {
-	c.Flags().Usage()
+func run(c *cmd.Command, _ []string) error {
+	// c.Flags().Usage()
+	fmt.Println("Hello from base")
 
 	return nil
 }
 
-func setup(_ context.Context, _ *cmd.Command, _ []string) error {
+func setup(_ *cmd.Command, _ []string) error {
 	return nil
 }

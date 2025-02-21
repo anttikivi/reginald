@@ -4,7 +4,6 @@
 package reggie
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -61,7 +60,7 @@ func run(v string) exit.Code {
 		return exit.Failure
 	}
 
-	if err := reggie.Execute(context.Background()); err != nil {
+	if err := reggie.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "exiting: %v\n", err)
 
 		var exitError *exit.Error

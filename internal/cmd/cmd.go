@@ -5,7 +5,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,10 +13,6 @@ import (
 	"github.com/anttikivi/reginald/internal/exit"
 	"github.com/spf13/pflag"
 )
-
-// ContextKey is a key that is used for settings values for the command's
-// context.
-type ContextKey string
 
 // Command is an implementation of a CLI command. In addition to the base
 // command, all of the subcommands should be Commands.
@@ -40,20 +35,29 @@ type Command struct {
 	// Run runs the command. This should only execute the actual work that the
 	// command does. The Setup function is used for setting up the command,
 	// for example parsing the configuration.
-	Run func(ctx context.Context, cmd *Command, args []string) error
+	Run func(cmd *Command, args []string) error
 
 	// Setup runs the setup required for the command. This includes tasks like
 	// parsing the configuration.
 	//
 	// If the command is a child of another command, the Setup functions of the
 	// parent functions are run first, starting from the root.
-	Setup func(ctx context.Context, cmd *Command, args []string) error
+	Setup func(cmd *Command, args []string) error
 
 	commands               []*Command     // list of children commands
 	flags                  *pflag.FlagSet // flag set containing all of the flags for this command
 	mutuallyExclusiveFlags [][]string     // each of the flag names marked as mutually exclusive
 	parent                 *Command       // parent of this command, if this is a child command
 }
+
+// ContextKey is a key that is used for settings values for the command's
+// context. The values that ContextKey can have are defined as constants.
+type ContextKey uint8
+
+// Values to use as context keys in the command context, passed to Execute.
+const (
+	VersionKey ContextKey = 1 << iota // key for the program's version
+)
 
 var (
 	// errContextValue is the error returned when trying to get a nil value from
@@ -133,6 +137,9 @@ func (c *Command) Add(cmds ...*Command) {
 
 		cmds[i].parent = c
 		c.commands = append(c.commands, cmd)
+
+		// The version number is only set to the root command and propagated from there.
+		cmds[i].Version = c.Root().Version
 	}
 }
 
@@ -148,61 +155,69 @@ func (c *Command) Root() *Command {
 // Execute finds the commands to run from the command tree by checking the
 // command-line arguments, parses the command-line arguments, and sets up and
 // runs the command.
-func (c *Command) Execute(ctx context.Context) error {
+func (c *Command) Execute() error {
 	if c.HasParent() {
 		// Always start the execution from the root.
-		if err := c.Root().Execute(ctx); err != nil {
+		if err := c.Root().Execute(); err != nil {
 			return fmt.Errorf("%w", err)
 		}
 
 		return nil
 	}
 
-	// TODO: Should the global flag set be merged into the root command's flags?
-	// pflag.Parse()
-
 	args := os.Args[1:]
-	// if len(args) < 1 {
-	// 	// TODO: Add a custom usage function.
-	// 	c.Flags().Usage()
-	//
-	// 	return nil
-	// }
 
-	// if args[0] == "help" {
-	// 	// If the subcommand is "help", run it and exit early.
-	// 	// TODO: Implement help.
-	// 	return nil
-	// }
+	// Get the global options out of the way.
+	if err := c.Flags().Parse(args); err != nil {
+		return fmt.Errorf("failed to parse the global command-line arguments: %w", err)
+	}
 
+	ok, err := c.checkStandardOptions()
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	if ok {
+		return nil
+	}
+
+	args = c.Flags().Args()
 	cmd := c
-	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	for len(args) > 0 {
+		// The next argument should always be the next subcommand.
+		name := args[0]
+
 		// TODO: Extend this to allow having commands from plugins.
-		cmd = cmd.Lookup(args[0])
-		if cmd == nil {
-			return exit.New(exit.InvalidArgs, fmt.Errorf("%w: %s", errSubcommand, args[0]))
+		nextCmd := cmd.Lookup(name)
+		if nextCmd == nil {
+			help(os.Stderr, cmd)
+			fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", name)
+
+			return exit.New(exit.InvalidArgs, fmt.Errorf("%w: %s", errSubcommand, name))
 		}
 
+		cmd = nextCmd
 		args = args[1:]
+		if err := cmd.Flags().Parse(args); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			help(os.Stderr, cmd)
+
+			return fmt.Errorf("failed to parse the command-line arguments for %s: %w", cmd.Name(), err)
+		}
 	}
 
 	if err := cmd.Flags().Parse(args); err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	if err := cmd.Run(ctx, cmd, args); err != nil {
+	println(cmd.Flags().Args())
+	fmt.Println(cmd.Flags().Args())
+
+	if err := cmd.Run(cmd, args); err != nil {
 		return fmt.Errorf("failed to run the command: %w", err)
 	}
 
 	return nil
-}
-
-// VisitParents executes the function fn on all of the command's parents.
-func (c *Command) VisitParents(fn func(*Command)) {
-	if c.HasParent() {
-		fn(c.parent)
-		c.parent.VisitParents(fn)
-	}
 }
 
 // Flags returns the set of flags that contains the flags associated with this
@@ -241,6 +256,36 @@ func (c *Command) MarkMutuallyExclusive(flags ...string) error {
 	c.mutuallyExclusiveFlags = append(c.mutuallyExclusiveFlags, group)
 
 	return nil
+}
+
+// checkStandardOptions checks if either '--version' or '--help' is set and runs
+// the action required by the options. If either of the options is set or the
+// program should exit due to an error, the function returns true. It also
+// returns any error it encountered.
+func (c *Command) checkStandardOptions() (bool, error) {
+	ok, err := c.Flags().GetBool("version")
+	if err != nil {
+		return true, fmt.Errorf("failed to get value for the version option: %w", err)
+	}
+
+	if ok {
+		printVersion(c)
+
+		return true, nil
+	}
+
+	ok, err = c.Flags().GetBool("help")
+	if err != nil {
+		return true, fmt.Errorf("failed to get value for the version option: %w", err)
+	}
+
+	if ok {
+		help(os.Stdout, c)
+
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // commandNameMatches checks if the two command names are equal.
