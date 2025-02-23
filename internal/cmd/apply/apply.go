@@ -6,6 +6,7 @@ package apply
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/anttikivi/reginald/internal/cmd"
 )
@@ -27,9 +28,9 @@ func New() *cmd.Command {
 	return c
 }
 
-func run(c *cmd.Command, _ []string) error {
+func run(_ *cmd.Command, _ []string) error {
 	// c.Flags().Usage()
-	fmt.Println("Hello apply")
+	fmt.Fprintln(os.Stdout, "Run apply")
 
 	return nil
 }

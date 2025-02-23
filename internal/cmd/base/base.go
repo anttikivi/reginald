@@ -6,10 +6,11 @@ package base
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/anttikivi/reginald/internal/cmd"
 	"github.com/anttikivi/reginald/internal/cmd/apply"
-	"github.com/anttikivi/reginald/internal/exit"
+	"github.com/anttikivi/reginald/internal/errutil"
 )
 
 // Name of base command.
@@ -33,8 +34,8 @@ func New(v string) (*cmd.Command, error) {
 	c.Flags().BoolP("quiet", "q", false, "Disable printing output.")
 
 	if err := c.MarkMutuallyExclusive("verbose", "quiet"); err != nil {
-		return nil, exit.New(
-			exit.CommandInitFailure,
+		return nil, errutil.New(
+			errutil.CommandInitFailure,
 			fmt.Errorf("failed to mark %q and %q as mutually exclusive: %w", "v", "q", err),
 		)
 	}
@@ -48,9 +49,9 @@ func New(v string) (*cmd.Command, error) {
 	return c, nil
 }
 
-func run(c *cmd.Command, _ []string) error {
+func run(_ *cmd.Command, _ []string) error {
 	// c.Flags().Usage()
-	fmt.Println("Hello from base")
+	fmt.Fprintln(os.Stdout, "Base command run")
 
 	return nil
 }

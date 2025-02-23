@@ -11,13 +11,13 @@ import (
 	"github.com/anttikivi/go-semver"
 	"github.com/anttikivi/reginald/internal/build"
 	"github.com/anttikivi/reginald/internal/cmd/base"
-	"github.com/anttikivi/reginald/internal/exit"
+	"github.com/anttikivi/reginald/internal/errutil"
 )
 
 // Run runs Reginald with the standard version number set with the build script.
 // The function returns the exit code for the process.
-func Run() exit.Code {
-	defer exit.HandlePanic()
+func Run() errutil.Code {
+	defer errutil.HandlePanic()
 
 	buildVersion := build.Version
 
@@ -36,13 +36,13 @@ func Run() exit.Code {
 // RunAs runs Reginald with the given version number. This is used by the
 // command built with `go build` as it doesn't receive a version from the build
 // script. The function returns the exit code for the process.
-func RunAs(v string) exit.Code {
-	defer exit.HandlePanic()
+func RunAs(v string) errutil.Code {
+	defer errutil.HandlePanic()
 
 	return run(v)
 }
 
-func run(v string) exit.Code {
+func run(v string) errutil.Code {
 	if v == "" {
 		// TODO: Change to a nicer value.
 		v = "INVALID"
@@ -52,24 +52,24 @@ func run(v string) exit.Code {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 
-		var exitError *exit.Error
+		var exitError *errutil.Error
 		if errors.As(err, &exitError) {
 			return exitError.Code()
 		}
 
-		return exit.Failure
+		return errutil.Failure
 	}
 
 	if err := reggie.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "exiting: %v\n", err)
 
-		var exitError *exit.Error
+		var exitError *errutil.Error
 		if errors.As(err, &exitError) {
 			return exitError.Code()
 		}
 
-		return exit.Failure
+		return errutil.Failure
 	}
 
-	return exit.Success
+	return errutil.Success
 }

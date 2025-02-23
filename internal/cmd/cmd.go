@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/anttikivi/reginald/internal/exit"
+	"github.com/anttikivi/reginald/internal/errutil"
 	"github.com/spf13/pflag"
 )
 
@@ -128,8 +128,8 @@ func (c *Command) Add(cmds ...*Command) {
 	for i, cmd := range cmds {
 		if cmds[i] == c {
 			panic(
-				exit.New(
-					exit.CommandInitFailure,
+				errutil.New(
+					errutil.CommandInitFailure,
 					fmt.Errorf("failed to add a child command: %w", errRecursiveChildCmd),
 				),
 			)
@@ -167,22 +167,24 @@ func (c *Command) Execute() error {
 
 	args := os.Args[1:]
 
-	// Get the global options out of the way.
-	if err := c.Flags().Parse(args); err != nil {
-		return fmt.Errorf("failed to parse the global command-line arguments: %w", err)
-	}
+	// Errors are ignored as parsing the flags is done separately for each
+	// commands.
+	_ = c.Flags().Parse(args)
 
 	ok, err := c.checkStandardOptions()
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
+	// The command must exit if either "version" or "help" was included in the
+	// flags.
 	if ok {
 		return nil
 	}
 
 	args = c.Flags().Args()
 	cmd := c
+
 	for len(args) > 0 {
 		// The next argument should always be the next subcommand.
 		name := args[0]
@@ -193,11 +195,12 @@ func (c *Command) Execute() error {
 			help(os.Stderr, cmd)
 			fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", name)
 
-			return exit.New(exit.InvalidArgs, fmt.Errorf("%w: %s", errSubcommand, name))
+			return errutil.New(errutil.InvalidArgs, fmt.Errorf("%w: %s", errSubcommand, name))
 		}
 
 		cmd = nextCmd
 		args = args[1:]
+
 		if err := cmd.Flags().Parse(args); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			help(os.Stderr, cmd)
@@ -209,9 +212,6 @@ func (c *Command) Execute() error {
 	if err := cmd.Flags().Parse(args); err != nil {
 		return fmt.Errorf("%w", err)
 	}
-
-	println(cmd.Flags().Args())
-	fmt.Println(cmd.Flags().Args())
 
 	if err := cmd.Run(cmd, args); err != nil {
 		return fmt.Errorf("failed to run the command: %w", err)
@@ -230,6 +230,7 @@ func (c *Command) Flags() *pflag.FlagSet {
 			fmt.Fprintf(os.Stderr, "Usage of %s:\n", c.Name())
 			c.flags.PrintDefaults()
 		}
+		c.flags.ParseErrorsWhitelist.UnknownFlags = true
 	}
 
 	return c.flags
