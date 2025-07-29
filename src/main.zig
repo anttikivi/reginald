@@ -3,10 +3,37 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+const Config = @import("Config.zig");
+
 const native_os = builtin.target.os.tag;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub fn main() !void {
+    // TODO: It could be ok to remove these safety checks.
+    comptime {
+        if (std.meta.fields(Config).len != Config.metadata.len) {
+            @compileError("length of the config metadata does not match the config");
+        }
+
+        for (std.meta.fields(Config)) |field| {
+            var found = false;
+            for (Config.metadata) |meta| {
+                if (std.mem.eql(u8, field.name, meta.name)) {
+                    found = true;
+                }
+            }
+            if (!found) {
+                @compileError("config field " ++ field.name ++ " not present in metadata");
+            }
+        }
+
+        for (Config.metadata) |meta| {
+            if (!@hasField(Config, meta.name)) {
+                @compileError("metadata name " ++ meta.name ++ " not present in config");
+            }
+        }
+    }
+
     const gpa, const is_debug = gpa: {
         if (native_os == .wasi) break :gpa .{ std.heap.wasm_allocator, false };
         break :gpa switch (builtin.mode) {
