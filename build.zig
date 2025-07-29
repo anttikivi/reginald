@@ -1,116 +1,199 @@
 const std = @import("std");
 
-// Although this function looks imperative, note that its job is to
-// declaratively construct a build graph that will be executed by an external
-// runner.
-pub fn build(b: *std.Build) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
-    const target = b.standardTargetOptions(.{});
+const reginald_version: std.SemanticVersion = .{ .major = 0, .minor = 1, .patch = 0 };
 
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
+pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // This creates a "module", which represents a collection of source files alongside
-    // some compilation options, such as optimization mode and linked system libraries.
-    // Every executable or library we compile will be based on one or more modules.
-    const lib_mod = b.createModule(.{
-        // `root_source_file` is the Zig "entry point" of the module. If a module
-        // only contains e.g. external object files, you can make this `null`.
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // We will also create a module for our other entry point, 'main.zig'.
     const exe_mod = b.createModule(.{
-        // `root_source_file` is the Zig "entry point" of the module. If a module
-        // only contains e.g. external object files, you can make this `null`.
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-
-    // Modules can depend on one another using the `std.Build.Module.addImport` function.
-    // This is what allows Zig source code to use `@import("foo")` where 'foo' is not a
-    // file path. In this case, we set up `exe_mod` to import `lib_mod`.
-    exe_mod.addImport("reginald_lib", lib_mod);
-
-    // Now, we will create a static library based on the module we created above.
-    // This creates a `std.Build.Step.Compile`, which is the build step responsible
-    // for actually invoking the compiler.
-    const lib = b.addLibrary(.{
-        .linkage = .static,
-        .name = "reginald",
-        .root_module = lib_mod,
-    });
-
-    // This declares intent for the library to be installed into the standard
-    // location when the user invokes the "install" step (the default step when
-    // running `zig build`).
-    b.installArtifact(lib);
-
-    // This creates another `std.Build.Step.Compile`, but this one builds an executable
-    // rather than a static library.
     const exe = b.addExecutable(.{
         .name = "reginald",
         .root_module = exe_mod,
     });
-
-    // This declares intent for the executable to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
     b.installArtifact(exe);
 
-    // This *creates* a Run step in the build graph, to be executed when another
-    // step is evaluated that depends on it. The next line below will establish
-    // such a dependency.
-    const run_cmd = b.addRunArtifact(exe);
+    const exe_options = b.addOptions();
+    exe.root_module.addOptions("build_options", exe_options);
 
-    // By making the run step depend on the install step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    // This is not necessary, however, if the application depends on other installed
-    // files, this ensures they will be present and in the expected location.
+    const env_prefix_opt = b.option(
+        []const u8,
+        "env-prefix",
+        "Override the default prefix for environment variables used by Reginald. Default is \"REGINALD_\"",
+    ) orelse "REGINALD_";
+    exe_options.addOption([]const u8, "env_prefix", env_prefix_opt);
+
+    const version_opt = b.option(
+        []const u8,
+        "version",
+        "Override Reginald version string. Default is resolved from Git",
+    );
+    const version = resolveVersion(b, version_opt) catch {
+        std.debug.print("error: resolving version failed\n", .{});
+        std.process.exit(1);
+    };
+    exe_options.addOption([:0]const u8, "version", version);
+
+    const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
 
-    // This creates a build step. It will be visible in the `zig build --help` menu,
-    // and can be selected like this: `zig build run`
-    // This will evaluate the `run` step rather than the default, which is "install".
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
-
-    // Creates a step for unit testing. This only builds the test executable
-    // but does not run it.
-    const lib_unit_tests = b.addTest(.{
-        .root_module = lib_mod,
-    });
-
-    const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_mod,
     });
-
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    // Similar to creating the run step earlier, this exposes a `test` step to
-    // the `zig build --help` menu, providing a way for the user to request
-    // running the unit tests.
+    if (target.result.os.tag != .windows) {
+        exe_unit_tests.linkLibC();
+    }
+
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
+}
+
+fn resolveVersion(b: *std.Build, version_opt: ?[]const u8) ![:0]const u8 {
+    const version_slice = if (version_opt) |v| v else v: {
+        if (!std.process.can_spawn) {
+            std.debug.print(
+                "error: version cannot be resolved from Git. You must provide Reginald version using -Dversion\n",
+                .{},
+            );
+            std.process.exit(1);
+        }
+        const version_string = b.fmt("{d}.{d}.{d}", .{
+            reginald_version.major,
+            reginald_version.minor,
+            reginald_version.patch,
+        });
+
+        // TODO: Check before the actual releases.
+        var code: u8 = undefined;
+        const untrimmed = b.runAllowFail(&[_][]const u8{
+            "git",
+            "-C",
+            b.build_root.path orelse ".",
+            "--git-dir",
+            ".git",
+            "describe",
+            "--match",
+            "v*.*.*",
+            "--tags",
+            "--abbrev=9",
+        }, &code, .Ignore) catch {
+            // If the above command fails, there is probably no Git tags yet. In that case we need
+            // to format a custom version based on the current time.
+            const untrimmed = b.runAllowFail(&[_][]const u8{
+                "git",
+                "-C",
+                b.build_root.path orelse ".",
+                "--git-dir",
+                ".git",
+                "describe",
+                "--always",
+                "--abbrev=40",
+                "--dirty",
+            }, &code, .Ignore) catch {
+                break :v version_string;
+            };
+            const commit = std.mem.trim(u8, untrimmed, " \n\r");
+
+            if (!std.mem.endsWith(u8, commit, "-dirty")) {
+                const untrimmed_date = b.runAllowFail(&[_][]const u8{
+                    "git",
+                    "-C",
+                    b.build_root.path orelse ".",
+                    "--git-dir",
+                    ".git",
+                    "show",
+                    "-s",
+                    "--date=format:'%Y%m%d%H%M%S'",
+                    "--format=%cd",
+                    std.mem.trimRight(u8, commit, "-dirty"),
+                }, &code, .Ignore) catch {
+                    break :v version_string;
+                };
+                const date = std.mem.trim(u8, untrimmed_date, " \n\r");
+                break :v b.fmt("{s}-dev.{s}+{s}", .{
+                    version_string,
+                    date,
+                    std.mem.trimRight(u8, commit, "-dirty"),
+                });
+            }
+
+            const now = std.time.timestamp();
+
+            // We assume that Reginald won't be built before epoch so the timestamp isn't negative.
+            const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @as(u64, @intCast(now)) };
+            const epoch_day = epoch_secs.getEpochDay();
+            const year_day = epoch_day.calculateYearDay();
+            const year = year_day.year;
+            const month_day = year_day.calculateMonthDay();
+            const month = month_day.month.numeric();
+            const day = month_day.day_index + 1;
+            const day_secs = epoch_secs.getDaySeconds();
+            const hour = day_secs.getHoursIntoDay();
+            const minute = day_secs.getMinutesIntoHour();
+            const second = day_secs.getSecondsIntoMinute();
+
+            var buffer: [14]u8 = undefined;
+            _ = try std.fmt.bufPrint(
+                &buffer,
+                "{d:0>4}{d:0>2}{d:0>2}{d:0>2}{d:0>2}{d:0>2}",
+                .{ year, month, day, hour, minute, second },
+            );
+
+            break :v b.fmt("{s}-dev.{s}+{s}", .{ version_string, buffer, commit });
+        };
+        const git_describe = std.mem.trim(u8, untrimmed, " \n\r");
+
+        switch (std.mem.count(u8, git_describe, "-")) {
+            0 => {
+                if (!std.mem.eql(u8, git_describe, version_string)) {
+                    std.debug.print("Reginald version '{s}' does not match Git tag '{s}'\n", .{ version_string, git_describe });
+                    std.process.exit(1);
+                }
+
+                break :v version_string;
+            },
+            2 => {
+                // Untagged development build (e.g. 0.10.0-dev.2025+ecf0050a9).
+                var it = std.mem.splitScalar(u8, git_describe, '-');
+                const tagged_ancestor = it.first();
+                const commit_height = it.next().?;
+                const commit_id = it.next().?;
+
+                const ancestor_ver = try std.SemanticVersion.parse(tagged_ancestor);
+                if (reginald_version.order(ancestor_ver) != .gt) {
+                    std.debug.print("Reginald version '{}' must be greater than tagged ancestor '{}'\n", .{ reginald_version, ancestor_ver });
+                    std.process.exit(1);
+                }
+
+                // Check that the commit hash is prefixed with a 'g' (a Git convention).
+                if (commit_id.len < 1 or commit_id[0] != 'g') {
+                    std.debug.print("Unexpected `git describe` output: {s}\n", .{git_describe});
+                    break :v version_string;
+                }
+
+                // The version is reformatted in accordance with the https://semver.org specification.
+                break :v b.fmt("{s}-dev.{s}+{s}", .{ version_string, commit_height, commit_id[1..] });
+            },
+            else => {
+                std.debug.print("Unexpected `git describe` output: {s}\n", .{git_describe});
+                break :v version_string;
+            },
+        }
+    };
+    const version = try b.allocator.dupeZ(u8, version_slice);
+
+    return version;
 }
