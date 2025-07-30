@@ -134,11 +134,11 @@ pub fn valueType(meta: Metadata) !ValueType {
 
 /// Convert an ASCII string given as a config values to a bool.
 pub fn parseBool(a: []const u8) !bool {
-    if (a.len > 64) {
+    if (a.len > 5) {
         return error.InvalidValue;
     }
 
-    var buf: [64]u8 = undefined;
+    var buf: [5]u8 = undefined;
     const v = std.ascii.lowerString(&buf, a);
 
     if (std.mem.eql(u8, v, "true")) {
