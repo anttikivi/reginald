@@ -66,10 +66,8 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
 
     _ = arena;
 
-    var bw = std.io.bufferedWriter(std.io.getStdErr().writer());
-    const w = bw.writer();
-    try cli.parseArgsLaxly(gpa, args, w);
-    try bw.flush();
+    const w = std.io.getStdErr().writer();
+    _ = try cli.parseArgsLaxly(gpa, args, w);
 }
 
 test {
