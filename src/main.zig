@@ -3,6 +3,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+const cli = @import("cli.zig");
 const Config = @import("Config.zig");
 
 const native_os = builtin.target.os.tag;
@@ -17,8 +18,8 @@ pub fn main() !void {
 
         for (std.meta.fields(Config)) |field| {
             var found = false;
-            for (Config.metadata) |meta| {
-                if (std.mem.eql(u8, field.name, meta.name)) {
+            for (Config.metadata) |m| {
+                if (std.mem.eql(u8, field.name, m.name)) {
                     found = true;
                 }
             }
@@ -27,9 +28,9 @@ pub fn main() !void {
             }
         }
 
-        for (Config.metadata) |meta| {
-            if (!@hasField(Config, meta.name)) {
-                @compileError("metadata name " ++ meta.name ++ " not present in config");
+        for (Config.metadata) |m| {
+            if (!@hasField(Config, m.name)) {
+                @compileError("metadata name " ++ m.name ++ " not present in config");
             }
         }
     }
@@ -63,6 +64,14 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
         return;
     }
 
-    _ = gpa;
     _ = arena;
+
+    var bw = std.io.bufferedWriter(std.io.getStdErr().writer());
+    const w = bw.writer();
+    try cli.parseArgsLaxly(gpa, args, w);
+    try bw.flush();
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

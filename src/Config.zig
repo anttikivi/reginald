@@ -1,3 +1,9 @@
+//! Configuration resolved for the current run of Reginald. It is parsed from
+//! the config file, environment variables, and command-line options. The types
+//! of the configuration should match the precision that is available in
+//! the different config sources so that the user's config can be represented
+//! losslessly.
+
 const Config = @This();
 
 const std = @import("std");
@@ -10,7 +16,7 @@ working_directory: []const u8 = ".",
 
 /// The maximum number of concurrent jobs to allow. If this is less than 1,
 /// unlimited concurrent jobs are allowed.
-max_jobs: i32 = -1,
+max_jobs: i64 = -1,
 
 /// If true, the program shows the help message and exits. When this is set to
 /// true, the actual config instance should never be loaded.
@@ -25,6 +31,13 @@ quiet: bool = false,
 
 /// Whether verbose output is enabled.
 verbose: bool = false,
+
+/// Type of a config value as a more general value instead of raw types.
+const ValueType = enum {
+    bool,
+    int,
+    string,
+};
 
 /// Represents the data for creating command-line options and config file
 /// entries and checking environment variables for a config option.
@@ -100,3 +113,47 @@ pub const metadata = [_]Metadata{
         .description = "print more verbose output",
     },
 };
+
+pub fn valueType(meta: Metadata) !ValueType {
+    // We need to loop through the fields instead of using the built-in
+    // functions for accessing by name as the parameter is not known at compile
+    // time.
+    inline for (std.meta.fields(Config)) |field| {
+        if (std.mem.eql(u8, field.name, meta.name)) {
+            return switch (field.type) {
+                bool => .bool,
+                i64 => .int,
+                []const u8 => .string,
+                else => error.InvalidField,
+            };
+        }
+    }
+
+    return error.UnknownField;
+}
+
+/// Convert an ASCII string given as a config values to a bool.
+pub fn parseBool(a: []const u8) !bool {
+    if (a.len > 64) {
+        return error.InvalidValue;
+    }
+
+    var buf: [64]u8 = undefined;
+    const v = std.ascii.lowerString(&buf, a);
+
+    if (std.mem.eql(u8, v, "true")) {
+        return true;
+    } else if (std.mem.eql(u8, v, "t")) {
+        return true;
+    } else if (std.mem.eql(u8, v, "1")) {
+        return true;
+    } else if (std.mem.eql(u8, v, "false")) {
+        return false;
+    } else if (std.mem.eql(u8, v, "f")) {
+        return false;
+    } else if (std.mem.eql(u8, v, "0")) {
+        return false;
+    }
+
+    return error.InvalidValue;
+}
