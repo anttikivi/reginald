@@ -33,11 +33,7 @@ quiet: bool = false,
 verbose: bool = false,
 
 /// Type of a config value as a more general value instead of raw types.
-const ValueType = enum {
-    bool,
-    int,
-    string,
-};
+const ValueType = enum { bool, int, string };
 
 /// Represents the data for creating command-line options and config file
 /// entries and checking environment variables for a config option.
@@ -114,12 +110,12 @@ pub const metadata = [_]Metadata{
     },
 };
 
-pub fn valueType(meta: Metadata) !ValueType {
+pub fn valueType(m: Metadata) !ValueType {
     // We need to loop through the fields instead of using the built-in
     // functions for accessing by name as the parameter is not known at compile
     // time.
     inline for (std.meta.fields(Config)) |field| {
-        if (std.mem.eql(u8, field.name, meta.name)) {
+        if (std.mem.eql(u8, field.name, m.name)) {
             return switch (field.type) {
                 bool => .bool,
                 i64 => .int,

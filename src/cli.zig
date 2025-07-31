@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
+const testing = std.testing;
 
 const Config = @import("Config.zig");
 const Metadata = Config.Metadata;
@@ -33,9 +33,9 @@ const Parsed = struct {
     /// that is read from the metadata.
     values: std.StringHashMap(OptionValue),
 
-    pub fn deinit(self: *@This()) !void {
+    pub fn deinit(self: *@This()) void {
         self.allocator.free(self.args);
-        try self.values.deinit();
+        self.values.deinit();
     }
 };
 
@@ -66,7 +66,7 @@ fn parseArgsWithOptions(
     writer: anytype,
 ) !Parsed {
     var subcommand: Subcommand = .none;
-    var unknown: ArrayList([]const u8) = switch (on_unknown) {
+    var unknown: std.ArrayList([]const u8) = switch (on_unknown) {
         .fail => undefined,
         .skip => .init(allocator),
     };
@@ -75,7 +75,7 @@ fn parseArgsWithOptions(
         .skip => unknown.deinit(),
     };
 
-    var values = std.StringHashMap(OptionValue).init(allocator);
+    var values: std.StringHashMap(OptionValue) = .init(allocator);
     errdefer values.deinit();
 
     var i: usize = 0;
@@ -172,7 +172,7 @@ fn parseArgsWithOptions(
         }
 
         if (arg[0] == '-' and arg.len > 1) {
-            var rest: ?ArrayList(u8) = null;
+            var rest: ?std.ArrayList(u8) = null;
             defer if (rest) |list| {
                 list.deinit();
             };
@@ -352,7 +352,7 @@ fn parseArgsWithOptions(
     return .{
         .allocator = allocator,
         .args = switch (on_unknown) {
-            .fail => try allocator.alloc(u8, 0), // TODO: Stupid?
+            .fail => try allocator.alloc([]const u8, 0), // TODO: Stupid?
             .skip => try unknown.toOwnedSlice(),
         },
         .subcommand = subcommand,
@@ -388,4 +388,747 @@ fn optionMetadataForShort(short: u8) ?Metadata {
     }
 
     return null;
+}
+
+test "no options" {
+    const args = [_][:0]const u8{"reginald"};
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "stop parsing at `--`" {
+    const args = [_][:0]const u8{ "reginald", "--verbose", "--", "--quiet" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "bool option" {
+    const args = [_][:0]const u8{ "reginald", "--verbose" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "bool option value" {
+    const args = [_][:0]const u8{ "reginald", "--verbose=false", "--quiet=true" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("quiet"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("quiet") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+
+    try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
+    try testing.expectEqual(false, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "bool option invalid value" {
+    const args = [_][:0]const u8{ "reginald", "--verbose=false", "--quiet=something" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "bool option empty value" {
+    const args = [_][:0]const u8{ "reginald", "--verbose=" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "duplicate bool" {
+    const args = [_][:0]const u8{ "reginald", "--quiet", "--quiet" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "string option" {
+    const args = [_][:0]const u8{ "reginald", "--config", "/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "multiple string options" {
+    const args = [_][:0]const u8{
+        "reginald",
+        "--config",
+        "/tmp/config.toml",
+        "--directory",
+        "/tmp",
+    };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("working_directory"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("working_directory") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+    try testing.expectEqualStrings("/tmp", parsed.values.get("working_directory").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string option equals sign" {
+    const args = [_][:0]const u8{ "reginald", "--config=/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string option equals sign quoted" {
+    const args = [_][:0]const u8{ "reginald", "--config=\"/tmp/config.toml\"" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string option no value" {
+    const args = [_][:0]const u8{ "reginald", "--config" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "bool and string option" {
+    const args = [_][:0]const u8{ "reginald", "--config", "/tmp/config.toml", "--verbose" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string option mixed" {
+    const args = [_][:0]const u8{ "reginald", "--directory=/tmp", "--config", "/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("working_directory"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("working_directory") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+    try testing.expectEqualStrings("/tmp", parsed.values.get("working_directory").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "invalid string order" {
+    const args = [_][:0]const u8{ "reginald", "--config", "--verbose" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("--verbose", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "invalid long option" {
+    const args = [_][:0]const u8{ "reginald", "--cfg" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "invalid long option 2" {
+    const args = [_][:0]const u8{ "reginald", "--config_file" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "short bool option" {
+    const args = [_][:0]const u8{ "reginald", "-v" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short bool option value" {
+    const args = [_][:0]const u8{ "reginald", "-v=false", "-q=true" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("quiet"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("quiet") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+
+    try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
+    try testing.expectEqual(false, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short bool option combined" {
+    const args = [_][:0]const u8{ "reginald", "-qv" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("quiet"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("quiet") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+
+    try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short bool option combined last value" {
+    const args = [_][:0]const u8{ "reginald", "-qv=false" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("quiet"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("quiet") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+
+    try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
+    try testing.expectEqual(false, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short bool option invalid value" {
+    const args = [_][:0]const u8{ "reginald", "-v=false", "-q=something" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "short bool option empty value" {
+    const args = [_][:0]const u8{ "reginald", "-v=" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "short string option" {
+    const args = [_][:0]const u8{ "reginald", "-c", "/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short string option value" {
+    const args = [_][:0]const u8{ "reginald", "-c=/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short string option value merged" {
+    const args = [_][:0]const u8{ "reginald", "-c/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short string option empty quoted value" {
+    const args = [_][:0]const u8{ "reginald", "-c=\"\"" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expectEqualStrings("", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short option combined" {
+    const args = [_][:0]const u8{ "reginald", "-vc", "/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short option combined value" {
+    const args = [_][:0]const u8{ "reginald", "-vc=/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short option combined value merged" {
+    const args = [_][:0]const u8{ "reginald", "-vc/tmp/config.toml" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short option combined value merged quoted" {
+    const args = [_][:0]const u8{ "reginald", "-vc\"/tmp/config.toml\"" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short option combined value merged empty quoted" {
+    const args = [_][:0]const u8{ "reginald", "-vc\"\"" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqualStrings("", parsed.values.get("config_file").?.string);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "short option combined no value" {
+    const args = [_][:0]const u8{ "reginald", "-vc" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "invalid empty short" {
+    const args = [_][:0]const u8{ "reginald", "-" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "subcommand apply" {
+    const args = [_][:0]const u8{ "reginald", "apply" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expectEqual(0, parsed.args.len);
+
+    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+}
+
+test "subcommand int option" {
+    const args = [_][:0]const u8{ "reginald", "apply", "--jobs", "20" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+    try testing.expect(parsed.values.contains("max_jobs"));
+
+    try testing.expect(parsed.values.get("max_jobs") != null);
+    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+
+    try testing.expectEqual(0, parsed.args.len);
+
+    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+}
+
+test "subcommand global option before" {
+    const args = [_][:0]const u8{ "reginald", "--verbose", "apply", "--jobs", "20" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("max_jobs"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("max_jobs") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+
+    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+}
+
+test "subcommand global option after" {
+    const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "20" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("max_jobs"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("max_jobs") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+
+    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+}
+
+test "subcommand global option both" {
+    const args = [_][:0]const u8{ "reginald", "--quiet", "apply", "--verbose", "--jobs", "20" };
+    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("max_jobs"));
+    try testing.expect(parsed.values.contains("quiet"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("max_jobs") != null);
+    try testing.expect(parsed.values.get("quiet") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+    try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+
+    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+}
+
+test "subcommand option before" {
+    const args = [_][:0]const u8{ "reginald", "--verbose", "--jobs", "20", "apply" };
+    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "no unknown" {
+    const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "40" };
+    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("max_jobs"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("max_jobs") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(40, parsed.values.get("max_jobs").?.int);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+
+    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+}
+
+test "unknown long option" {
+    const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose" };
+    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(1, parsed.args.len);
+    try testing.expectEqualStrings("--not-real", parsed.args[0]);
+}
+
+test "unknown short option" {
+    const args = [_][:0]const u8{ "reginald", "--verbose", "-ah" };
+    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("print_help"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("print_help") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(true, parsed.values.get("print_help").?.bool);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(1, parsed.args.len);
+    try testing.expectEqualStrings("-a", parsed.args[0]);
+}
+
+test "unknown arg" {
+    const args = [_][:0]const u8{ "reginald", "--verbose", "-h", "not-real" };
+    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("print_help"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("print_help") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(true, parsed.values.get("print_help").?.bool);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(1, parsed.args.len);
+    try testing.expectEqualStrings("not-real", parsed.args[0]);
+}
+
+test "multiple unknown" {
+    const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose", "-ah", "unreal", "-b" };
+    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("print_help"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("print_help") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expectEqual(true, parsed.values.get("print_help").?.bool);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(4, parsed.args.len);
+    try testing.expectEqualStrings("--not-real", parsed.args[0]);
+    try testing.expectEqualStrings("-a", parsed.args[1]);
+    try testing.expectEqualStrings("unreal", parsed.args[2]);
+    try testing.expectEqualStrings("-b", parsed.args[3]);
 }
