@@ -78,7 +78,9 @@ fn parseArgsWithOptions(
     var values: std.StringHashMap(OptionValue) = .init(allocator);
     errdefer values.deinit();
 
-    var i: usize = 0;
+    assert(args.len > 0);
+
+    var i: usize = 1;
     outer: while (i < args.len) : (i += 1) {
         const arg = args[i];
         assert(arg.len > 0);
