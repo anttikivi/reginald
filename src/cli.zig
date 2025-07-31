@@ -65,6 +65,11 @@ pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: an
     return parseArgsWithOptions(allocator, .skip, args, writer);
 }
 
+/// Implementation for parsing arguments.
+///
+/// TODO: If there are many unknown arguments, there is a lot of duplicating. It
+/// might be worth considering if the parser would benefit from reduced
+/// allocations.
 fn parseArgsWithOptions(
     allocator: Allocator,
     comptime on_unknown: OnUnknown,
