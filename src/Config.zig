@@ -8,6 +8,8 @@ const Config = @This();
 
 const std = @import("std");
 
+const cli = @import("cli.zig");
+
 /// Path to the config file.
 config_file: []const u8 = "",
 
@@ -62,7 +64,7 @@ pub const Metadata = struct {
     /// Subcommands for which the command-line option for this config option
     /// should be created for instead of creating it as a global command-line
     /// option.
-    subcommands: ?[]const []const u8 = null,
+    subcommands: ?[]const cli.Subcommand = null,
 };
 
 pub const metadata = [_]Metadata{
@@ -83,7 +85,7 @@ pub const metadata = [_]Metadata{
         .long = "jobs",
         .short = 'j',
         .description = "maximum number of jobs to run concurrently",
-        .subcommands = &[_][]const u8{"apply"},
+        .subcommands = &[_]cli.Subcommand{.apply},
     },
     .{
         .name = "print_help",

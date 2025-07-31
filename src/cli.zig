@@ -7,10 +7,7 @@ const Config = @import("Config.zig");
 const Metadata = Config.Metadata;
 
 /// Subcommands available in Reginald.
-const Subcommand = enum {
-    none,
-    apply,
-};
+pub const Subcommand = enum { none, apply };
 
 /// Value of a parsed command-line option.
 const OptionValue = union(enum) {
@@ -95,7 +92,7 @@ fn parseArgsWithOptions(
             }
 
             const long = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| arg[2..j] else arg[2..];
-            const option_meta = optionMetadataForLong(long) orelse switch (on_unknown) {
+            const option_meta = optionMetadataForLong(long, subcommand) orelse switch (on_unknown) {
                 .fail => {
                     try writer.print("invalid command-line option `--{s}`\n", .{long});
                     return error.InvalidArgs;
@@ -209,7 +206,7 @@ fn parseArgsWithOptions(
                     break;
                 }
 
-                const option_meta = optionMetadataForShort(c) orelse switch (on_unknown) {
+                const option_meta = optionMetadataForShort(c, subcommand) orelse switch (on_unknown) {
                     .fail => {
                         try writer.print("unknown command-line option `-{c}` in `{s}`\n", .{ c, arg });
                         return error.InvalidArgs;
@@ -367,8 +364,25 @@ fn parseArgsWithOptions(
 
 /// Look up the config option metadata with the given long command-line option
 /// name.
-fn optionMetadataForLong(name: []const u8) ?Metadata {
+fn optionMetadataForLong(name: []const u8, subcmd: Subcommand) ?Metadata {
     for (Config.metadata) |m| {
+        if (m.subcommands) |slice| {
+            var found = false;
+
+            for (slice) |s| {
+                if (s == subcmd) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                continue;
+            }
+        } else if (subcmd != .none) {
+            continue;
+        }
+
         if (m.long) |long| {
             if (std.mem.eql(u8, long, name)) {
                 return m;
@@ -383,8 +397,25 @@ fn optionMetadataForLong(name: []const u8) ?Metadata {
 
 /// Look up the config option metadata with the given short, one-letter
 /// command-line option name.
-fn optionMetadataForShort(short: u8) ?Metadata {
+fn optionMetadataForShort(short: u8, subcmd: Subcommand) ?Metadata {
     for (Config.metadata) |m| {
+        if (m.subcommands) |slice| {
+            var found = false;
+
+            for (slice) |s| {
+                if (s == subcmd) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                continue;
+            }
+        } else if (subcmd != .none) {
+            continue;
+        }
+
         if (m.short) |c| {
             if (c == short) {
                 return m;
