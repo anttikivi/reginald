@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
 
 const Config = @import("Config.zig");
@@ -38,17 +39,41 @@ const Parsed = struct {
     }
 };
 
+const OnUnknown = enum { fail, skip };
+
+/// Parse command-line arguments and fail on unknown arguments. The writer is
+/// used for printing more detailed error messages if the function encounters
+/// invalid arguments.
+pub fn parseArgs(allocator: Allocator, args: []const []const u8, writer: anytype) !Parsed {
+    return parseArgsWithOptions(allocator, .fail, args, writer);
+}
+
 /// Parse command-line arguments in a lax manner so that unknown arguments are
 /// ignored. This should be used for parsing the command-line arguments during
 /// the first run when the options and subcommands that the plugins provide are
 /// not known.
 ///
-/// The writer must be a writer, and it is used for printing more detailed error
-/// messages if the function encounters invalid arguments.
+/// The writer is used for printing more detailed error messages if the function
+/// encounters invalid arguments.
 pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: anytype) !Parsed {
+    return parseArgsWithOptions(allocator, .skip, args, writer);
+}
+
+fn parseArgsWithOptions(
+    allocator: Allocator,
+    comptime on_unknown: OnUnknown,
+    args: []const []const u8,
+    writer: anytype,
+) !Parsed {
     var subcommand: Subcommand = .none;
-    var unknown = std.ArrayList([]const u8).init(allocator);
-    errdefer unknown.deinit();
+    var unknown: ArrayList([]const u8) = switch (on_unknown) {
+        .fail => undefined,
+        .skip => .init(allocator),
+    };
+    errdefer switch (on_unknown) {
+        .fail => {},
+        .skip => unknown.deinit(),
+    };
 
     var values = std.StringHashMap(OptionValue).init(allocator);
     errdefer values.deinit();
@@ -64,9 +89,15 @@ pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: an
             }
 
             const long = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| arg[2..j] else arg[2..];
-            const option_meta = optionMetadataForLong(long) orelse {
-                try unknown.append(arg);
-                continue;
+            const option_meta = optionMetadataForLong(long) orelse switch (on_unknown) {
+                .fail => {
+                    try writer.print("invalid command-line option `--{s}`\n", .{long});
+                    return error.InvalidArgs;
+                },
+                .skip => {
+                    try unknown.append(arg);
+                    continue;
+                },
             };
 
             if (values.contains(option_meta.name)) {
@@ -141,7 +172,7 @@ pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: an
         }
 
         if (arg[0] == '-' and arg.len > 1) {
-            var rest: ?std.ArrayList(u8) = null;
+            var rest: ?ArrayList(u8) = null;
             defer if (rest) |list| {
                 list.deinit();
             };
@@ -151,25 +182,42 @@ pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: an
                 const c = arg[j];
 
                 if (c == '=') {
-                    if (rest) |*list| {
-                        try list.appendSlice(arg[j..]);
-                    } else {
-                        try writer.print("unexpected value separator in `{s}`\n", .{arg});
-                        return error.InvalidArgs;
+                    switch (on_unknown) {
+                        // This error message is duplicated in order to have
+                        // the compiler to inline the switch and skip the if in
+                        // `skip` when the `fail` mode is selected.
+                        .fail => {
+                            try writer.print("unexpected value separator in `{s}`\n", .{arg});
+                            return error.InvalidArgs;
+                        },
+                        .skip => {
+                            if (rest) |*list| {
+                                try list.appendSlice(arg[j..]);
+                            } else {
+                                try writer.print("unexpected value separator in `{s}`\n", .{arg});
+                                return error.InvalidArgs;
+                            }
+                        },
                     }
 
                     break;
                 }
 
-                const option_meta = optionMetadataForShort(c) orelse {
-                    if (rest) |*list| {
-                        try list.append(c);
-                    } else {
-                        rest = .init(allocator);
-                        try rest.?.appendSlice(&[_]u8{ '-', c });
-                    }
+                const option_meta = optionMetadataForShort(c) orelse switch (on_unknown) {
+                    .fail => {
+                        try writer.print("unknown command-line option `-{c}` in `{s}`\n", .{ c, arg });
+                        return error.InvalidArgs;
+                    },
+                    .skip => {
+                        if (rest) |*list| {
+                            try list.append(c);
+                        } else {
+                            rest = .init(allocator);
+                            try rest.?.appendSlice(&[_]u8{ '-', c });
+                        }
 
-                    continue;
+                        continue;
+                    },
                 };
 
                 if (values.contains(option_meta.name)) {
@@ -272,8 +320,11 @@ pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: an
                 }
             }
 
-            if (rest) |*list| {
-                try unknown.append(try list.toOwnedSlice());
+            switch (on_unknown) {
+                .fail => {},
+                .skip => if (rest) |*list| {
+                    try unknown.append(try list.toOwnedSlice());
+                },
             }
 
             continue;
@@ -288,13 +339,22 @@ pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: an
                 },
             }
         } else {
-            try unknown.append(arg);
+            switch (on_unknown) {
+                .fail => {
+                    try writer.print("unknown argument: {s}\n", .{arg});
+                    return error.InvalidArgs;
+                },
+                .skip => try unknown.append(arg),
+            }
         }
     }
 
     return .{
         .allocator = allocator,
-        .args = try unknown.toOwnedSlice(),
+        .args = switch (on_unknown) {
+            .fail => try allocator.alloc(u8, 0), // TODO: Stupid?
+            .skip => try unknown.toOwnedSlice(),
+        },
         .subcommand = subcommand,
         .values = values,
     };
