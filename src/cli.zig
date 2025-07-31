@@ -31,6 +31,9 @@ const Parsed = struct {
     values: std.StringHashMap(OptionValue),
 
     pub fn deinit(self: *@This()) void {
+        for (self.args) |s| {
+            self.allocator.free(s);
+        }
         self.allocator.free(self.args);
         self.values.deinit();
     }
@@ -98,7 +101,7 @@ fn parseArgsWithOptions(
                     return error.InvalidArgs;
                 },
                 .skip => {
-                    try unknown.append(arg);
+                    try unknown.append(try allocator.dupe(u8, arg));
                     continue;
                 },
             };
@@ -324,8 +327,8 @@ fn parseArgsWithOptions(
 
             switch (on_unknown) {
                 .fail => {},
-                .skip => if (rest) |*list| {
-                    try unknown.append(try list.toOwnedSlice());
+                .skip => if (rest) |list| {
+                    try unknown.append(try allocator.dupe(u8, list.items));
                 },
             }
 
@@ -346,7 +349,7 @@ fn parseArgsWithOptions(
                     try writer.print("unknown argument: {s}\n", .{arg});
                     return error.InvalidArgs;
                 },
-                .skip => try unknown.append(arg),
+                .skip => try unknown.append(try allocator.dupe(u8, arg)),
             }
         }
     }
@@ -379,8 +382,6 @@ fn optionMetadataForLong(name: []const u8, subcmd: Subcommand) ?Metadata {
             if (!found) {
                 continue;
             }
-        } else if (subcmd != .none) {
-            continue;
         }
 
         if (m.long) |long| {
@@ -412,8 +413,6 @@ fn optionMetadataForShort(short: u8, subcmd: Subcommand) ?Metadata {
             if (!found) {
                 continue;
             }
-        } else if (subcmd != .none) {
-            continue;
         }
 
         if (m.short) |c| {
