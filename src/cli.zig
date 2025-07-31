@@ -44,6 +44,9 @@ const OnUnknown = enum { fail, skip };
 /// Parse command-line arguments and fail on unknown arguments. The writer is
 /// used for printing more detailed error messages if the function encounters
 /// invalid arguments.
+///
+/// The arguments passed in to the function must not contain the the name of
+/// the program.
 pub fn parseArgs(allocator: Allocator, args: []const []const u8, writer: anytype) !Parsed {
     return parseArgsWithOptions(allocator, .fail, args, writer);
 }
@@ -52,6 +55,9 @@ pub fn parseArgs(allocator: Allocator, args: []const []const u8, writer: anytype
 /// ignored. This should be used for parsing the command-line arguments during
 /// the first run when the options and subcommands that the plugins provide are
 /// not known.
+///
+/// The arguments passed in to the function must not contain the the name of
+/// the program.
 ///
 /// The writer is used for printing more detailed error messages if the function
 /// encounters invalid arguments.
@@ -78,9 +84,7 @@ fn parseArgsWithOptions(
     var values: std.StringHashMap(OptionValue) = .init(allocator);
     errdefer values.deinit();
 
-    assert(args.len > 0);
-
-    var i: usize = 1;
+    var i: usize = 0;
     outer: while (i < args.len) : (i += 1) {
         const arg = args[i];
         assert(arg.len > 0);
@@ -265,7 +269,6 @@ fn parseArgsWithOptions(
 
                         if (args.len <= i + 1) {
                             try writer.print("option `-{c}` requires a value\n", .{c});
-
                             return error.InvalidArgs;
                         }
 
@@ -394,7 +397,7 @@ fn optionMetadataForShort(short: u8) ?Metadata {
 
 test "no options" {
     const args = [_][:0]const u8{"reginald"};
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(!parsed.values.contains("config_file"));
@@ -409,7 +412,7 @@ test "no options" {
 
 test "stop parsing at `--`" {
     const args = [_][:0]const u8{ "reginald", "--verbose", "--", "--quiet" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("verbose"));
@@ -424,7 +427,7 @@ test "stop parsing at `--`" {
 
 test "bool option" {
     const args = [_][:0]const u8{ "reginald", "--verbose" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("verbose"));
@@ -442,7 +445,7 @@ test "bool option" {
 
 test "bool option value" {
     const args = [_][:0]const u8{ "reginald", "--verbose=false", "--quiet=true" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("quiet"));
@@ -463,25 +466,25 @@ test "bool option value" {
 
 test "bool option invalid value" {
     const args = [_][:0]const u8{ "reginald", "--verbose=false", "--quiet=something" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "bool option empty value" {
     const args = [_][:0]const u8{ "reginald", "--verbose=" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "duplicate bool" {
     const args = [_][:0]const u8{ "reginald", "--quiet", "--quiet" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "string option" {
     const args = [_][:0]const u8{ "reginald", "--config", "/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -505,7 +508,7 @@ test "multiple string options" {
         "--directory",
         "/tmp",
     };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -525,7 +528,7 @@ test "multiple string options" {
 
 test "string option equals sign" {
     const args = [_][:0]const u8{ "reginald", "--config=/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -543,7 +546,7 @@ test "string option equals sign" {
 
 test "string option equals sign quoted" {
     const args = [_][:0]const u8{ "reginald", "--config=\"/tmp/config.toml\"" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -561,13 +564,13 @@ test "string option equals sign quoted" {
 
 test "string option no value" {
     const args = [_][:0]const u8{ "reginald", "--config" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "bool and string option" {
     const args = [_][:0]const u8{ "reginald", "--config", "/tmp/config.toml", "--verbose" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -587,7 +590,7 @@ test "bool and string option" {
 
 test "string option mixed" {
     const args = [_][:0]const u8{ "reginald", "--directory=/tmp", "--config", "/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -607,7 +610,7 @@ test "string option mixed" {
 
 test "invalid string order" {
     const args = [_][:0]const u8{ "reginald", "--config", "--verbose" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -625,19 +628,19 @@ test "invalid string order" {
 
 test "invalid long option" {
     const args = [_][:0]const u8{ "reginald", "--cfg" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "invalid long option 2" {
     const args = [_][:0]const u8{ "reginald", "--config_file" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "short bool option" {
     const args = [_][:0]const u8{ "reginald", "-v" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("verbose"));
@@ -655,7 +658,7 @@ test "short bool option" {
 
 test "short bool option value" {
     const args = [_][:0]const u8{ "reginald", "-v=false", "-q=true" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("quiet"));
@@ -676,7 +679,7 @@ test "short bool option value" {
 
 test "short bool option combined" {
     const args = [_][:0]const u8{ "reginald", "-qv" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("quiet"));
@@ -697,7 +700,7 @@ test "short bool option combined" {
 
 test "short bool option combined last value" {
     const args = [_][:0]const u8{ "reginald", "-qv=false" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("quiet"));
@@ -718,19 +721,19 @@ test "short bool option combined last value" {
 
 test "short bool option invalid value" {
     const args = [_][:0]const u8{ "reginald", "-v=false", "-q=something" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "short bool option empty value" {
     const args = [_][:0]const u8{ "reginald", "-v=" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "short string option" {
     const args = [_][:0]const u8{ "reginald", "-c", "/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -748,7 +751,7 @@ test "short string option" {
 
 test "short string option value" {
     const args = [_][:0]const u8{ "reginald", "-c=/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -766,7 +769,7 @@ test "short string option value" {
 
 test "short string option value merged" {
     const args = [_][:0]const u8{ "reginald", "-c/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -784,7 +787,7 @@ test "short string option value merged" {
 
 test "short string option empty quoted value" {
     const args = [_][:0]const u8{ "reginald", "-c=\"\"" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -802,7 +805,7 @@ test "short string option empty quoted value" {
 
 test "short option combined" {
     const args = [_][:0]const u8{ "reginald", "-vc", "/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -822,7 +825,7 @@ test "short option combined" {
 
 test "short option combined value" {
     const args = [_][:0]const u8{ "reginald", "-vc=/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -842,7 +845,7 @@ test "short option combined value" {
 
 test "short option combined value merged" {
     const args = [_][:0]const u8{ "reginald", "-vc/tmp/config.toml" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -862,7 +865,7 @@ test "short option combined value merged" {
 
 test "short option combined value merged quoted" {
     const args = [_][:0]const u8{ "reginald", "-vc\"/tmp/config.toml\"" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -882,7 +885,7 @@ test "short option combined value merged quoted" {
 
 test "short option combined value merged empty quoted" {
     const args = [_][:0]const u8{ "reginald", "-vc\"\"" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
@@ -902,19 +905,19 @@ test "short option combined value merged empty quoted" {
 
 test "short option combined no value" {
     const args = [_][:0]const u8{ "reginald", "-vc" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "invalid empty short" {
     const args = [_][:0]const u8{ "reginald", "-" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "subcommand apply" {
     const args = [_][:0]const u8{ "reginald", "apply" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(!parsed.values.contains("config_file"));
@@ -931,7 +934,7 @@ test "subcommand apply" {
 
 test "subcommand int option" {
     const args = [_][:0]const u8{ "reginald", "apply", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(!parsed.values.contains("config_file"));
@@ -952,7 +955,7 @@ test "subcommand int option" {
 
 test "subcommand global option before" {
     const args = [_][:0]const u8{ "reginald", "--verbose", "apply", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("max_jobs"));
@@ -975,7 +978,7 @@ test "subcommand global option before" {
 
 test "subcommand global option after" {
     const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("max_jobs"));
@@ -998,7 +1001,7 @@ test "subcommand global option after" {
 
 test "subcommand global option both" {
     const args = [_][:0]const u8{ "reginald", "--quiet", "apply", "--verbose", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("max_jobs"));
@@ -1023,13 +1026,13 @@ test "subcommand global option both" {
 
 test "subcommand option before" {
     const args = [_][:0]const u8{ "reginald", "--verbose", "--jobs", "20", "apply" };
-    const parsed = parseArgs(testing.allocator, &args, std.io.null_writer);
+    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "no unknown" {
     const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "40" };
-    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("max_jobs"));
@@ -1052,7 +1055,7 @@ test "no unknown" {
 
 test "unknown long option" {
     const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose" };
-    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("verbose"));
@@ -1071,7 +1074,7 @@ test "unknown long option" {
 
 test "unknown short option" {
     const args = [_][:0]const u8{ "reginald", "--verbose", "-ah" };
-    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("print_help"));
@@ -1092,7 +1095,7 @@ test "unknown short option" {
 
 test "unknown arg" {
     const args = [_][:0]const u8{ "reginald", "--verbose", "-h", "not-real" };
-    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("print_help"));
@@ -1113,7 +1116,7 @@ test "unknown arg" {
 
 test "multiple unknown" {
     const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose", "-ah", "unreal", "-b" };
-    var parsed = try parseArgsLaxly(testing.allocator, &args, std.io.null_writer);
+    var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("print_help"));

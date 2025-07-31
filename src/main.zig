@@ -67,7 +67,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     _ = arena;
 
     const w = std.io.getStdErr().writer();
-    _ = try cli.parseArgsLaxly(gpa, args, w);
+    _ = try cli.parseArgsLaxly(gpa, args[1..], w);
 }
 
 test {
