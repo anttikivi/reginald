@@ -1,4 +1,5 @@
 const std = @import("std");
+const ascii = std.ascii;
 const assert = std.debug.assert;
 
 /// Represents any TOML value that potentially contains other TOML values.
@@ -23,10 +24,111 @@ const Token = union(enum) {
     literal_string: []const u8,
     multiline_literal_string: []const u8,
 
+    bool: bool,
+
+    datetime: Datetime,
+    local_datetime: Datetime,
+    local_date: Date,
     local_time: Time,
 
     line_feed,
     end_of_file,
+};
+
+/// Represents a TOML datetime value. The value can be either a normal datetime
+/// or a local datetime, and the `tz` is set to `null` in local datetimes.
+const Datetime = struct {
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    nano: ?u32 = null,
+    tz: ?i16 = null,
+
+    fn isValid(self: @This()) bool {
+        // TODO: Can year be zero? Otherwise years need no validation as
+        // the integer is unsigned.
+        if (self.month == 0 or self.month > 12) {
+            return false;
+        }
+
+        const is_leap_year = self.year % 4 == 0 and (self.year % 100 != 0 or self.year % 400 == 0);
+        const days_in_month = []u8{
+            31,
+            if (is_leap_year) 29 else 28,
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        };
+        if (self.day == 0 or self.day > days_in_month[self.month - 1]) {
+            return false;
+        }
+
+        if (self.hour > 23) {
+            return false;
+        }
+
+        if (self.minute > 59) {
+            return false;
+        }
+
+        if ((self.month == 6 and self.day == 30) or (self.month == 12 and self.day == 31)) {
+            if (self.second > 60) {
+                return false;
+            }
+        } else if (self.second > 59) {
+            return false;
+        }
+
+        // TODO: Should we validate the fractional seconds?
+
+        if (self.tz == null) {
+            return true;
+        }
+
+        return isValidTimezone(self.tz.?);
+    }
+};
+
+/// Represents a local TOML date value.
+const Date = struct {
+    year: u16,
+    month: u8,
+    day: u8,
+
+    fn isValid(self: @This()) bool {
+        // TODO: Can year be zero? Otherwise years need no validation as
+        // the integer is unsigned.
+        if (self.month == 0 or self.month > 12) {
+            return false;
+        }
+
+        const is_leap_year = self.year % 4 == 0 and (self.year % 100 != 0 or self.year % 400 == 0);
+        const days_in_month = []u8{
+            31,
+            if (is_leap_year) 29 else 28,
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        };
+        return self.day > 0 and self.day <= days_in_month[self.month - 1];
+    }
 };
 
 /// Represents a local TOML time value.
@@ -71,7 +173,7 @@ const Scanner = struct {
     }
 
     fn isValidChar(c: u8) bool {
-        return std.ascii.isPrint(c) or (c & 0x80);
+        return ascii.isPrint(c) or (c & 0x80);
     }
 
     /// Check if the next character matches c.
@@ -118,17 +220,23 @@ const Scanner = struct {
 
     /// Check if the next token might be a time.
     fn matchTime(self: *const @This()) bool {
-        return self.cursor + 2 < self.input.len and std.ascii.isDigit(self.input[self.cursor]) and
-            std.ascii.isDigit(self.input[self.cursor + 1]) and self.input[self.cursor + 2] == ':';
+        return self.cursor + 2 < self.input.len and ascii.isDigit(self.input[self.cursor]) and
+            ascii.isDigit(self.input[self.cursor + 1]) and self.input[self.cursor + 2] == ':';
     }
 
     /// Check if the next token might be a date.
     fn matchDate(self: *const @This()) bool {
-        return self.cursor + 4 < self.input.len and std.ascii.isDigit(self.input[self.cursor]) and
-            std.ascii.isDigit(self.input[self.cursor + 1]) and
-            std.ascii.isDigit(self.input[self.cursor + 2]) and
-            std.ascii.isDigit(self.input[self.cursor + 3]) and
+        return self.cursor + 4 < self.input.len and ascii.isDigit(self.input[self.cursor]) and
+            ascii.isDigit(self.input[self.cursor + 1]) and
+            ascii.isDigit(self.input[self.cursor + 2]) and
+            ascii.isDigit(self.input[self.cursor + 3]) and
             self.input[self.cursor + 4] == '-';
+    }
+
+    /// Check if the next token might be a boolean literal.
+    fn matchBool(self: *const @This()) bool {
+        return self.cursor < self.input.len and
+            (self.input[self.cursor] == 't' or self.input[self.cursor] == 'f');
     }
 
     /// Get the next character in the input. It returns '\0' when it finds
@@ -284,7 +392,7 @@ const Scanner = struct {
                 const len: usize = if (c == 'u') 4 else 8;
                 var i: usize = 0;
                 while (i < len) : (i += 1) {
-                    if (!std.ascii.isHex(self.nextChar())) {
+                    if (!ascii.isHex(self.nextChar())) {
                         return error.UnexpectedToken;
                     }
                 }
@@ -359,7 +467,7 @@ const Scanner = struct {
                 const len: usize = if (c == 'u') 4 else 8;
                 var i: usize = 0;
                 while (i < len) : (i += 1) {
-                    if (!std.ascii.isHex(self.nextChar())) {
+                    if (!ascii.isHex(self.nextChar())) {
                         return error.UnexpectedToken;
                     }
                 }
@@ -467,19 +575,23 @@ const Scanner = struct {
         if (self.matchDate()) {
             return self.scanDatetime();
         }
+
+        if (self.matchBool()) {
+            return self.scanBool();
+        }
     }
 
     /// Scan an upcoming literal, for example a key.
     fn scanLiteral(self: *@This()) Token {
         const start = self.cursor;
-        while (self.cursor < self.input.len and (std.ascii.isAlphanumeric(self.input[self.cursor]) or self.input[self.cursor] == '_' or self.input[self.cursor] == '-')) : (self.cursor += 1) {}
+        while (self.cursor < self.input.len and (ascii.isAlphanumeric(self.input[self.cursor]) or self.input[self.cursor] == '_' or self.input[self.cursor] == '-')) : (self.cursor += 1) {}
         return .{ .literal = self.input[start..self.cursor] };
     }
 
     /// Read an integer value from the upcoming characters without the sign.
     fn readInt(self: *@This(), comptime T: type) T {
         var val: T = 0;
-        while (std.ascii.isDigit(self.input[self.cursor])) : (self.cursor += 1) {
+        while (ascii.isDigit(self.input[self.cursor])) : (self.cursor += 1) {
             // TODO: Sane handling for overflows.
             val = val * 10 + (self.input[self.cursor] - '0');
         }
@@ -513,20 +625,83 @@ const Scanner = struct {
             return error.InvalidTime;
         }
 
-        self.cursor += 1;
-
         if (self.cursor >= self.input.len or self.input[self.cursor] != '.') {
             return ret;
         }
 
         self.cursor += 1;
         var factor = 100000;
-        while (self.cursor < self.input.len and std.ascii.isDigit(self.input[self.cursor] and factor != 0)) : (self.cursor += 1) {
+        while (self.cursor < self.input.len and ascii.isDigit(self.input[self.cursor] and factor != 0)) : (self.cursor += 1) {
             ret.nano = (self.input[self.cursor] - '0') * factor;
             factor /= 10;
         }
 
         return ret;
+    }
+
+    /// Read a date in the YYYY-MM-DD format from the upcoming characters.
+    fn readDate(self: *@This()) !Date {
+        const date_start = self.cursor;
+        var ret: Date = .{ .year = undefined, .month = undefined, .day = undefined };
+        var start = self.cursor;
+
+        ret.year = self.readInt(u16);
+        if (self.cursor - start != 4 or self.input[self.cursor] != '-') {
+            return error.InvalidDate;
+        }
+
+        self.cursor += 1;
+        start = self.cursor;
+
+        ret.month = self.readInt(u8);
+        if (self.cursor - start != 2 or self.input[self.cursor] != '-') {
+            return error.InvalidDate;
+        }
+
+        self.cursor += 1;
+        start = self.cursor;
+
+        ret.day = self.readInt(u8);
+        if (self.cursor - start != 2) {
+            return error.InvalidDate;
+        }
+
+        assert(date_start - self.cursor == 10);
+
+        return ret;
+    }
+
+    /// Read a timezone from the next characters.
+    fn readTimezone(self: *@This()) !?i16 {
+        const c = self.input[self.cursor];
+        if (c == 'Z' or c == 'z') {
+            self.cursor += 1;
+            return 0; // UTC+00:00
+        }
+
+        const sign = switch (c) {
+            '+' => 1,
+            '-' => -1,
+            else => return null,
+        };
+
+        self.cursor += 1;
+        var start = self.cursor;
+
+        const hour = self.readInt(i16);
+        if (self.cursor - start != 2 or self.input[self.cursor] != ':') {
+            return error.InvalidDatetime;
+        }
+
+        self.cursor += 1;
+        start = self.cursor;
+
+        const minute = self.readInt(i16);
+        if (self.cursor - start != 2) {
+            return error.InvalidDatetime;
+        }
+
+        return (hour * 60 + minute) * sign;
     }
 
     /// Scan upcoming local time value.
@@ -539,8 +714,84 @@ const Scanner = struct {
         return .{ .local_time = t };
     }
 
-    /// Scan upcoming datetime value.
-    fn scanDatetime(self: *@This()) !Token {}
+    /// Scan an upcoming datetime value.
+    fn scanDatetime(self: *@This()) !Token {
+        if (self.cursor + 2 < self.input.len) {
+            return error.UnexpectedEndOfInput;
+        }
+
+        if (ascii.isDigit(self.input[self.cursor]) and
+            ascii.isDigit(self.input[self.cursor + 1]) and self.input[self.cursor + 2] == ':')
+        {
+            const t = try self.readTime();
+            if (!t.isValid()) {
+                return error.InvalidTime;
+            }
+
+            return .{ .local_time = t };
+        }
+
+        const date = try self.readDate();
+        const c = self.input[self.cursor];
+        if (self.cursor + 3 >= self.input.len or (c != 'T' and c != 't' and c != ' ') or
+            !ascii.isDigit(self.input[self.cursor + 1]) or
+            !ascii.isDigit(self.input[self.cursor + 2]) or self.input[self.cursor + 3] != ':')
+        {
+            if (!date.isValid()) {
+                return error.InvalidDate;
+            }
+
+            return .{ .local_date = date };
+        }
+
+        self.cursor += 1;
+        const time = try self.readTime();
+        var dt: Datetime = .{
+            .year = date.year,
+            .month = date.month,
+            .day = date.day,
+            .hour = time.hour,
+            .minute = time.minute,
+            .second = time.second,
+            .nano = time.nano,
+        };
+
+        const tz = try self.readTimezone();
+        if (tz == null) {
+            if (!dt.isValid()) {
+                return error.InvalidDatetime;
+            }
+
+            return .{ .local_datetime = dt };
+        }
+
+        dt.tz = tz;
+        if (!dt.isValid()) {
+            return error.InvalidDatetime;
+        }
+
+        return .{ .datetime = dt };
+    }
+
+    /// Scan a possible upcoming boolean value.
+    fn scanBool(self: *@This()) !Token {
+        var val: bool = undefined;
+        if (self.cursor + 3 < self.input.len and std.mem.eql(u8, "true", self.input[self.cursor..4])) {
+            val = true;
+            self.cursor += 4;
+        } else if (self.cursor + 4 < self.input.len and std.mem.eql(u8, "false", self.input[self.cursor..5])) {
+            val = false;
+            self.cursor += 5;
+        } else {
+            return error.UnexpectedToken;
+        }
+
+        if (self.cursor < self.input.len and null == std.mem.indexOfScalar(u8, "# \r\n\t,}]", self.input[self.cursor])) {
+            return error.UnexpectedToken;
+        }
+
+        return .{ .bool = val };
+    }
 };
 
 /// The parsing state.
@@ -592,6 +843,19 @@ pub fn parse(input: []const u8) !Value {
     }
 
     return Value{};
+}
+
+/// Check whether the minutes given as `tz` is a valid time zone.
+fn isValidTimezone(tz: i16) bool {
+    const t: u16 = @abs(tz);
+    const h = t / 60;
+    const m = t % 60;
+
+    if (h > 23) {
+        return false;
+    }
+
+    return m < 60;
 }
 
 /// Check if the input is a valid UTF-8 string. The function goes through
