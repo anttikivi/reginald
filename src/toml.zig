@@ -1,6 +1,7 @@
 const std = @import("std");
 const ascii = std.ascii;
 const assert = std.debug.assert;
+const mem = std.mem;
 
 /// Represents any TOML value that potentially contains other TOML values.
 /// The result for parsing a TOML document is a `Value` that represents the root
@@ -24,6 +25,8 @@ const Token = union(enum) {
     literal_string: []const u8,
     multiline_literal_string: []const u8,
 
+    int: i64,
+    float: f64,
     bool: bool,
 
     datetime: Datetime,
@@ -158,6 +161,7 @@ const Time = struct {
 const Scanner = struct {
     input: []const u8 = "",
     cursor: usize = 0,
+    end: usize = 0,
     line: u64 = 0,
 
     /// Constant that marks the end of input when scanning for the next
@@ -169,6 +173,7 @@ const Scanner = struct {
     fn initCompleteInput(input: []const u8) @This() {
         return .{
             .input = input,
+            .end = input.len,
         };
     }
 
@@ -178,11 +183,11 @@ const Scanner = struct {
 
     /// Check if the next character matches c.
     fn match(self: *const @This(), c: u8) bool {
-        if (self.cursor < self.input.len and self.input[self.cursor] == c) {
+        if (self.cursor < self.end and self.input[self.cursor] == c) {
             return true;
         }
 
-        if (c == '\n' and self.cursor + 1 < self.input.len) {
+        if (c == '\n' and self.cursor + 1 < self.end) {
             return self.input[self.cursor] == '\r' and self.input[self.cursor + 1] == '\n';
         }
 
@@ -208,25 +213,29 @@ const Scanner = struct {
 
         assert(c != '\n');
 
-        if (self.cursor + n >= self.input.len) {
+        if (self.cursor + n >= self.end) {
             return false;
         }
 
         var i: usize = 0;
-        while (i < n and self.input[self.cursor + i]) : (i += 1) {}
+        while (i < n) : (i += 1) {
+            if (self.input[self.cursor + i] != c) {
+                return false;
+            }
+        }
 
-        return i == n;
+        return true;
     }
 
     /// Check if the next token might be a time.
     fn matchTime(self: *const @This()) bool {
-        return self.cursor + 2 < self.input.len and ascii.isDigit(self.input[self.cursor]) and
+        return self.cursor + 2 < self.end and ascii.isDigit(self.input[self.cursor]) and
             ascii.isDigit(self.input[self.cursor + 1]) and self.input[self.cursor + 2] == ':';
     }
 
     /// Check if the next token might be a date.
     fn matchDate(self: *const @This()) bool {
-        return self.cursor + 4 < self.input.len and ascii.isDigit(self.input[self.cursor]) and
+        return self.cursor + 4 < self.end and ascii.isDigit(self.input[self.cursor]) and
             ascii.isDigit(self.input[self.cursor + 1]) and
             ascii.isDigit(self.input[self.cursor + 2]) and
             ascii.isDigit(self.input[self.cursor + 3]) and
@@ -235,8 +244,27 @@ const Scanner = struct {
 
     /// Check if the next token might be a boolean literal.
     fn matchBool(self: *const @This()) bool {
-        return self.cursor < self.input.len and
+        return self.cursor < self.end and
             (self.input[self.cursor] == 't' or self.input[self.cursor] == 'f');
+    }
+
+    /// Check if the next token might be some number literal.
+    fn matchNumber(self: *const @This()) bool {
+        if (self.cursor < self.end and
+            mem.indexOfScalar(u8, "0123456789+-._", self.input[self.cursor]))
+        {
+            return true;
+        }
+
+        if (self.cursor + 2 < self.end) {
+            if (mem.eql(u8, "nan", self.input[self.cursor .. self.cursor + 3]) or
+                mem.eql(u8, "inf", self.input[self.cursor .. self.cursor + 3]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// Get the next character in the input. It returns '\0' when it finds
@@ -244,11 +272,11 @@ const Scanner = struct {
     fn nextChar(self: *@This()) u8 {
         var ret: u8 = end_of_input;
 
-        if (self.cursor < self.input.len) {
+        if (self.cursor < self.end) {
             ret = self.input[self.cursor];
             self.cursor += 1;
 
-            if (ret == '\r' and self.cursor < self.input.len and self.input[self.cursor] == '\n') {
+            if (ret == '\r' and self.cursor < self.end and self.input[self.cursor] == '\n') {
                 ret = self.input[self.cursor];
                 self.cursor += 1;
             }
@@ -265,7 +293,7 @@ const Scanner = struct {
     fn next(self: *@This(), comptime key_mode: bool) !Token {
         // Limit the loop to the maximum length of the input even though we
         // basically loop until we find a return value.
-        while (self.cursor < self.input.len) {
+        while (self.cursor < self.end) {
             var c = self.nextChar();
             if (c == end_of_input) {
                 return .end_of_file;
@@ -336,7 +364,7 @@ const Scanner = struct {
     }
 
     /// Get the next token in the TOML document with the key mode enabled.
-    fn nextKey(self: *@This()) Token {
+    fn nextKey(self: *@This()) !Token {
         return self.next(true);
     }
 
@@ -359,7 +387,7 @@ const Scanner = struct {
 
         const start = self.cursor;
 
-        while (self.cursor < self.input.len) { // force upper limit to loop
+        while (self.cursor < self.end) { // force upper limit to loop
             if (self.matchN('"', 3)) {
                 if (self.matchN('"', 4)) {
                     if (self.matchN('"', 6)) {
@@ -377,14 +405,15 @@ const Scanner = struct {
             }
 
             if (c != '\\') {
-                if (!(isValidChar(c) or std.mem.indexOfScalar(u8, " \t\n", c) != null)) {
+                if (!(isValidChar(c) or mem.indexOfScalar(u8, " \t\n", c) != null)) {
                     return error.UnexpectedToken;
                 }
 
                 continue;
             }
 
-            if (std.mem.indexOfScalar(u8, "\"\\bfnrt", c) != null) {
+            c = self.nextChar();
+            if (mem.indexOfScalar(u8, "\"\\bfnrt", c) != null) {
                 continue; // skip the "normal" escape sequences
             }
 
@@ -459,7 +488,7 @@ const Scanner = struct {
             }
 
             c = self.nextChar();
-            if (std.mem.indexOfScalar(u8, "\"\\bfnrt", c) != null) {
+            if (mem.indexOfScalar(u8, "\"\\bfnrt", c) != null) {
                 continue; // skip the "normal" escape sequences
             }
 
@@ -501,7 +530,7 @@ const Scanner = struct {
 
         const start = self.cursor;
 
-        while (self.cursor < self.input.len) { // force upper limit to loop
+        while (self.cursor < self.end) { // force upper limit to loop
             if (self.matchN('\'', 3)) {
                 if (self.matchN('\'', 4)) {
                     if (self.matchN('\'', 6)) {
@@ -518,7 +547,7 @@ const Scanner = struct {
                 return error.UnexpectedEndOfInput;
             }
 
-            if (!(isValidChar(c) or std.mem.indexOfScalar(u8, " \t\n", c) != null)) {
+            if (!(isValidChar(c) or mem.indexOfScalar(u8, " \t\n", c) != null)) {
                 return error.UnexpectedToken;
             }
         }
@@ -579,12 +608,18 @@ const Scanner = struct {
         if (self.matchBool()) {
             return self.scanBool();
         }
+
+        if (self.matchNumber()) {
+            return self.scanNumber();
+        }
+
+        return error.UnexpectedToken;
     }
 
     /// Scan an upcoming literal, for example a key.
     fn scanLiteral(self: *@This()) Token {
         const start = self.cursor;
-        while (self.cursor < self.input.len and (ascii.isAlphanumeric(self.input[self.cursor]) or self.input[self.cursor] == '_' or self.input[self.cursor] == '-')) : (self.cursor += 1) {}
+        while (self.cursor < self.end and (ascii.isAlphanumeric(self.input[self.cursor]) or self.input[self.cursor] == '_' or self.input[self.cursor] == '-')) : (self.cursor += 1) {}
         return .{ .literal = self.input[start..self.cursor] };
     }
 
@@ -625,15 +660,20 @@ const Scanner = struct {
             return error.InvalidTime;
         }
 
-        if (self.cursor >= self.input.len or self.input[self.cursor] != '.') {
+        if (self.cursor >= self.end or self.input[self.cursor] != '.') {
             return ret;
         }
 
         self.cursor += 1;
-        var factor = 100000;
-        while (self.cursor < self.input.len and ascii.isDigit(self.input[self.cursor] and factor != 0)) : (self.cursor += 1) {
-            ret.nano = (self.input[self.cursor] - '0') * factor;
-            factor /= 10;
+        ret.nano = 0;
+        var i: usize = 0;
+        while (self.cursor < self.end and ascii.isDigit(self.input[self.cursor]) and i < 9) : (self.cursor += 1) {
+            ret.nano = ret.nano * 10 + (self.input[self.cursor] - '0');
+            i += 1;
+        }
+
+        while (i < 9) : (i += 1) {
+            ret.nano *= 10;
         }
 
         return ret;
@@ -666,7 +706,7 @@ const Scanner = struct {
             return error.InvalidDate;
         }
 
-        assert(date_start - self.cursor == 10);
+        assert(self.cursor - date_start == 10);
 
         return ret;
     }
@@ -716,7 +756,7 @@ const Scanner = struct {
 
     /// Scan an upcoming datetime value.
     fn scanDatetime(self: *@This()) !Token {
-        if (self.cursor + 2 < self.input.len) {
+        if (self.cursor + 2 >= self.end) {
             return error.UnexpectedEndOfInput;
         }
 
@@ -733,7 +773,7 @@ const Scanner = struct {
 
         const date = try self.readDate();
         const c = self.input[self.cursor];
-        if (self.cursor + 3 >= self.input.len or (c != 'T' and c != 't' and c != ' ') or
+        if (self.cursor + 3 >= self.end or (c != 'T' and c != 't' and c != ' ') or
             !ascii.isDigit(self.input[self.cursor + 1]) or
             !ascii.isDigit(self.input[self.cursor + 2]) or self.input[self.cursor + 3] != ':')
         {
@@ -776,21 +816,153 @@ const Scanner = struct {
     /// Scan a possible upcoming boolean value.
     fn scanBool(self: *@This()) !Token {
         var val: bool = undefined;
-        if (self.cursor + 3 < self.input.len and std.mem.eql(u8, "true", self.input[self.cursor..4])) {
+        if (self.cursor + 3 < self.end and mem.eql(u8, "true", self.input[self.cursor .. self.cursor + 4])) {
             val = true;
             self.cursor += 4;
-        } else if (self.cursor + 4 < self.input.len and std.mem.eql(u8, "false", self.input[self.cursor..5])) {
+        } else if (self.cursor + 4 < self.end and mem.eql(u8, "false", self.input[self.cursor .. self.cursor + 5])) {
             val = false;
             self.cursor += 5;
         } else {
             return error.UnexpectedToken;
         }
 
-        if (self.cursor < self.input.len and null == std.mem.indexOfScalar(u8, "# \r\n\t,}]", self.input[self.cursor])) {
+        if (self.cursor < self.end and null == mem.indexOfScalar(u8, "# \r\n\t,}]", self.input[self.cursor])) {
             return error.UnexpectedToken;
         }
 
         return .{ .bool = val };
+    }
+
+    /// Scan a possible upcoming number, i.e. integer or float.
+    fn scanNumber(self: *@This()) !Token {
+        if (self.input[self.cursor] == '0' and self.cursor + 1 < self.end) {
+            const base, const span = switch (self.input[self.cursor + 1]) {
+                'x' => .{ 16, "_0123456789abcdefABCDEF" },
+                'o' => .{ 8, "_01234567" },
+                'b' => .{ 2, "_01" },
+                else => .{ null, null },
+            };
+
+            if (base) |b| {
+                self.cursor += 2;
+                if (self.cursor >= self.end) {
+                    return error.UnexpectedEndOfInput;
+                }
+
+                const start = self.cursor;
+                const i = mem.indexOfNonePos(u8, self.input, start, span) orelse return error.UnexpectedToken;
+                const len = i - start;
+                if (!self.checkNumberStr(len, b)) {
+                    return error.InvalidNumber;
+                }
+
+                const n = try std.fmt.parseInt(i64, self.input[start .. start + len], b);
+                return .{ .int = n };
+            }
+        }
+
+        const start = self.cursor;
+        var idx = self.cursor;
+        if (self.input[idx] == '+' or self.input[idx] == '-') {
+            idx += 1;
+        }
+
+        if (self.input[idx] == 'i' or self.input[idx] == 'n') {
+            return self.scanFloat();
+        }
+
+        idx = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse return error.UnexpectedToken;
+
+        if (!self.checkNumberStr(idx - start, 10)) {
+            return error.InvalidNumber;
+        }
+
+        const n = std.fmt.parseInt(i64, self.input[start..idx], 10) catch |err| switch (err) {
+            error.InvalidCharacter => if (mem.indexOfAnyPos(u8, self.input, idx, ".eE") != null) {
+                return self.scanFloat();
+            } else {
+                return err;
+            },
+            else => return err,
+        };
+
+        self.cursor = idx;
+
+        return .{ .int = n };
+    }
+
+    /// Scan a possible upcoming floating-point literal.
+    fn scanFloat(self: *@This()) !Token {
+        const start = self.cursor;
+        if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') {
+            self.cursor += 1;
+        }
+
+        if (mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "inf") or mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "nan")) {
+            self.cursor += 3;
+        } else {
+            self.cursor = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse return error.UnexpectedToken;
+        }
+
+        if (!self.checkNumberStr(self.cursor - start, 10)) {
+            return error.InvalidNumber;
+        }
+
+        const f = try std.fmt.parseFloat(f64, self.input[start..self.cursor]);
+        return .{ .float = f };
+    }
+
+    fn checkNumberStr(self: *@This(), len: usize, base: comptime_int) bool {
+        const start = self.cursor;
+        const underscore = mem.indexOfScalarPos(u8, self.input, self.cursor, '_');
+        if (underscore) |u| {
+            var i: usize = u - start;
+            while (i < len) : (i += 1) {
+                if (self.input[self.cursor + i] != '_') {
+                    continue;
+                }
+
+                const left: u8 = if (i == 0) 0 else self.input[self.cursor + i - 1];
+                const right: u8 = if (self.cursor + i >= self.end) 0 else self.input[self.cursor + i + 1];
+                if (!ascii.isDigit(left) and !(base == 16 and ascii.isHex(left))) {
+                    return false;
+                }
+
+                if (!ascii.isHex(right) and !(base == 16 and ascii.isHex(right))) {
+                    return false;
+                }
+            }
+        }
+
+        var i: usize = 0;
+        while (i < len) : (i += 1) {
+            if (self.input[self.cursor + i] == '.') {
+                if (i == 0 or !ascii.isDigit(self.input[self.cursor - 1] or !ascii.isDigit(self.input[self.cursor + 1]))) {
+                    return false;
+                }
+            }
+        }
+
+        if (base == 10) {
+            i = if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') self.cursor + 1 else self.cursor;
+            if (self.input[i] == '0' and ascii.isDigit(self.input[i + 1])) {
+                return false;
+            }
+
+            if (mem.indexOfScalarPos(u8, self.input, self.cursor, 'e')) |idx| {
+                i = if (self.input[idx] == '+' or self.input[idx] == '-') idx + 1 else idx;
+                if (self.input[i] == '0' and ascii.isDigit(self.input[i + 1])) {
+                    return false;
+                }
+            } else if (mem.indexOfScalarPos(u8, self.input, self.cursor, 'E')) |idx| {
+                i = if (self.input[idx] == '+' or self.input[idx] == '-') idx + 1 else idx;
+                if (self.input[i] == '0' and ascii.isDigit(self.input[i + 1])) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 };
 
