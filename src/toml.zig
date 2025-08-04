@@ -3,10 +3,15 @@ const ascii = std.ascii;
 const assert = std.debug.assert;
 const mem = std.mem;
 
+/// Represents a TOML table value that is normally wrapped in a `Value`.
+const Table = std.StringArrayHashMap(Value);
+
 /// Represents any TOML value that potentially contains other TOML values.
 /// The result for parsing a TOML document is a `Value` that represents the root
 /// table of the document.
-const Value = union(enum) {};
+const Value = union(enum) {
+    table: Table,
+};
 
 const Token = union(enum) {
     dot,
