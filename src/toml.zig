@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const ascii = std.ascii;
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -17,12 +18,12 @@ const Token = union(enum) {
     dot,
     equal,
     comma,
-    left_bracket,
-    double_left_bracket,
-    right_bracket,
-    double_right_bracket,
-    left_brace,
-    right_brace,
+    left_bracket, // [
+    double_left_bracket, // [[
+    right_bracket, // ]
+    double_right_bracket, // ]]
+    left_brace, // {
+    right_brace, // }
 
     literal: []const u8,
     string: []const u8,
@@ -973,34 +974,163 @@ const Scanner = struct {
 
 /// The parsing state.
 const Parser = struct {
-    scanner: Scanner,
-    root_table: Value,
-    current_table: Value,
+    allocator: Allocator,
+    scanner: *Scanner,
+    root_table: *ParsingTable = undefined,
+    current_table: *ParsingTable = undefined,
 
-    fn init() @This() {
-        return .{};
+    const ParsingTable = std.StringArrayHashMap(ParsingValue);
+
+    const ParsingValue = struct {
+        flag: u8,
+        value: union(enum) {
+            table: ParsingTable,
+        },
+    };
+
+    fn init(allocator: Allocator, scanner: *Scanner, root: *ParsingTable) @This() {
+        return .{
+            .allocator = allocator,
+            .scanner = scanner,
+            .root_table = root,
+            .current_table = root,
+        };
+    }
+
+    /// Descend to the final table represented by `keys` starting from the root
+    /// table. If a table for a key does not exist, it will be created.
+    /// The function returns the final table represented by the keys.
+    fn descendToTable(self: *@This(), keys: [][]const u8) void {
+        var table = self.root_table;
+
+        for (keys) |key| {
+            var table_value = table.get(key);
+            if (table_value == null) {}
+        }
+    }
+
+    fn normalizeString(self: *@This(), token: Token) ![]const u8 {
+        switch (token) {
+            .literal, .literal_string, .multiline_literal_string => |s| return s,
+            .string, .multiline_string => {}, // continue
+            else => unreachable,
+        }
+
+        const orig: []const u8 = switch (token) {
+            .string, .multiline_string => |s| s,
+            else => unreachable,
+        };
+        if (mem.indexOfScalar(u8, orig, '\\') == null) {
+            return token;
+        }
+
+        var dst: std.ArrayList(u8) = .init(self.allocator);
+        errdefer dst.deinit();
+
+        var i: usize = 0;
+        while (i < orig.len) : (i += 1) {
+            if (orig[i] != '\\') {
+                try dst.append(orig[i]);
+                continue;
+            }
+
+            i += 1;
+            const c = orig[i];
+            switch (c) {
+                '"', '\\' => try dst.append(c),
+                'b' => try dst.append(8), // \b
+                'f' => try dst.append(12), // \f
+                't' => try dst.append('\t'),
+                'r' => try dst.append('\r'),
+                'n' => try dst.append('\n'),
+                'u', 'U' => {
+                    const len = if (c == 'u') 4 else 8;
+                    const s = orig[i .. i + len];
+                    const codepoint = std.fmt.parseInt(u21, s, 16);
+                    var buf: [4]u8 = undefined;
+                    const n = try std.unicode.utf8Encode(codepoint, &buf);
+                    try dst.appendSlice(buf[0..n]);
+                    i += len;
+                },
+                ' ', '\t', '\r', '\n' => {
+                    if (c != '\n') {
+                        i += mem.indexOfNonePos(u8, orig, i, " \t\r") orelse 0;
+                        if (orig[i] != '\n') {
+                            return error.UnexpectedToken;
+                        }
+                    }
+
+                    i += mem.indexOfNonePos(u8, orig, i, " \t\r\n") orelse 0;
+                },
+                else => try dst.append(c),
+            }
+        }
+
+        return dst.toOwnedSlice();
     }
 
     /// Parse a multipart key.
-    fn parseKey(self: *@This()) void {}
+    fn parseKey(self: *@This()) ![][]const u8 {
+        const key_token = try self.scanner.nextKey();
+        switch (key_token) {
+            .literal, .string, .literal_string => {},
+            else => return error.UnexpectedToken,
+        }
+
+        var key_parts: std.ArrayList([]const u8) = .init(self.allocator);
+        errdefer key_parts.deinit();
+
+        try key_parts.append(try self.normalizeString(key_token));
+
+        while (true) {
+            const old_cursor = self.scanner.cursor;
+            const old_line = self.scanner.line;
+
+            // If the next part is a dot, eat it.
+            const dot = try self.scanner.nextKey();
+
+            if (dot != .dot) {
+                self.scanner.cursor = old_cursor;
+                self.scanner.line = old_line;
+                break;
+            }
+
+            const next_token = try self.scanner.nextKey();
+            switch (next_token) {
+                .literal, .string, .multiline_string => {}, // continue
+                else => return error.UnexpectedToken,
+            }
+
+            try key_parts.append(try self.normalizeString(next_token));
+        }
+
+        return key_parts.toOwnedSlice();
+    }
 
     /// Parse standard table header expression and set the new table as
     /// the current table in the parser.
-    fn parseTableExpression(self: *@This()) void {
-        const token = self.scanner.nextKey();
+    fn parseTableExpression(self: *@This()) !void {
+        const keys = try self.parseKey();
+
+        const next_token = try self.scanner.nextKey();
+        if (next_token != .right_bracket) {
+            return error.UnexpectedToken;
+        }
+
+        const last_key = keys[keys.len - 1];
     }
 };
 
-pub fn parse(input: []const u8) !Value {
+pub fn parse(allocator: Allocator, input: []const u8) !Value {
     // TODO: Maybe add an option to skip the UTF-8 validation for faster
     // parsing.
     if (!utf8Validate(input)) {
         return error.InvalidUtf8;
     }
 
-    var parser = Parser.init();
-
+    var parsing_root: Parser.ParsingValue = .{ .flag = 0, .value = .{ .table = .init(allocator) } };
     var scanner = Scanner.initCompleteInput(input);
+    var parser = Parser.init(allocator, &scanner, &parsing_root.value.table);
 
     // Set an upper limit for the loop for safety. There cannot be more tokens
     // than there are characters in the input. If the input is streamed, this
@@ -1014,7 +1144,7 @@ pub fn parse(input: []const u8) !Value {
 
         switch (token) {
             .line_feed => continue,
-            .left_bracket => {},
+            .left_bracket => try parser.parseTableExpression(),
             .end_of_file => unreachable,
         }
     }
