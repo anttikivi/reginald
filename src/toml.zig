@@ -5,15 +5,15 @@ const assert = std.debug.assert;
 const mem = std.mem;
 
 /// Represents a TOML array value that is normally wrapped in a `Value`.
-const Array = std.ArrayList(Value);
+pub const Array = std.ArrayList(Value);
 
 /// Represents a TOML table value that is normally wrapped in a `Value`.
-const Table = std.StringArrayHashMap(Value);
+pub const Table = std.StringArrayHashMap(Value);
 
 /// Represents any TOML value that potentially contains other TOML values.
 /// The result for parsing a TOML document is a `Value` that represents the root
 /// table of the document.
-const Value = union(enum) {
+pub const Value = union(enum) {
     string: []const u8,
     int: i64,
     float: f64,
@@ -58,7 +58,7 @@ const Token = union(enum) {
 
 /// Represents a TOML datetime value. The value can be either a normal datetime
 /// or a local datetime, and the `tz` is set to `null` in local datetimes.
-const Datetime = struct {
+pub const Datetime = struct {
     year: u16,
     month: u8,
     day: u8,
@@ -76,7 +76,7 @@ const Datetime = struct {
         }
 
         const is_leap_year = self.year % 4 == 0 and (self.year % 100 != 0 or self.year % 400 == 0);
-        const days_in_month = []u8{
+        const days_in_month = [_]u8{
             31,
             if (is_leap_year) 29 else 28,
             31,
@@ -118,10 +118,42 @@ const Datetime = struct {
 
         return isValidTimezone(self.tz.?);
     }
+
+    /// Allocates the datetime into a formatted string. The caller owns
+    /// the result and must call `free` on it.
+    ///
+    /// TODO: This is not the standard way of doing this.
+    pub fn string(self: *const @This(), allocator: Allocator) ![]const u8 {
+        var value: []const u8 = try std.fmt.allocPrint(
+            allocator,
+            "{d}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}",
+            .{ self.year, self.month, self.day, self.hour, self.minute, self.second },
+        );
+
+        if (self.nano) |nano| {
+            value = try std.fmt.allocPrint(allocator, "{s}.{d:0>9}", .{ value, nano });
+        }
+
+        if (self.tz) |tz| {
+            const t: u16 = @abs(tz);
+
+            if (t == 0) {
+                return std.fmt.allocPrint(allocator, "{s}Z", .{value});
+            }
+
+            const h = t / 60;
+            const m = t % 60;
+            const sign = if (tz < 0) "-" else "+";
+
+            return std.fmt.allocPrint(allocator, "{s}{s}{d:0>2}:{d:0>2}", .{ value, sign, h, m });
+        } else {
+            return value;
+        }
+    }
 };
 
 /// Represents a local TOML date value.
-const Date = struct {
+pub const Date = struct {
     year: u16,
     month: u8,
     day: u8,
@@ -134,7 +166,7 @@ const Date = struct {
         }
 
         const is_leap_year = self.year % 4 == 0 and (self.year % 100 != 0 or self.year % 400 == 0);
-        const days_in_month = []u8{
+        const days_in_month = [_]u8{
             31,
             if (is_leap_year) 29 else 28,
             31,
@@ -150,10 +182,22 @@ const Date = struct {
         };
         return self.day > 0 and self.day <= days_in_month[self.month - 1];
     }
+
+    /// Allocates the date into a formatted string. The caller owns the result
+    /// and must call `free` on it.
+    ///
+    /// TODO: This is not the standard way of doing this.
+    pub fn string(self: *const @This(), allocator: Allocator) ![]const u8 {
+        return std.fmt.allocPrint(
+            allocator,
+            "{d}-{d:0>2}-{d:0>2}",
+            .{ self.year, self.month, self.day },
+        );
+    }
 };
 
 /// Represents a local TOML time value.
-const Time = struct {
+pub const Time = struct {
     hour: u8,
     minute: u8,
     second: u8,
@@ -169,6 +213,24 @@ const Time = struct {
         }
 
         return self.second <= 59;
+    }
+
+    /// Allocates the time into a formatted string. The caller owns the result
+    /// and must call `free` on it.
+    ///
+    /// TODO: This is not the standard way of doing this.
+    pub fn string(self: *const @This(), allocator: Allocator) ![]const u8 {
+        const value: []const u8 = try std.fmt.allocPrint(
+            allocator,
+            "{d:0>2}:{d:0>2}:{d:0>2}",
+            .{ self.hour, self.minute, self.second },
+        );
+
+        if (self.nano) |nano| {
+            return std.fmt.allocPrint(allocator, "{s}.{d:0>9}", .{ value, nano });
+        }
+
+        return value;
     }
 };
 
@@ -196,7 +258,7 @@ const Scanner = struct {
     }
 
     fn isValidChar(c: u8) bool {
-        return ascii.isPrint(c) or (c & 0x80);
+        return ascii.isPrint(c) or (c & 0x80) != 0;
     }
 
     /// Check if the next character matches c.
@@ -269,7 +331,7 @@ const Scanner = struct {
     /// Check if the next token might be some number literal.
     fn matchNumber(self: *const @This()) bool {
         if (self.cursor < self.end and
-            mem.indexOfScalar(u8, "0123456789+-._", self.input[self.cursor]))
+            mem.indexOfScalar(u8, "0123456789+-._", self.input[self.cursor]) != null)
         {
             return true;
         }
@@ -330,7 +392,7 @@ const Scanner = struct {
                         }
 
                         switch (c) {
-                            0...8, 0x0a...0x1f, 0x7f => return error.InvalidChar,
+                            0...8, 0x0a...0x1f, 0x7f => return error.InvalidCharacter,
                             else => {},
                         }
                     }
@@ -379,6 +441,9 @@ const Scanner = struct {
                 },
             }
         }
+
+        // TODO: Meaningful error.
+        return error.SyntaxError;
     }
 
     /// Get the next token in the TOML document with the key mode enabled.
@@ -691,12 +756,12 @@ const Scanner = struct {
         ret.nano = 0;
         var i: usize = 0;
         while (self.cursor < self.end and ascii.isDigit(self.input[self.cursor]) and i < 9) : (self.cursor += 1) {
-            ret.nano = ret.nano * 10 + (self.input[self.cursor] - '0');
+            ret.nano = ret.nano.? * 10 + (self.input[self.cursor] - '0');
             i += 1;
         }
 
         while (i < 9) : (i += 1) {
-            ret.nano *= 10;
+            ret.nano = ret.nano.? * 10;
         }
 
         return ret;
@@ -742,7 +807,7 @@ const Scanner = struct {
             return 0; // UTC+00:00
         }
 
-        const sign = switch (c) {
+        const sign: i16 = switch (c) {
             '+' => 1,
             '-' => -1,
             else => return null,
@@ -859,7 +924,7 @@ const Scanner = struct {
     /// Scan a possible upcoming number, i.e. integer or float.
     fn scanNumber(self: *@This()) !Token {
         if (self.input[self.cursor] == '0' and self.cursor + 1 < self.end) {
-            const base, const span = switch (self.input[self.cursor + 1]) {
+            const base: ?u8, const span: ?[]const u8 = switch (self.input[self.cursor + 1]) {
                 'x' => .{ 16, "_0123456789abcdefABCDEF" },
                 'o' => .{ 8, "_01234567" },
                 'b' => .{ 2, "_01" },
@@ -873,7 +938,7 @@ const Scanner = struct {
                 }
 
                 const start = self.cursor;
-                const i = mem.indexOfNonePos(u8, self.input, start, span) orelse return error.UnexpectedToken;
+                const i = mem.indexOfNonePos(u8, self.input, start, span.?) orelse return error.UnexpectedToken;
                 const len = i - start;
                 if (!self.checkNumberStr(len, b)) {
                     return error.InvalidNumber;
@@ -935,7 +1000,7 @@ const Scanner = struct {
         return .{ .float = f };
     }
 
-    fn checkNumberStr(self: *@This(), len: usize, base: comptime_int) bool {
+    fn checkNumberStr(self: *@This(), len: usize, base: u8) bool {
         const start = self.cursor;
         const underscore = mem.indexOfScalarPos(u8, self.input, self.cursor, '_');
         if (underscore) |u| {
@@ -960,7 +1025,7 @@ const Scanner = struct {
         var i: usize = 0;
         while (i < len) : (i += 1) {
             if (self.input[self.cursor + i] == '.') {
-                if (i == 0 or !ascii.isDigit(self.input[self.cursor - 1] or !ascii.isDigit(self.input[self.cursor + 1]))) {
+                if (i == 0 or !ascii.isDigit(self.input[self.cursor - 1]) or !ascii.isDigit(self.input[self.cursor + 1])) {
                     return false;
                 }
             }
@@ -995,6 +1060,24 @@ const Parser = struct {
     scanner: *Scanner,
     root_table: *ParsingValue = undefined,
     current_table: *ParsingValue = undefined,
+
+    const ParseError = Allocator.Error || std.fmt.ParseIntError || error{
+        Utf8CannotEncodeSurrogateHalf,
+        CodepointTooLarge,
+
+        EmptyArray,
+        NotArrayOfTables,
+        NoTableFound,
+        DuplicateKey,
+
+        InvalidDate,
+        InvalidDatetime,
+        InvalidNumber,
+        InvalidTime,
+        SyntaxError,
+        UnexpectedEndOfInput,
+        UnexpectedToken,
+    };
 
     const ValueFlag = packed struct {
         inlined: bool,
@@ -1037,11 +1120,11 @@ const Parser = struct {
         }
 
         try table.put(
-            self.allocator.dupe(u8, key),
+            try self.allocator.dupe(u8, key),
             .{ .value = .{ .array = .init(self.allocator) } },
         );
 
-        return &table.get(key).?;
+        return table.getPtr(key).?;
     }
 
     /// Add a new table to the given parsing table pointer and return the newly
@@ -1052,11 +1135,11 @@ const Parser = struct {
         }
 
         try table.put(
-            self.allocator.dupe(u8, key),
+            try self.allocator.dupe(u8, key),
             .{ .value = .{ .table = .init(self.allocator) } },
         );
 
-        return &table.get(key).?;
+        return table.getPtr(key).?;
     }
 
     /// Add a new value to the given parsing table pointer.
@@ -1077,7 +1160,7 @@ const Parser = struct {
         var table = root;
 
         for (keys) |key| {
-            if (table.value.table.get(key)) |*value| {
+            if (table.value.table.getPtr(key)) |value| {
                 switch (value.value) {
                     // For tables, just descend further.
                     .table => {
@@ -1087,23 +1170,23 @@ const Parser = struct {
 
                     // For arrays, find the last entry and descend.
                     .array => |*array| {
-                        if (array.getLastOrNull()) |*last| {
-                            switch (last) {
-                                .table => {
-                                    table = last;
-                                    continue;
-                                },
-                                else => return error.NotArrayOfTables,
-                            }
-                        } else {
+                        if (array.items.len == 0) {
                             return error.EmptyArray;
+                        }
+                        const last = &array.items[array.items.len - 1];
+                        switch (last.value) {
+                            .table => {
+                                table = last;
+                                continue;
+                            },
+                            else => return error.NotArrayOfTables,
                         }
                     },
 
                     else => return error.NoTableFound,
                 }
             } else {
-                var next_value = try self.addTable(table, key);
+                var next_value = try self.addTable(&table.value.table, key);
                 next_value.flag.standard = is_standard;
                 switch (next_value.value) {
                     .table => table = next_value,
@@ -1131,7 +1214,7 @@ const Parser = struct {
             else => unreachable,
         };
         if (mem.indexOfScalar(u8, orig, '\\') == null) {
-            return token;
+            return orig;
         }
 
         var dst: std.ArrayList(u8) = .init(self.allocator);
@@ -1154,9 +1237,9 @@ const Parser = struct {
                 'r' => try dst.append('\r'),
                 'n' => try dst.append('\n'),
                 'u', 'U' => {
-                    const len = if (c == 'u') 4 else 8;
+                    const len: usize = if (c == 'u') 4 else 8;
                     const s = orig[i .. i + len];
-                    const codepoint = std.fmt.parseInt(u21, s, 16);
+                    const codepoint = try std.fmt.parseInt(u21, s, 16);
                     var buf: [4]u8 = undefined;
                     const n = try std.unicode.utf8Encode(codepoint, &buf);
                     try dst.appendSlice(buf[0..n]);
@@ -1217,7 +1300,7 @@ const Parser = struct {
         return key_parts.toOwnedSlice();
     }
 
-    fn parseValue(self: *@This(), token: Token) !ParsingValue {
+    fn parseValue(self: *@This(), token: Token) ParseError!ParsingValue {
         switch (token) {
             .string, .multiline_string, .literal_string, .multiline_literal_string => {
                 const ret = try self.normalizeString(token);
@@ -1274,8 +1357,8 @@ const Parser = struct {
         return ret;
     }
 
-    fn parseInlineTable(self: *@This()) !ParsingValue {
-        var table: ParsingTable = .init(self.allocator);
+    fn parseInlineTable(self: *@This()) ParseError!ParsingValue {
+        var ret: ParsingValue = .{ .value = .{ .table = .init(self.allocator) } };
         var need_comma = false;
         var was_comma = false;
 
@@ -1307,7 +1390,7 @@ const Parser = struct {
             }
 
             const keys = try self.parseKey();
-            var current_table = try self.descendToTable(keys[0 .. keys.len - 1], &table, false);
+            var current_table = try self.descendToTable(keys[0 .. keys.len - 1], &ret, false);
             if (current_table.flag.inlined) {
                 // Cannot extend inline table.
                 return error.UnexpectedToken;
@@ -1327,19 +1410,18 @@ const Parser = struct {
             }
 
             token = try self.scanner.nextValue();
-            switch (current_table.value) {
+            try switch (current_table.value) { // TODO: wtf?
                 .table => |*t| t.put(
-                    self.allocator.dupe(u8, keys[keys.len - 1]),
+                    try self.allocator.dupe(u8, keys[keys.len - 1]),
                     try self.parseValue(token),
                 ),
                 else => return error.UnexpectedToken,
-            }
+            };
 
             need_comma = true;
             was_comma = false;
         }
 
-        var ret: ParsingValue = .{ .value = .{ .table = table } };
         setFlagRecursively(&ret, .{ .inlined = true, .standard = false, .explicit = false });
         return ret;
     }
@@ -1355,9 +1437,9 @@ const Parser = struct {
         }
 
         const last_key = keys[keys.len - 1];
-        var table = try self.descendToTable(keys[0 .. keys.len - 1], true);
+        var table = try self.descendToTable(keys[0 .. keys.len - 1], self.root_table, true);
 
-        if (table.get(last_key)) |*value| {
+        if (table.value.table.getPtr(last_key)) |value| {
             table = value;
             if (table.flag.explicit) {
                 // Table cannot be defined more than once.
@@ -1375,7 +1457,7 @@ const Parser = struct {
                 return error.UnexpectedToken;
             }
 
-            var next_value = try self.addTable(table, last_key);
+            var next_value = try self.addTable(&table.value.table, last_key);
             next_value.flag.standard = true;
             switch (next_value.value) {
                 .table => table = next_value,
@@ -1401,7 +1483,7 @@ const Parser = struct {
         var current_value = self.root_table;
 
         for (keys[0 .. keys.len - 1]) |key| {
-            if (current_value.value.table.get(key)) |*value| {
+            if (current_value.value.table.getPtr(key)) |value| {
                 switch (value.value) {
                     // For tables, just descend further.
                     .table => {
@@ -1416,23 +1498,24 @@ const Parser = struct {
                             return error.UnexpectedToken;
                         }
 
-                        if (array.getLastOrNull()) |*last| {
-                            switch (last) {
-                                .table => {
-                                    current_value = last;
-                                    continue;
-                                },
-                                else => return error.NotArrayOfTables,
-                            }
-                        } else {
+                        if (array.items.len == 0) {
                             return error.EmptyArray;
+                        }
+
+                        const last = &array.items[array.items.len - 1];
+                        switch (last.value) {
+                            .table => {
+                                current_value = last;
+                                continue;
+                            },
+                            else => return error.NotArrayOfTables,
                         }
                     },
 
                     else => return error.NoTableFound,
                 }
             } else {
-                var next_value = try self.addTable(current_value, key);
+                var next_value = try self.addTable(&current_value.value.table, key);
                 next_value.flag.standard = true;
                 switch (next_value.value) {
                     .table => current_value = next_value,
@@ -1442,15 +1525,15 @@ const Parser = struct {
             }
         }
 
-        if (current_value.get(last_key)) |*value| {
+        if (current_value.value.table.getPtr(last_key)) |value| {
             current_value = value;
         } else {
             // Add the missing array.
-            current_value = try self.addArray(current_value, last_key);
-            assert(mem.eql(u8, @tagName(current_value), "array"));
+            current_value = try self.addArray(&current_value.value.table, last_key);
+            assert(mem.eql(u8, @tagName(current_value.value), "array"));
         }
 
-        switch (current_value) {
+        switch (current_value.value) {
             .array => {}, // continue
             else => return error.UnexpectedToken,
         }
@@ -1462,7 +1545,7 @@ const Parser = struct {
 
         try current_value.value.array.append(.{ .value = .{ .table = .init(self.allocator) } });
         // TODO: This will most probably cause a problem.
-        self.current_table = &current_value.value.array.getLast();
+        self.current_table = &current_value.value.array.items[current_value.value.array.items.len - 1];
     }
 
     /// Parse a key-value expression and set the value to the current table.
@@ -1477,7 +1560,7 @@ const Parser = struct {
         const value = try self.parseValue(token);
         var table = self.current_table;
         for (keys[0 .. keys.len - 1], 0..) |key, i| {
-            if (table.value.table.get(key)) |*v| {
+            if (table.value.table.getPtr(key)) |v| {
                 switch (v.value) {
                     // For tables, just descend further.
                     .table => {
@@ -1491,7 +1574,7 @@ const Parser = struct {
                     // Cannot extend a previously defined table using dotted expression.
                     return error.UnexpectedToken;
                 }
-                table = try self.addTable(table, key);
+                table = try self.addTable(&table.value.table, key);
                 switch (table.value) {
                     .table => continue,
                     else => unreachable,
@@ -1509,7 +1592,7 @@ const Parser = struct {
             return error.UnexpectedToken;
         }
 
-        try addValue(table, value, keys[keys.len - 1]);
+        try addValue(&table.value.table, value, keys[keys.len - 1]);
     }
 
     fn setFlagRecursively(value: *ParsingValue, flag: ValueFlag) void {
@@ -1544,7 +1627,7 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
         return error.InvalidUtf8;
     }
 
-    var parsing_root: Parser.ParsingValue = .{ .flag = 0, .value = .{ .table = .init(allocator) } };
+    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(allocator) } };
     var scanner = Scanner.initCompleteInput(input);
     var parser = Parser.init(allocator, &scanner, &parsing_root);
 
@@ -1600,7 +1683,7 @@ fn parseResult(allocator: Allocator, parsed_value: Parser.ParsingValue) !Value {
             var it = t.iterator();
             while (it.next()) |entry| {
                 try val.table.put(
-                    allocator.dupe(u8, entry.key_ptr.*),
+                    try allocator.dupe(u8, entry.key_ptr.*),
                     try parseResult(allocator, entry.value_ptr.*),
                 );
             }
