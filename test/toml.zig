@@ -25,7 +25,8 @@ pub fn main() !void {
     const toml_bytes = try stdin.readAllAlloc(allocator, 1024 * 1024); // Adjust size as needed
     defer allocator.free(toml_bytes);
 
-    const parsed = try toml.parse(allocator, toml_bytes);
+    var parsed = try toml.parse(allocator, toml_bytes);
+    defer parsed.deinit(allocator);
     // const parsed = toml.parse(allocator, toml_bytes) catch {
     //     process.exit(1);
     // };
@@ -62,15 +63,15 @@ fn objectFromValue(allocator: Allocator, toml_value: toml.Value) Error!json.Valu
         .int => |i| {
             var obj = json.ObjectMap.init(allocator);
             try obj.put("type", json.Value{ .string = "integer" });
-            var buf: [1024]u8 = undefined;
-            try obj.put("value", json.Value{ .string = try fmt.bufPrint(&buf, "{d}", .{i}) });
+            const s = try fmt.allocPrint(allocator, "{d}", .{i});
+            try obj.put("value", json.Value{ .string = s });
             return .{ .object = obj };
         },
         .float => |f| {
             var obj = json.ObjectMap.init(allocator);
             try obj.put("type", json.Value{ .string = "float" });
-            var buf: [1024]u8 = undefined;
-            try obj.put("value", json.Value{ .string = try fmt.bufPrint(&buf, "{d}", .{f}) });
+            const s = try fmt.allocPrint(allocator, "{d}", .{f});
+            try obj.put("value", json.Value{ .string = s });
             return .{ .object = obj };
         },
         .bool => |b| {

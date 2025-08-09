@@ -24,6 +24,31 @@ pub const Value = union(enum) {
     local_time: Time,
     array: Array,
     table: Table,
+
+    /// Recursively free memory for this value and all nested values.
+    /// The `allocator` must be the same one used in `parse` to create this Value.
+    pub fn deinit(self: *Value, allocator: Allocator) void {
+        switch (self.*) {
+            .string => |s| allocator.free(s),
+            .array => |*arr| {
+                var i: usize = 0;
+                while (i < arr.items.len) : (i += 1) {
+                    var item = &arr.items[i];
+                    item.deinit(allocator);
+                }
+                arr.deinit();
+            },
+            .table => |*t| {
+                var it = t.iterator();
+                while (it.next()) |entry| {
+                    allocator.free(entry.key_ptr.*);
+                    entry.value_ptr.deinit(allocator);
+                }
+                t.deinit();
+            },
+            else => {},
+        }
+    }
 };
 
 const Token = union(enum) {
@@ -375,9 +400,6 @@ const Scanner = struct {
         // basically loop until we find a return value.
         while (self.cursor < self.end) {
             var c = self.nextChar();
-            if (c == end_of_input) {
-                return .end_of_file;
-            }
 
             switch (c) {
                 '\n' => return .line_feed,
@@ -387,7 +409,7 @@ const Scanner = struct {
                 '#' => {
                     while (!self.match('\n')) {
                         c = self.nextChar();
-                        if (c == end_of_input) {
+                        if (c == end_of_input and self.cursor >= self.end) {
                             break;
                         }
 
@@ -436,14 +458,18 @@ const Scanner = struct {
                 },
 
                 else => {
+                    // Disallow unprintable control characters outside strings/comments
+                    if ((c <= 8) or (c >= 0x0a and c <= 0x1f) or c == 0x7f) {
+                        return error.InvalidCharacter;
+                    }
                     self.cursor -= 1;
                     return if (key_mode) self.scanLiteral() else self.scanNonstringLiteral();
                 },
             }
         }
 
-        // TODO: Meaningful error.
-        return error.SyntaxError;
+        // If we're at end-of-input, surface that explicitly to callers.
+        return .end_of_file;
     }
 
     /// Get the next token in the TOML document with the key mode enabled.
@@ -539,7 +565,9 @@ const Scanner = struct {
         // TODO: Need for allocation?
         const result: Token = .{ .multiline_string = self.input[start..self.cursor] };
 
-        assert(self.matchN('"', 3));
+        if (!self.matchN('"', 3)) {
+            return error.UnexpectedEndOfInput;
+        }
         _ = self.nextChar();
         _ = self.nextChar();
         _ = self.nextChar();
@@ -643,7 +671,9 @@ const Scanner = struct {
         // TODO: Need for allocation?
         const result: Token = .{ .multiline_literal_string = self.input[start..self.cursor] };
 
-        assert(self.matchN('\'', 3));
+        if (!self.matchN('\'', 3)) {
+            return error.UnexpectedEndOfInput;
+        }
         _ = self.nextChar();
         _ = self.nextChar();
         _ = self.nextChar();
@@ -715,36 +745,43 @@ const Scanner = struct {
     fn readInt(self: *@This(), comptime T: type) T {
         var val: T = 0;
         while (ascii.isDigit(self.input[self.cursor])) : (self.cursor += 1) {
-            // TODO: Sane handling for overflows.
-            val = val * 10 + (self.input[self.cursor] - '0');
+            val = val * 10 + @as(T, @intCast(self.input[self.cursor] - '0'));
         }
         return val;
+    }
+
+    /// Read exactly N digits as an unsigned integer value.
+    fn readFixedDigits(self: *@This(), comptime N: usize) !u32 {
+        if (self.cursor + N > self.end) return error.UnexpectedEndOfInput;
+        var v: u32 = 0;
+        var i: usize = 0;
+        while (i < N) : (i += 1) {
+            const c = self.input[self.cursor + i];
+            if (!ascii.isDigit(c)) return error.UnexpectedToken;
+            v = v * 10 + (c - '0');
+        }
+        self.cursor += N;
+        return v;
     }
 
     /// Read a time in the HH:MM:SS.fraction format from the upcoming
     /// characters.
     fn readTime(self: *@This()) !Time {
         var ret: Time = .{ .hour = undefined, .minute = undefined, .second = undefined };
-        var start = self.cursor;
-
-        ret.hour = self.readInt(u8);
-        if (self.cursor - start != 2 or self.input[self.cursor] != ':') {
+        ret.hour = @intCast(try self.readFixedDigits(2));
+        if (self.cursor >= self.end or self.input[self.cursor] != ':') {
             return error.InvalidTime;
         }
 
         self.cursor += 1;
-        start = self.cursor;
-
-        ret.minute = self.readInt(u8);
-        if (self.cursor - start != 2 or self.input[self.cursor] != ':') {
+        ret.minute = @intCast(try self.readFixedDigits(2));
+        if (self.cursor >= self.end or self.input[self.cursor] != ':') {
             return error.InvalidTime;
         }
 
         self.cursor += 1;
-        start = self.cursor;
-
-        ret.second = self.readInt(u8);
-        if (self.cursor - start != 2) {
+        ret.second = @intCast(try self.readFixedDigits(2));
+        if (ret.hour > 23 or ret.minute > 59 or ret.second > 59) {
             return error.InvalidTime;
         }
 
@@ -769,32 +806,22 @@ const Scanner = struct {
 
     /// Read a date in the YYYY-MM-DD format from the upcoming characters.
     fn readDate(self: *@This()) !Date {
-        const date_start = self.cursor;
+        // Note: we no longer need to track the absolute start; validations are done by isValid
         var ret: Date = .{ .year = undefined, .month = undefined, .day = undefined };
-        var start = self.cursor;
-
-        ret.year = self.readInt(u16);
-        if (self.cursor - start != 4 or self.input[self.cursor] != '-') {
+        ret.year = @intCast(try self.readFixedDigits(4));
+        if (self.cursor >= self.end or self.input[self.cursor] != '-') {
             return error.InvalidDate;
         }
 
         self.cursor += 1;
-        start = self.cursor;
-
-        ret.month = self.readInt(u8);
-        if (self.cursor - start != 2 or self.input[self.cursor] != '-') {
+        ret.month = @intCast(try self.readFixedDigits(2));
+        if (self.cursor >= self.end or self.input[self.cursor] != '-') {
             return error.InvalidDate;
         }
 
         self.cursor += 1;
-        start = self.cursor;
-
-        ret.day = self.readInt(u8);
-        if (self.cursor - start != 2) {
-            return error.InvalidDate;
-        }
-
-        assert(self.cursor - date_start == 10);
+        ret.day = @intCast(try self.readFixedDigits(2));
+        // day validity checked via isValid later in scanDatetime when needed
 
         return ret;
     }
@@ -814,18 +841,16 @@ const Scanner = struct {
         };
 
         self.cursor += 1;
-        var start = self.cursor;
+        // track start not needed due to fixed-width parser
 
-        const hour = self.readInt(i16);
-        if (self.cursor - start != 2 or self.input[self.cursor] != ':') {
+        const hour: i16 = @intCast(try self.readFixedDigits(2));
+        if (self.cursor >= self.end or self.input[self.cursor] != ':') {
             return error.InvalidDatetime;
         }
 
         self.cursor += 1;
-        start = self.cursor;
-
-        const minute = self.readInt(i16);
-        if (self.cursor - start != 2) {
+        const minute: i16 = @intCast(try self.readFixedDigits(2));
+        if (hour > 23 or minute > 59) {
             return error.InvalidDatetime;
         }
 
@@ -923,80 +948,154 @@ const Scanner = struct {
 
     /// Scan a possible upcoming number, i.e. integer or float.
     fn scanNumber(self: *@This()) !Token {
+        // Non-decimal bases
         if (self.input[self.cursor] == '0' and self.cursor + 1 < self.end) {
-            const base: ?u8, const span: ?[]const u8 = switch (self.input[self.cursor + 1]) {
-                'x' => .{ 16, "_0123456789abcdefABCDEF" },
-                'o' => .{ 8, "_01234567" },
-                'b' => .{ 2, "_01" },
-                else => .{ null, null },
+            const base: ?u8 = switch (self.input[self.cursor + 1]) {
+                'x' => 16,
+                'o' => 8,
+                'b' => 2,
+                else => null,
             };
-
             if (base) |b| {
                 self.cursor += 2;
-                if (self.cursor >= self.end) {
-                    return error.UnexpectedEndOfInput;
-                }
-
                 const start = self.cursor;
-                const i = mem.indexOfNonePos(u8, self.input, start, span.?) orelse return error.UnexpectedToken;
-                const len = i - start;
-                if (!self.checkNumberStr(len, b)) {
-                    return error.InvalidNumber;
+                const allowed: []const u8 = switch (b) {
+                    16 => "_0123456789abcdefABCDEF",
+                    8 => "_01234567",
+                    2 => "_01",
+                    else => unreachable,
+                };
+                const end_idx = mem.indexOfNonePos(u8, self.input, start, allowed) orelse return error.UnexpectedToken;
+                if (end_idx == start) return error.InvalidNumber;
+                // Validate underscores (not first/last, not doubled)
+                var prev_underscore = false;
+                var i: usize = start;
+                while (i < end_idx) : (i += 1) {
+                    const c = self.input[i];
+                    if (c == '_') {
+                        if (prev_underscore or i == start or i + 1 == end_idx) return error.InvalidNumber;
+                        prev_underscore = true;
+                    } else {
+                        prev_underscore = false;
+                    }
                 }
-
-                const n = try std.fmt.parseInt(i64, self.input[start .. start + len], b);
+                // Build buffer without underscores
+                var buf = std.ArrayList(u8).init(std.heap.page_allocator);
+                defer buf.deinit();
+                i = start;
+                while (i < end_idx) : (i += 1) {
+                    const c = self.input[i];
+                    if (c != '_') try buf.append(c);
+                }
+                const n = try std.fmt.parseInt(i64, buf.items, b);
+                self.cursor = end_idx;
                 return .{ .int = n };
             }
         }
 
+        // Decimal or float
         const start = self.cursor;
         var idx = self.cursor;
-        if (self.input[idx] == '+' or self.input[idx] == '-') {
-            idx += 1;
-        }
-
-        if (self.input[idx] == 'i' or self.input[idx] == 'n') {
+        if (self.input[idx] == '+' or self.input[idx] == '-') idx += 1;
+        if (idx >= self.end) return error.UnexpectedEndOfInput;
+        if (self.input[idx] == 'i' or self.input[idx] == 'n') return self.scanFloat();
+        // Find token end
+        idx = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse return error.UnexpectedToken;
+        if (idx == start) return error.InvalidNumber;
+        const slice = self.input[start..idx];
+        const has_dot = mem.indexOfScalar(u8, slice, '.') != null;
+        const has_exp = mem.indexOfAny(u8, slice, "eE") != null;
+        if (has_dot or has_exp) {
             return self.scanFloat();
         }
-
-        idx = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse return error.UnexpectedToken;
-
-        if (!self.checkNumberStr(idx - start, 10)) {
-            return error.InvalidNumber;
-        }
-
-        const n = std.fmt.parseInt(i64, self.input[start..idx], 10) catch |err| switch (err) {
-            error.InvalidCharacter => if (mem.indexOfAnyPos(u8, self.input, idx, ".eE") != null) {
-                return self.scanFloat();
+        // Validate underscores and leading zero rule
+        var s_off: usize = 0;
+        if (slice[0] == '+' or slice[0] == '-') s_off = 1;
+        if (slice[s_off] == '0' and slice.len > s_off + 1) return error.InvalidNumber;
+        var prev_underscore = false;
+        var j: usize = s_off;
+        while (j < slice.len) : (j += 1) {
+            const c = slice[j];
+            if (c == '_') {
+                if (prev_underscore or j == s_off or j + 1 == slice.len) return error.InvalidNumber;
+                prev_underscore = true;
+            } else if (!ascii.isDigit(c)) {
+                return error.InvalidNumber;
             } else {
-                return err;
-            },
-            else => return err,
-        };
-
+                prev_underscore = false;
+            }
+        }
+        // Build buffer without underscores
+        var buf = std.ArrayList(u8).init(std.heap.page_allocator);
+        defer buf.deinit();
+        j = 0;
+        while (j < slice.len) : (j += 1) {
+            const c = slice[j];
+            if (c != '_') try buf.append(c);
+        }
+        const n = try std.fmt.parseInt(i64, buf.items, 10);
         self.cursor = idx;
-
         return .{ .int = n };
     }
 
     /// Scan a possible upcoming floating-point literal.
     fn scanFloat(self: *@This()) !Token {
         const start = self.cursor;
-        if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') {
-            self.cursor += 1;
-        }
+        if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') self.cursor += 1;
 
-        if (mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "inf") or mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "nan")) {
+        if (self.cursor + 3 <= self.end and (mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "inf") or mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "nan"))) {
             self.cursor += 3;
         } else {
             self.cursor = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse return error.UnexpectedToken;
         }
 
-        if (!self.checkNumberStr(self.cursor - start, 10)) {
-            return error.InvalidNumber;
+        const slice = self.input[start..self.cursor];
+        // Validate underscores not at ends or adjacent to dot or exponent signs
+        var prev_char: u8 = 0;
+        var i: usize = 0;
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            if (c == '_') {
+                if (i == 0 or i + 1 == slice.len) return error.InvalidNumber;
+                const nxt = slice[i + 1];
+                if (!ascii.isDigit(prev_char) or !ascii.isDigit(nxt)) return error.InvalidNumber;
+            }
+            prev_char = c;
         }
-
-        const f = try std.fmt.parseFloat(f64, self.input[start..self.cursor]);
+        // Build buffer without underscores
+        var buf = std.ArrayList(u8).init(std.heap.page_allocator);
+        defer buf.deinit();
+        i = 0;
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            if (c != '_') try buf.append(c);
+        }
+        // Reject leading zero before decimal point (e.g. 03.14) per TOML
+        if (buf.items.len >= 2) {
+            var sign_idx: usize = 0;
+            if (buf.items[0] == '+' or buf.items[0] == '-') sign_idx = 1;
+            if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and buf.items[sign_idx + 1] == '.') {
+                // ok: 0.xxx
+            } else if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and ascii.isDigit(buf.items[sign_idx + 1])) {
+                return error.InvalidNumber;
+            }
+        }
+        // Disallow floats like 1., .1, or exponents with missing mantissa per TOML
+        if (mem.indexOfScalar(u8, buf.items, '.') != null) {
+            // Must have digits on both sides of '.'
+            const dot_idx = mem.indexOfScalar(u8, buf.items, '.').?;
+            if (dot_idx == 0 or dot_idx + 1 >= buf.items.len) return error.InvalidNumber;
+            if (!ascii.isDigit(buf.items[dot_idx - 1]) or !ascii.isDigit(buf.items[dot_idx + 1])) return error.InvalidNumber;
+        }
+        // Validate exponent placement: must have digits before and after 'e' or 'E' (with optional sign)
+        if (mem.indexOfAny(u8, buf.items, "eE")) |e_idx| {
+            if (e_idx == 0) return error.InvalidNumber;
+            if (!ascii.isDigit(buf.items[e_idx - 1]) and buf.items[e_idx - 1] != '.') return error.InvalidNumber;
+            var after = e_idx + 1;
+            if (after < buf.items.len and (buf.items[after] == '+' or buf.items[after] == '-')) after += 1;
+            if (after >= buf.items.len or !ascii.isDigit(buf.items[after])) return error.InvalidNumber;
+        }
+        const f = try std.fmt.parseFloat(f64, buf.items);
         return .{ .float = f };
     }
 
@@ -1238,22 +1337,24 @@ const Parser = struct {
                 'n' => try dst.append('\n'),
                 'u', 'U' => {
                     const len: usize = if (c == 'u') 4 else 8;
-                    const s = orig[i .. i + len];
+                    const start = i + 1;
+                    if (start + len > orig.len) return error.UnexpectedEndOfInput;
+                    const s = orig[start .. start + len];
                     const codepoint = try std.fmt.parseInt(u21, s, 16);
                     var buf: [4]u8 = undefined;
                     const n = try std.unicode.utf8Encode(codepoint, &buf);
                     try dst.appendSlice(buf[0..n]);
-                    i += len;
+                    i += 1 + len - 1; // -1 because loop will i+=1
                 },
                 ' ', '\t', '\r', '\n' => {
-                    if (c != '\n') {
-                        i += mem.indexOfNonePos(u8, orig, i, " \t\r") orelse 0;
-                        if (orig[i] != '\n') {
-                            return error.UnexpectedToken;
-                        }
+                    // Line-ending backslash: trim all immediately following spaces, tabs, and newlines.
+                    var idx = i;
+                    var consumed = false;
+                    while (idx < orig.len and (orig[idx] == ' ' or orig[idx] == '\t' or orig[idx] == '\r' or orig[idx] == '\n')) : (idx += 1) {
+                        consumed = true;
                     }
-
-                    i += mem.indexOfNonePos(u8, orig, i, " \t\r\n") orelse 0;
+                    if (!consumed) return error.UnexpectedToken;
+                    i = idx - 1; // continue after the whitespace block
                 },
                 else => try dst.append(c),
             }
@@ -1290,7 +1391,42 @@ const Parser = struct {
 
             const next_token = try self.scanner.nextKey();
             switch (next_token) {
-                .literal, .string, .multiline_string => {}, // continue
+                .literal, .string, .literal_string, .multiline_string => {}, // continue
+                else => return error.UnexpectedToken,
+            }
+
+            try key_parts.append(try self.normalizeString(next_token));
+        }
+
+        return key_parts.toOwnedSlice();
+    }
+
+    /// Parse a multipart key when the first token has already been read by the caller.
+    fn parseKeyStartingWith(self: *@This(), first: Token) ![][]const u8 {
+        switch (first) {
+            .literal, .string, .literal_string => {},
+            else => return error.UnexpectedToken,
+        }
+
+        var key_parts: std.ArrayList([]const u8) = .init(self.allocator);
+        errdefer key_parts.deinit();
+
+        try key_parts.append(try self.normalizeString(first));
+
+        while (true) {
+            const old_cursor = self.scanner.cursor;
+            const old_line = self.scanner.line;
+
+            const dot = try self.scanner.nextKey();
+            if (dot != .dot) {
+                self.scanner.cursor = old_cursor;
+                self.scanner.line = old_line;
+                break;
+            }
+
+            const next_token = try self.scanner.nextKey();
+            switch (next_token) {
+                .literal, .string, .literal_string, .multiline_string => {},
                 else => return error.UnexpectedToken,
             }
 
@@ -1366,9 +1502,11 @@ const Parser = struct {
         while (true) {
             var token = try self.scanner.nextKey();
             if (token == .right_brace) {
-                if (need_comma) {
-                    return error.SyntaxError;
+                if (was_comma) {
+                    // Trailing comma before closing brace is invalid
+                    return error.UnexpectedToken;
                 }
+                // Allow closing immediately after a key-value without requiring a comma
                 break;
             }
 
@@ -1389,7 +1527,7 @@ const Parser = struct {
                 return error.UnexpectedToken;
             }
 
-            const keys = try self.parseKey();
+            const keys = try self.parseKeyStartingWith(token);
             var current_table = try self.descendToTable(keys[0 .. keys.len - 1], &ret, false);
             if (current_table.flag.inlined) {
                 // Cannot extend inline table.
@@ -1410,10 +1548,12 @@ const Parser = struct {
             }
 
             token = try self.scanner.nextValue();
-            try switch (current_table.value) { // TODO: wtf?
-                .table => |*t| t.put(
+            const parsed_val = try self.parseValue(token);
+            try switch (current_table.value) {
+                .table => |*t| addValue(
+                    t,
+                    parsed_val,
                     try self.allocator.dupe(u8, keys[keys.len - 1]),
-                    try self.parseValue(token),
                 ),
                 else => return error.UnexpectedToken,
             };
@@ -1440,14 +1580,16 @@ const Parser = struct {
         var table = try self.descendToTable(keys[0 .. keys.len - 1], self.root_table, true);
 
         if (table.value.table.getPtr(last_key)) |value| {
-            table = value;
-            if (table.flag.explicit) {
-                // Table cannot be defined more than once.
-                return error.UnexpectedToken;
+            // Disallow redefining an inline table or array as a standard table
+            switch (value.value) {
+                .array => return error.UnexpectedToken,
+                .table => {},
+                else => return error.UnexpectedToken,
             }
 
-            if (table.flag.standard) {
-                // Table defined before.
+            table = value;
+            if (table.flag.explicit or table.flag.inlined or !table.flag.standard) {
+                // Table cannot be defined more than once and inline tables cannot be extended.
                 return error.UnexpectedToken;
             }
         } else {
@@ -1567,6 +1709,7 @@ const Parser = struct {
                         table = v;
                         continue;
                     },
+                    .array => return error.NotArrayOfTables,
                     else => return error.NoTableFound,
                 }
             } else {
@@ -1589,6 +1732,50 @@ const Parser = struct {
 
         if (keys.len > 1 and table.flag.explicit) {
             // Cannot extend a previously defined table using dotted expression.
+            return error.UnexpectedToken;
+        }
+
+        try addValue(&table.value.table, value, keys[keys.len - 1]);
+    }
+
+    /// Parse a key-value expression where the first key token has already been read.
+    fn parseKeyValueExpressionStartingWith(self: *@This(), first: Token) !void {
+        const keys = try self.parseKeyStartingWith(first);
+        var token = try self.scanner.nextKey();
+        if (token != .equal) {
+            return error.UnexpectedToken;
+        }
+
+        token = try self.scanner.nextValue();
+        const value = try self.parseValue(token);
+        var table = self.current_table;
+        for (keys[0 .. keys.len - 1], 0..) |key, i| {
+            if (table.value.table.getPtr(key)) |v| {
+                switch (v.value) {
+                    .table => {
+                        table = v;
+                        continue;
+                    },
+                    .array => return error.NotArrayOfTables,
+                    else => return error.NoTableFound,
+                }
+            } else {
+                if (i > 0 and table.flag.explicit) {
+                    return error.UnexpectedToken;
+                }
+                table = try self.addTable(&table.value.table, key);
+                switch (table.value) {
+                    .table => continue,
+                    else => unreachable,
+                }
+            }
+        }
+
+        if (table.flag.inlined) {
+            return error.UnexpectedToken;
+        }
+
+        if (keys.len > 1 and table.flag.explicit) {
             return error.UnexpectedToken;
         }
 
@@ -1627,15 +1814,19 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
         return error.InvalidUtf8;
     }
 
-    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(allocator) } };
+    // Use a temporary arena for all intermediate parsing allocations.
+    var tmp_arena = std.heap.ArenaAllocator.init(allocator);
+    defer tmp_arena.deinit();
+    const scratch = tmp_arena.allocator();
+
+    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
     var scanner = Scanner.initCompleteInput(input);
-    var parser = Parser.init(allocator, &scanner, &parsing_root);
+    var parser = Parser.init(scratch, &scanner, &parsing_root);
 
     // Set an upper limit for the loop for safety. There cannot be more tokens
     // than there are characters in the input. If the input is streamed, this
     // needs changing.
-    var i: usize = 0;
-    while (i < input.len) : (i += 1) {
+    while (true) {
         var token = try scanner.nextKey();
         if (token == .end_of_file) {
             break;
@@ -1646,7 +1837,8 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
             .left_bracket => try parser.parseTableExpression(),
             .double_left_bracket => try parser.parseArrayTableExpression(),
             .end_of_file => unreachable,
-            else => try parser.parseKeyValueExpression(),
+            .literal, .string, .literal_string => try parser.parseKeyValueExpressionStartingWith(token),
+            else => return error.UnexpectedToken,
         }
 
         token = try scanner.nextKey();
