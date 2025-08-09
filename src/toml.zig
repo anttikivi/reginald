@@ -4,6 +4,9 @@ const ascii = std.ascii;
 const assert = std.debug.assert;
 const mem = std.mem;
 
+/// Represents a TOML array value that is normally wrapped in a `Value`.
+const Array = std.ArrayList(Value);
+
 /// Represents a TOML table value that is normally wrapped in a `Value`.
 const Table = std.StringArrayHashMap(Value);
 
@@ -372,6 +375,11 @@ const Scanner = struct {
     /// Get the next token in the TOML document with the key mode enabled.
     fn nextKey(self: *@This()) !Token {
         return self.next(true);
+    }
+
+    /// Get the next token in the TOML document with the key mode disabled.
+    fn nextValue(self: *@This()) !Token {
+        return self.next(false);
     }
 
     /// Scan the upcoming multiline string in the TOML document and return
@@ -976,19 +984,34 @@ const Scanner = struct {
 const Parser = struct {
     allocator: Allocator,
     scanner: *Scanner,
-    root_table: *ParsingTable = undefined,
-    current_table: *ParsingTable = undefined,
+    root_table: *ParsingValue = undefined,
+    current_table: *ParsingValue = undefined,
 
+    const ValueFlag = packed struct {
+        inlined: bool,
+        standard: bool,
+        explicit: bool,
+    };
+
+    const ParsingArray = std.ArrayList(ParsingValue);
     const ParsingTable = std.StringArrayHashMap(ParsingValue);
-
     const ParsingValue = struct {
-        flag: u8,
+        flag: ValueFlag = .{ .inlined = false, .standard = false, .explicit = false },
         value: union(enum) {
+            string: []const u8,
+            int: i64,
+            float: f64,
+            bool: bool,
+            datetime: Datetime,
+            local_datetime: Datetime,
+            local_date: Date,
+            local_time: Time,
+            array: ParsingArray,
             table: ParsingTable,
         },
     };
 
-    fn init(allocator: Allocator, scanner: *Scanner, root: *ParsingTable) @This() {
+    fn init(allocator: Allocator, scanner: *Scanner, root: *ParsingValue) @This() {
         return .{
             .allocator = allocator,
             .scanner = scanner,
@@ -997,18 +1020,90 @@ const Parser = struct {
         };
     }
 
-    /// Descend to the final table represented by `keys` starting from the root
-    /// table. If a table for a key does not exist, it will be created.
-    /// The function returns the final table represented by the keys.
-    fn descendToTable(self: *@This(), keys: [][]const u8) void {
-        var table = self.root_table;
-
-        for (keys) |key| {
-            var table_value = table.get(key);
-            if (table_value == null) {}
+    /// Add a new array to the given parsing table pointer and return the newly
+    /// created value.
+    fn addArray(self: *@This(), table: *ParsingTable, key: []const u8) !*ParsingValue {
+        if (table.contains(key)) {
+            return error.DuplicateKey;
         }
+
+        try table.put(key, .{ .value = .{ .array = .init(self.allocator) } });
+
+        return &table.get(key).?;
     }
 
+    /// Add a new table to the given parsing table pointer and return the newly
+    /// created value.
+    fn addTable(self: *@This(), table: *ParsingTable, key: []const u8) !*ParsingValue {
+        if (table.contains(key)) {
+            return error.DuplicateKey;
+        }
+
+        try table.put(key, .{ .value = .{ .table = .init(self.allocator) } });
+
+        return &table.get(key).?;
+    }
+
+    /// Add a new value to the given parsing table pointer.
+    fn addValue(table: *ParsingTable, value: ParsingValue, key: []const u8) !void {
+        if (table.contains(key)) {
+            return error.DuplicateKey;
+        }
+
+        try table.put(key, value);
+    }
+
+    /// Descend to the final table represented by `keys` starting from the root
+    /// table. If a table for a key does not exist, it will be created.
+    /// The function returns the final table represented by the keys. If
+    /// the table in question is parsed from a standard table header,
+    /// `is_standard` should be `true`.
+    fn descendToTable(self: *@This(), keys: [][]const u8, root: *ParsingValue, is_standard: bool) !*ParsingValue {
+        var table = root;
+
+        for (keys) |key| {
+            if (table.value.table.get(key)) |*value| {
+                switch (value.value) {
+                    // For tables, just descend further.
+                    .table => {
+                        table = value;
+                        continue;
+                    },
+
+                    // For arrays, find the last entry and descend.
+                    .array => |*array| {
+                        if (array.getLastOrNull()) |*last| {
+                            switch (last) {
+                                .table => {
+                                    table = last;
+                                    continue;
+                                },
+                                else => return error.NotArrayOfTables,
+                            }
+                        } else {
+                            return error.EmptyArray;
+                        }
+                    },
+
+                    else => return error.NoTableFound,
+                }
+            } else {
+                var next_value = try self.addTable(table, key);
+                next_value.flag.standard = is_standard;
+                switch (next_value.value) {
+                    .table => table = next_value,
+                    else => unreachable,
+                }
+                continue;
+            }
+        }
+
+        return table;
+    }
+
+    /// Normalize a string values in got from the TOML document, parsing
+    /// the escape codes from it. The caller owns the returned string and must
+    /// call `free` on it.
     fn normalizeString(self: *@This(), token: Token) ![]const u8 {
         switch (token) {
             .literal, .literal_string, .multiline_literal_string => |s| return s,
@@ -1107,6 +1202,130 @@ const Parser = struct {
         return key_parts.toOwnedSlice();
     }
 
+    fn parseValue(self: *@This(), token: Token) !ParsingValue {
+        switch (token) {
+            .string, .multiline_string, .literal_string, .multiline_literal_string => {
+                const ret = try self.normalizeString(token);
+                return .{ .value = .{ .string = ret } };
+            },
+            .int => |n| return .{ .value = .{ .int = n } },
+            .float => |f| return .{ .value = .{ .float = f } },
+            .bool => |b| return .{ .value = .{ .bool = b } },
+            .datetime => |dt| return .{ .value = .{ .datetime = dt } },
+            .local_datetime => |dt| return .{ .value = .{ .local_datetime = dt } },
+            .local_date => |d| return .{ .value = .{ .local_date = d } },
+            .local_time => |t| return .{ .value = .{ .local_time = t } },
+            .left_bracket => return self.parseInlineArray(),
+            .left_brace => return self.parseInlineTable(),
+            else => return error.UnexpectedToken,
+        }
+    }
+
+    fn parseInlineArray(self: *@This()) !ParsingValue {
+        var arr: ParsingArray = .init(self.allocator);
+        errdefer arr.deinit();
+
+        var need_comma = false;
+
+        // TODO: Add a limit.
+        while (true) {
+            var token = try self.scanner.nextValue();
+            while (token == .line_feed) {
+                token = try self.scanner.nextValue();
+            }
+
+            if (token == .right_bracket) {
+                break;
+            }
+
+            if (token == .comma) {
+                if (need_comma) {
+                    need_comma = false;
+                    continue;
+                }
+                return error.SyntaxError;
+            }
+
+            if (need_comma) {
+                return error.SyntaxError;
+            }
+
+            try arr.append(try self.parseValue(token));
+            need_comma = true;
+        }
+
+        var ret: ParsingValue = .{ .value = .{ .array = arr } };
+        setFlagRecursively(&ret, .{ .inlined = true, .standard = false, .explicit = false });
+        return ret;
+    }
+
+    fn parseInlineTable(self: *@This()) !ParsingValue {
+        var table: ParsingTable = .init(self.allocator);
+        var need_comma = false;
+        var was_comma = false;
+
+        // TODO: Add a limit.
+        while (true) {
+            var token = try self.scanner.nextKey();
+            if (token == .right_brace) {
+                if (need_comma) {
+                    return error.SyntaxError;
+                }
+                break;
+            }
+
+            if (token == .comma) {
+                if (need_comma) {
+                    need_comma = false;
+                    was_comma = true;
+                    continue;
+                }
+                return error.UnexpectedToken;
+            }
+
+            if (need_comma) {
+                return error.UnexpectedToken;
+            }
+
+            if (token == .line_feed) {
+                return error.UnexpectedToken;
+            }
+
+            const keys = try self.parseKey();
+            var current_table = try self.descendToTable(keys[0 .. keys.len - 1], &table, false);
+            if (current_table.flag.inlined) {
+                // Cannot extend inline table.
+                return error.UnexpectedToken;
+            }
+
+            current_table.flag.explicit = true;
+
+            token = try self.scanner.nextValue();
+            if (token != .equal) {
+                if (token == .line_feed) {
+                    // Unexpected newline.
+                    return error.UnexpectedToken;
+                }
+
+                // Missing `=`.
+                return error.UnexpectedToken;
+            }
+
+            token = try self.scanner.nextValue();
+            switch (current_table.value) {
+                .table => |*t| t.put(keys[keys.len - 1], try self.parseValue(token)),
+                else => return error.UnexpectedToken,
+            }
+
+            need_comma = true;
+            was_comma = false;
+        }
+
+        var ret: ParsingValue = .{ .value = .{ .table = table } };
+        setFlagRecursively(&ret, .{ .inlined = true, .standard = false, .explicit = false });
+        return ret;
+    }
+
     /// Parse standard table header expression and set the new table as
     /// the current table in the parser.
     fn parseTableExpression(self: *@This()) !void {
@@ -1118,6 +1337,185 @@ const Parser = struct {
         }
 
         const last_key = keys[keys.len - 1];
+        var table = try self.descendToTable(keys[0 .. keys.len - 1], true);
+
+        if (table.get(last_key)) |*value| {
+            table = value;
+            if (table.flag.explicit) {
+                // Table cannot be defined more than once.
+                return error.UnexpectedToken;
+            }
+
+            if (table.flag.standard) {
+                // Table defined before.
+                return error.UnexpectedToken;
+            }
+        } else {
+            // Add the missing table.
+            if (table.flag.inlined) {
+                // Inline table may not be extended.
+                return error.UnexpectedToken;
+            }
+
+            var next_value = try self.addTable(table, last_key);
+            next_value.flag.standard = true;
+            switch (next_value.value) {
+                .table => table = next_value,
+                else => unreachable,
+            }
+        }
+
+        table.flag.explicit = true;
+        self.current_table = table;
+    }
+
+    /// Parse array table header expression and set the new table as the current
+    /// table in the parser.
+    fn parseArrayTableExpression(self: *@This()) !void {
+        const keys = try self.parseKey();
+
+        const next_token = try self.scanner.nextKey();
+        if (next_token != .double_right_bracket) {
+            return error.UnexpectedToken;
+        }
+
+        const last_key = keys[keys.len - 1];
+        var current_value = self.root_table;
+
+        for (keys[0 .. keys.len - 1]) |key| {
+            if (current_value.value.table.get(key)) |*value| {
+                switch (value.value) {
+                    // For tables, just descend further.
+                    .table => {
+                        current_value = value;
+                        continue;
+                    },
+
+                    // For arrays, find the last entry and descend.
+                    .array => |*array| {
+                        if (value.flag.inlined) {
+                            // Cannot expand array.
+                            return error.UnexpectedToken;
+                        }
+
+                        if (array.getLastOrNull()) |*last| {
+                            switch (last) {
+                                .table => {
+                                    current_value = last;
+                                    continue;
+                                },
+                                else => return error.NotArrayOfTables,
+                            }
+                        } else {
+                            return error.EmptyArray;
+                        }
+                    },
+
+                    else => return error.NoTableFound,
+                }
+            } else {
+                var next_value = try self.addTable(current_value, key);
+                next_value.flag.standard = true;
+                switch (next_value.value) {
+                    .table => current_value = next_value,
+                    else => unreachable,
+                }
+                continue;
+            }
+        }
+
+        if (current_value.get(last_key)) |*value| {
+            current_value = value;
+        } else {
+            // Add the missing array.
+            current_value = try self.addArray(current_value, last_key);
+            assert(mem.eql(u8, @tagName(current_value), "array"));
+        }
+
+        switch (current_value) {
+            .array => {}, // continue
+            else => return error.UnexpectedToken,
+        }
+
+        if (current_value.flag.inlined) {
+            // Cannot extend inline array.
+            return error.UnexpectedToken;
+        }
+
+        try current_value.value.array.append(.{ .value = .{ .table = .init(self.allocator) } });
+        // TODO: This will most probably cause a problem.
+        self.current_table = &current_value.value.array.getLast();
+    }
+
+    /// Parse a key-value expression and set the value to the current table.
+    fn parseKeyValueExpression(self: *@This()) !void {
+        const keys = try self.parseKey();
+        var token = try self.scanner.nextKey();
+        if (token != .equal) {
+            return error.UnexpectedToken;
+        }
+
+        token = try self.scanner.nextValue();
+        const value = try self.parseValue(token);
+        var table = self.current_table;
+        for (keys[0 .. keys.len - 1], 0..) |key, i| {
+            if (table.value.table.get(key)) |*v| {
+                switch (v.value) {
+                    // For tables, just descend further.
+                    .table => {
+                        table = v;
+                        continue;
+                    },
+                    else => return error.NoTableFound,
+                }
+            } else {
+                if (i > 0 and table.flag.explicit) {
+                    // Cannot extend a previously defined table using dotted expression.
+                    return error.UnexpectedToken;
+                }
+                table = try self.addTable(table, key);
+                switch (table.value) {
+                    .table => continue,
+                    else => unreachable,
+                }
+            }
+        }
+
+        if (table.flag.inlined) {
+            // Inline table cannot be extended.
+            return error.UnexpectedToken;
+        }
+
+        if (keys.len > 1 and table.flag.explicit) {
+            // Cannot extend a previously defined table using dotted expression.
+            return error.UnexpectedToken;
+        }
+
+        try addValue(table, value, keys[keys.len - 1]);
+    }
+
+    fn setFlagRecursively(value: *ParsingValue, flag: ValueFlag) void {
+        if (flag.inlined) {
+            value.flag.inlined = true;
+        }
+
+        if (flag.standard) {
+            value.flag.standard = true;
+        }
+
+        if (flag.explicit) {
+            value.flag.explicit = true;
+        }
+
+        switch (value.value) {
+            .array => |*arr| for (arr.items) |*item| {
+                setFlagRecursively(item, flag);
+            },
+            .table => |*table| for (table.values()) |*item| {
+                setFlagRecursively(item, flag);
+            },
+            else => {},
+        }
     }
 };
 
@@ -1137,7 +1535,7 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
     // needs changing.
     var i: usize = 0;
     while (i < input.len) : (i += 1) {
-        const token = scanner.nextKey();
+        var token = try scanner.nextKey();
         if (token == .end_of_file) {
             break;
         }
@@ -1145,8 +1543,17 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
         switch (token) {
             .line_feed => continue,
             .left_bracket => try parser.parseTableExpression(),
+            .double_left_bracket => try parser.parseArrayTableExpression(),
             .end_of_file => unreachable,
+            else => try parser.parseKeyValueExpression(),
         }
+
+        token = try scanner.nextKey();
+        if (token == .line_feed or token == .end_of_file) {
+            continue;
+        }
+
+        return error.UnexpectedToken;
     }
 
     return Value{};
