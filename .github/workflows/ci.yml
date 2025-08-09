@@ -106,7 +106,7 @@ jobs:
         uses: mlugg/setup-zig@v2.0.5
 
       - name: Set up toml-test
-        uses: toml-lang/toml-test@2605970fd386882ff2461e5064f0687347d3c870
+        uses: toml-lang/toml-test@v1
 
       - name: Run toml-test
         run: zig build toml-test
