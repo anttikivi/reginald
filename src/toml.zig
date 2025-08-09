@@ -1960,3 +1960,102 @@ fn utf8Validate(input: []const u8) bool {
 
     return true;
 }
+
+test "parse basic scalars" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const input = "a = 1\n" ++
+        "b = \"hello\"\n" ++
+        "c = true\n" ++
+        "d = 0x10\n" ++
+        "e = 1.5\n";
+
+    var root = try parse(alloc, input);
+    defer root.deinit(alloc);
+
+    // Access via switch for clarity
+    switch (root) {
+        .table => |t| {
+            try testing.expect(t.contains("a"));
+            try testing.expect(t.contains("b"));
+            try testing.expect(t.contains("c"));
+            try testing.expect(t.contains("d"));
+            try testing.expect(t.contains("e"));
+
+            try testing.expectEqual(@as(i64, 1), t.get("a").?.int);
+            try testing.expectEqualStrings("hello", t.get("b").?.string);
+            try testing.expectEqual(true, t.get("c").?.bool);
+            try testing.expectEqual(@as(i64, 16), t.get("d").?.int);
+            try testing.expectApproxEqAbs(@as(f64, 1.5), t.get("e").?.float, 1e-12);
+        },
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "parse arrays and inline tables" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const input = "arr = [1, 2, 3]\n" ++
+        "obj = { x = \"y\", n = 2 }\n";
+
+    var root = try parse(alloc, input);
+    defer root.deinit(alloc);
+
+    switch (root) {
+        .table => |t| {
+            const arr = t.get("arr").?.array;
+            try testing.expectEqual(@as(usize, 3), arr.items.len);
+            try testing.expectEqual(@as(i64, 1), arr.items[0].int);
+            try testing.expectEqual(@as(i64, 2), arr.items[1].int);
+            try testing.expectEqual(@as(i64, 3), arr.items[2].int);
+
+            const obj = t.get("obj").?.table;
+            try testing.expectEqualStrings("y", obj.get("x").?.string);
+            try testing.expectEqual(@as(i64, 2), obj.get("n").?.int);
+        },
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "parse datetimes and local types" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const input = "dt = 1985-06-18T17:04:07Z\n" ++
+        "ld = 1985-06-18\n" ++
+        "lt = 17:04:07\n";
+
+    var root = try parse(alloc, input);
+    defer root.deinit(alloc);
+
+    switch (root) {
+        .table => |t| {
+            const dt = t.get("dt").?.datetime;
+            try testing.expectEqual(@as(u16, 1985), dt.year);
+            try testing.expectEqual(@as(u8, 6), dt.month);
+            try testing.expectEqual(@as(u8, 18), dt.day);
+            try testing.expectEqual(@as(i16, 0), dt.tz.?);
+
+            const ld = t.get("ld").?.local_date;
+            try testing.expectEqual(@as(u16, 1985), ld.year);
+            try testing.expectEqual(@as(u8, 6), ld.month);
+            try testing.expectEqual(@as(u8, 18), ld.day);
+
+            const lt = t.get("lt").?.local_time;
+            try testing.expectEqual(@as(u8, 17), lt.hour);
+            try testing.expectEqual(@as(u8, 4), lt.minute);
+            try testing.expectEqual(@as(u8, 7), lt.second);
+        },
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "invalid: float leading zero and duplicate inline key" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // leading zero float
+    try testing.expectError(error.InvalidNumber, parse(alloc, "x = 03.14\n"));
+
+    // duplicate key in inline table
+    try testing.expectError(error.DuplicateKey, parse(alloc, "a = { b = 1, b = 2 }\n"));
+}
