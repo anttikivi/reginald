@@ -105,8 +105,11 @@ jobs:
       - name: Set up Zig
         uses: mlugg/setup-zig@v2.0.5
 
+      - name: Install the Go toolchain
+        uses: actions/setup-go@v5.5.0
+
       - name: Set up toml-test
-        uses: toml-lang/toml-test@v1
+        run: go install github.com/toml-lang/toml-test/cmd/toml-test@latest
 
       - name: Run toml-test
         run: zig build toml-test
