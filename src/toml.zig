@@ -14,6 +14,15 @@ const Table = std.StringArrayHashMap(Value);
 /// The result for parsing a TOML document is a `Value` that represents the root
 /// table of the document.
 const Value = union(enum) {
+    string: []const u8,
+    int: i64,
+    float: f64,
+    bool: bool,
+    datetime: Datetime,
+    local_datetime: Datetime,
+    local_date: Date,
+    local_time: Time,
+    array: Array,
     table: Table,
 };
 
@@ -1027,7 +1036,10 @@ const Parser = struct {
             return error.DuplicateKey;
         }
 
-        try table.put(key, .{ .value = .{ .array = .init(self.allocator) } });
+        try table.put(
+            self.allocator.dupe(u8, key),
+            .{ .value = .{ .array = .init(self.allocator) } },
+        );
 
         return &table.get(key).?;
     }
@@ -1039,7 +1051,10 @@ const Parser = struct {
             return error.DuplicateKey;
         }
 
-        try table.put(key, .{ .value = .{ .table = .init(self.allocator) } });
+        try table.put(
+            self.allocator.dupe(u8, key),
+            .{ .value = .{ .table = .init(self.allocator) } },
+        );
 
         return &table.get(key).?;
     }
@@ -1313,7 +1328,10 @@ const Parser = struct {
 
             token = try self.scanner.nextValue();
             switch (current_table.value) {
-                .table => |*t| t.put(keys[keys.len - 1], try self.parseValue(token)),
+                .table => |*t| t.put(
+                    self.allocator.dupe(u8, keys[keys.len - 1]),
+                    try self.parseValue(token),
+                ),
                 else => return error.UnexpectedToken,
             }
 
@@ -1528,7 +1546,7 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
 
     var parsing_root: Parser.ParsingValue = .{ .flag = 0, .value = .{ .table = .init(allocator) } };
     var scanner = Scanner.initCompleteInput(input);
-    var parser = Parser.init(allocator, &scanner, &parsing_root.value.table);
+    var parser = Parser.init(allocator, &scanner, &parsing_root);
 
     // Set an upper limit for the loop for safety. There cannot be more tokens
     // than there are characters in the input. If the input is streamed, this
@@ -1556,7 +1574,39 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
         return error.UnexpectedToken;
     }
 
-    return Value{};
+    return parseResult(allocator, parsing_root);
+}
+
+/// Convert the intermediate parsing values into the proper TOML return values.
+fn parseResult(allocator: Allocator, parsed_value: Parser.ParsingValue) !Value {
+    switch (parsed_value.value) {
+        .string => |s| return .{ .string = try allocator.dupe(u8, s) },
+        .int => |n| return .{ .int = n },
+        .float => |f| return .{ .float = f },
+        .bool => |b| return .{ .bool = b },
+        .datetime => |dt| return .{ .datetime = dt },
+        .local_datetime => |dt| return .{ .local_datetime = dt },
+        .local_date => |d| return .{ .local_date = d },
+        .local_time => |t| return .{ .local_time = t },
+        .array => |arr| {
+            var val: Value = .{ .array = .init(allocator) };
+            for (arr.items) |item| {
+                try val.array.append(try parseResult(allocator, item));
+            }
+            return val;
+        },
+        .table => |t| {
+            var val: Value = .{ .table = .init(allocator) };
+            var it = t.iterator();
+            while (it.next()) |entry| {
+                try val.table.put(
+                    allocator.dupe(u8, entry.key_ptr.*),
+                    try parseResult(allocator, entry.value_ptr.*),
+                );
+            }
+            return val;
+        },
+    }
 }
 
 /// Check whether the minutes given as `tz` is a valid time zone.
