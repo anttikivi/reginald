@@ -1,3 +1,4 @@
+const build_options = @import("build_options");
 const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -5,6 +6,7 @@ const assert = std.debug.assert;
 
 const cli = @import("cli.zig");
 const Config = @import("Config.zig");
+const filepath = @import("filepath.zig");
 
 const native_os = builtin.target.os.tag;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -67,7 +69,37 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     _ = arena;
 
     const w = std.io.getStdErr().writer();
-    _ = try cli.parseArgsLaxly(gpa, args[1..], w);
+    var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], w);
+    defer parsed_args.deinit();
+
+    const wd = try workingDirPath(gpa, parsed_args);
+    defer if (wd) |s| {
+        gpa.free(s);
+    };
+}
+
+/// Resolve the working directory of the current run. Caller owns the return
+/// value and should call `free` on it if it is not null. A null return value
+/// means that the current working directory should be used.
+fn workingDirPath(allocator: Allocator, parsed_args: cli.Parsed) !?[]const u8 {
+    if (parsed_args.values.get("working_directory")) |wd| {
+        switch (wd) {
+            .string => |s| return filepath.expand(allocator, s),
+            else => unreachable,
+        }
+    }
+
+    if (std.process.getEnvVarOwned(allocator, build_options.env_prefix ++ "DIRECTORY")) |s| {
+        defer allocator.free(s);
+        return try filepath.expand(allocator, s);
+    } else |err| {
+        switch (err) {
+            error.EnvironmentVariableNotFound => {}, // no-op
+            else => return err,
+        }
+    }
+
+    return null;
 }
 
 test {

@@ -17,7 +17,7 @@ const OptionValue = union(enum) {
 };
 
 /// Result of the command-line argument parser.
-const Parsed = struct {
+pub const Parsed = struct {
     allocator: Allocator,
 
     /// The arguments remaining after parsing when unknown arguments don't make
