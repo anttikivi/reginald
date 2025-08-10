@@ -93,6 +93,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     var diag_out: toml.ParseErrorInfo = .{
         .column = undefined,
         .error_name = undefined,
+        .message = undefined,
         .line = undefined,
         .snippet = undefined,
     };
@@ -101,6 +102,9 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
         // Print a human-friendly diagnostic with location and caret
         // Note: diag_out is filled by parseEx on failure
         _ = try errw.print("TOML parse error: {s}\n", .{diag_out.error_name});
+        if (diag_out.message.len > 0) {
+            _ = try errw.print("{s}\n", .{diag_out.message});
+        }
         _ = try errw.print("at {d}:{d}\n", .{ diag_out.line, diag_out.column });
         _ = try errw.print("{s}\n", .{diag_out.snippet});
         if (diag_out.column > 0) {

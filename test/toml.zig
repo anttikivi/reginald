@@ -28,7 +28,11 @@ pub fn main() !void {
     var parsed = toml.parse(allocator, toml_bytes) catch |e| {
         var diag: toml.ParseErrorInfo = undefined;
         _ = toml.parseEx(allocator, toml_bytes, &diag) catch {};
-        std.debug.print("error: {s} at {d}:{d}\n{s}\n", .{ diag.error_name, diag.line, diag.column, diag.snippet });
+        if (diag.message.len > 0) {
+            std.debug.print("error: {s}: {s} at {d}:{d}\n{s}\n", .{ diag.error_name, diag.message, diag.line, diag.column, diag.snippet });
+        } else {
+            std.debug.print("error: {s} at {d}:{d}\n{s}\n", .{ diag.error_name, diag.line, diag.column, diag.snippet });
+        }
         return e;
     };
     defer parsed.deinit(allocator);

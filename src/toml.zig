@@ -55,6 +55,8 @@ pub const Value = union(enum) {
 pub const ParseErrorInfo = struct {
     /// The Zig error name, e.g. "UnexpectedToken", "InvalidNumber"
     error_name: []const u8,
+    /// A more helpful human-readable message about what went wrong
+    message: []const u8,
     /// 1-based line index where the error occurred
     line: usize,
     /// 1-based column (byte offset within the line)
@@ -86,7 +88,7 @@ pub fn parseEx(allocator: Allocator, input: []const u8, diag_out: ?*ParseErrorIn
     if (!utf8Validate(input)) {
         if (diag_out) |outp| {
             const pos = computeLineColumnAndSnippet(input, 0);
-            outp.* = .{ .error_name = "InvalidUtf8", .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+            outp.* = .{ .error_name = "InvalidUtf8", .message = "input is not valid UTF-8", .line = pos.line, .column = pos.column, .snippet = pos.snippet };
         }
         return error.InvalidUtf8;
     }
@@ -97,13 +99,14 @@ pub fn parseEx(allocator: Allocator, input: []const u8, diag_out: ?*ParseErrorIn
 
     var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
     var scanner = Scanner.initCompleteInput(input);
+    scanner.last_error_message = null;
     var parser = Parser.init(scratch, &scanner, &parsing_root);
 
     while (true) {
         var token = scanner.nextKey() catch |e| {
             if (diag_out) |outp| {
                 const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-                outp.* = .{ .error_name = @errorName(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+                outp.* = .{ .error_name = @errorName(e), .message = scanner.last_error_message orelse defaultErrorMessage(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
             }
             return e;
         };
@@ -130,7 +133,7 @@ pub fn parseEx(allocator: Allocator, input: []const u8, diag_out: ?*ParseErrorIn
         if (step_err) |e| {
             if (diag_out) |outp| {
                 const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-                outp.* = .{ .error_name = @errorName(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+                outp.* = .{ .error_name = @errorName(e), .message = scanner.last_error_message orelse defaultErrorMessage(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
             }
             return e;
         }
@@ -138,7 +141,7 @@ pub fn parseEx(allocator: Allocator, input: []const u8, diag_out: ?*ParseErrorIn
         token = scanner.nextKey() catch |e| {
             if (diag_out) |outp| {
                 const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-                outp.* = .{ .error_name = @errorName(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+                outp.* = .{ .error_name = @errorName(e), .message = scanner.last_error_message orelse defaultErrorMessage(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
             }
             return e;
         };
@@ -148,12 +151,31 @@ pub fn parseEx(allocator: Allocator, input: []const u8, diag_out: ?*ParseErrorIn
 
         if (diag_out) |outp| {
             const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-            outp.* = .{ .error_name = @errorName(error.UnexpectedToken), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+            outp.* = .{ .error_name = @errorName(error.UnexpectedToken), .message = scanner.last_error_message orelse defaultErrorMessage(error.UnexpectedToken), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
         }
         return error.UnexpectedToken;
     }
 
     return parseResult(allocator, parsing_root);
+}
+
+fn defaultErrorMessage(e: anyerror) []const u8 {
+    return switch (e) {
+        error.UnexpectedToken => "unexpected token",
+        error.SyntaxError => "syntax error",
+        error.UnexpectedEndOfInput => "unexpected end of input",
+        error.InvalidNumber => "invalid number literal",
+        error.InvalidDate => "invalid date literal",
+        error.InvalidTime => "invalid time literal",
+        error.InvalidDatetime => "invalid datetime literal",
+        error.DuplicateKey => "duplicate key",
+        error.NoTableFound => "invalid dotted key path (no such table)",
+        error.NotArrayOfTables => "expected array of tables",
+        error.EmptyArray => "array cannot be empty here",
+        error.InvalidUtf8 => "input is not valid UTF-8",
+        error.InvalidCharacter => "invalid character",
+        else => "parse error",
+    };
 }
 
 const Token = union(enum) {
@@ -373,6 +395,11 @@ const Scanner = struct {
     cursor: usize = 0,
     end: usize = 0,
     line: u64 = 0,
+    /// Last error message set by scanning/parsing routines for richer diagnostics
+    last_error_message: ?[]const u8 = null,
+    /// Internal buffer for formatted error messages
+    err_buf: [256]u8 = undefined,
+    err_len: usize = 0,
 
     /// Constant that marks the end of input when scanning for the next
     /// character.
@@ -385,6 +412,19 @@ const Scanner = struct {
             .input = input,
             .end = input.len,
         };
+    }
+
+    inline fn setErrorMessage(self: *@This(), msg: []const u8) void {
+        self.last_error_message = msg;
+    }
+
+    inline fn setErrorMessageFmt(self: *@This(), comptime fmt_str: []const u8, args: anytype) void {
+        const written = std.fmt.bufPrint(&self.err_buf, fmt_str, args) catch {
+            self.last_error_message = fmt_str;
+            return;
+        };
+        self.err_len = written.len;
+        self.last_error_message = self.err_buf[0..self.err_len];
     }
 
     fn isValidChar(c: u8) bool {
@@ -519,7 +559,10 @@ const Scanner = struct {
                         }
 
                         switch (c) {
-                            0...8, 0x0a...0x1f, 0x7f => return error.InvalidCharacter,
+                            0...8, 0x0a...0x1f, 0x7f => {
+                                self.setErrorMessage("invalid control character in comment");
+                                return error.InvalidCharacter;
+                            },
                             else => {},
                         }
                     }
@@ -565,6 +608,7 @@ const Scanner = struct {
                 else => {
                     // Disallow unprintable control characters outside strings/comments
                     if ((c <= 8) or (c >= 0x0a and c <= 0x1f) or c == 0x7f) {
+                        self.setErrorMessage("invalid control character in document");
                         return error.InvalidCharacter;
                     }
                     self.cursor -= 1;
@@ -610,6 +654,7 @@ const Scanner = struct {
             if (self.matchN('"', 3)) {
                 if (self.matchN('"', 4)) {
                     if (self.matchN('"', 6)) {
+                        self.setErrorMessage("invalid triple quote sequence in multiline string");
                         return error.UnexpectedToken;
                     }
                 } else {
@@ -620,11 +665,13 @@ const Scanner = struct {
             var c = self.nextChar();
 
             if (c == end_of_input) {
+                self.setErrorMessage("unterminated multiline string");
                 return error.UnexpectedEndOfInput;
             }
 
             if (c != '\\') {
                 if (!(isValidChar(c) or mem.indexOfScalar(u8, " \t\n", c) != null)) {
+                    self.setErrorMessage("invalid character in multiline string");
                     return error.UnexpectedToken;
                 }
 
@@ -641,6 +688,7 @@ const Scanner = struct {
                 var i: usize = 0;
                 while (i < len) : (i += 1) {
                     if (!ascii.isHex(self.nextChar())) {
+                        self.setErrorMessage("invalid unicode escape in string");
                         return error.UnexpectedToken;
                     }
                 }
@@ -653,6 +701,7 @@ const Scanner = struct {
                 }
 
                 if (c != '\n') {
+                    self.setErrorMessage("backslash line continuation must be followed by newline");
                     return error.UnexpectedToken;
                 }
             }
@@ -664,6 +713,7 @@ const Scanner = struct {
                 continue;
             }
 
+            self.setErrorMessage("invalid escape sequence in multiline string");
             return error.UnexpectedToken;
         }
 
@@ -671,6 +721,7 @@ const Scanner = struct {
         const result: Token = .{ .multiline_string = self.input[start..self.cursor] };
 
         if (!self.matchN('"', 3)) {
+            self.setErrorMessage("unterminated multiline string");
             return error.UnexpectedEndOfInput;
         }
         _ = self.nextChar();
@@ -697,6 +748,7 @@ const Scanner = struct {
         while (!self.match('"')) {
             var c = self.nextChar();
             if (c == end_of_input) {
+                self.setErrorMessage("unterminated string");
                 return error.UnexpectedEndOfInput;
             }
 
@@ -718,12 +770,14 @@ const Scanner = struct {
                 var i: usize = 0;
                 while (i < len) : (i += 1) {
                     if (!ascii.isHex(self.nextChar())) {
+                        self.setErrorMessage("invalid unicode escape in string");
                         return error.UnexpectedToken;
                     }
                 }
                 continue;
             }
 
+            self.setErrorMessage("invalid escape sequence in string");
             return error.UnexpectedToken; // bad escape character
         }
 
@@ -765,10 +819,12 @@ const Scanner = struct {
             const c = self.nextChar();
 
             if (c == end_of_input) {
+                self.setErrorMessage("unterminated multiline literal string");
                 return error.UnexpectedEndOfInput;
             }
 
             if (!(isValidChar(c) or mem.indexOfScalar(u8, " \t\n", c) != null)) {
+                self.setErrorMessage("invalid character in multiline literal string");
                 return error.UnexpectedToken;
             }
         }
@@ -777,6 +833,7 @@ const Scanner = struct {
         const result: Token = .{ .multiline_literal_string = self.input[start..self.cursor] };
 
         if (!self.matchN('\'', 3)) {
+            self.setErrorMessage("unterminated multiline literal string");
             return error.UnexpectedEndOfInput;
         }
         _ = self.nextChar();
@@ -800,10 +857,12 @@ const Scanner = struct {
         while (!self.match('\'')) {
             const c = self.nextChar();
             if (c == end_of_input) {
+                self.setErrorMessage("unterminated literal string");
                 return error.UnexpectedEndOfInput;
             }
 
             if (!(isValidChar(c) or c == '\t')) {
+                self.setErrorMessage("invalid character in literal string");
                 return error.UnexpectedToken;
             }
         }
@@ -836,6 +895,7 @@ const Scanner = struct {
             return self.scanNumber();
         }
 
+        self.setErrorMessage("expected a value (number, datetime, or boolean)");
         return error.UnexpectedToken;
     }
 
@@ -862,7 +922,10 @@ const Scanner = struct {
         var i: usize = 0;
         while (i < N) : (i += 1) {
             const c = self.input[self.cursor + i];
-            if (!ascii.isDigit(c)) return error.UnexpectedToken;
+            if (!ascii.isDigit(c)) {
+                self.setErrorMessage("expected digit");
+                return error.UnexpectedToken;
+            }
             v = v * 10 + (c - '0');
         }
         self.cursor += N;
@@ -875,18 +938,21 @@ const Scanner = struct {
         var ret: Time = .{ .hour = undefined, .minute = undefined, .second = undefined };
         ret.hour = @intCast(try self.readFixedDigits(2));
         if (self.cursor >= self.end or self.input[self.cursor] != ':') {
+            self.setErrorMessage("invalid time: expected ':' between hour and minute");
             return error.InvalidTime;
         }
 
         self.cursor += 1;
         ret.minute = @intCast(try self.readFixedDigits(2));
         if (self.cursor >= self.end or self.input[self.cursor] != ':') {
+            self.setErrorMessage("invalid time: expected ':' between minute and second");
             return error.InvalidTime;
         }
 
         self.cursor += 1;
         ret.second = @intCast(try self.readFixedDigits(2));
         if (ret.hour > 23 or ret.minute > 59 or ret.second > 59) {
+            self.setErrorMessage("invalid time value");
             return error.InvalidTime;
         }
 
@@ -915,12 +981,14 @@ const Scanner = struct {
         var ret: Date = .{ .year = undefined, .month = undefined, .day = undefined };
         ret.year = @intCast(try self.readFixedDigits(4));
         if (self.cursor >= self.end or self.input[self.cursor] != '-') {
+            self.setErrorMessage("invalid date: expected '-' after year");
             return error.InvalidDate;
         }
 
         self.cursor += 1;
         ret.month = @intCast(try self.readFixedDigits(2));
         if (self.cursor >= self.end or self.input[self.cursor] != '-') {
+            self.setErrorMessage("invalid date: expected '-' after month");
             return error.InvalidDate;
         }
 
@@ -950,12 +1018,14 @@ const Scanner = struct {
 
         const hour: i16 = @intCast(try self.readFixedDigits(2));
         if (self.cursor >= self.end or self.input[self.cursor] != ':') {
+            self.setErrorMessage("invalid timezone offset: expected ':' between hour and minute");
             return error.InvalidDatetime;
         }
 
         self.cursor += 1;
         const minute: i16 = @intCast(try self.readFixedDigits(2));
         if (hour > 23 or minute > 59) {
+            self.setErrorMessage("invalid timezone offset value");
             return error.InvalidDatetime;
         }
 
@@ -966,6 +1036,7 @@ const Scanner = struct {
     fn scanTime(self: *@This()) !Token {
         const t = try self.readTime();
         if (!t.isValid()) {
+            self.setErrorMessage("invalid time literal");
             return error.InvalidTime;
         }
 
@@ -975,6 +1046,7 @@ const Scanner = struct {
     /// Scan an upcoming datetime value.
     fn scanDatetime(self: *@This()) !Token {
         if (self.cursor + 2 >= self.end) {
+            self.setErrorMessage("unterminated datetime");
             return error.UnexpectedEndOfInput;
         }
 
@@ -983,6 +1055,7 @@ const Scanner = struct {
         {
             const t = try self.readTime();
             if (!t.isValid()) {
+                self.setErrorMessage("invalid time literal");
                 return error.InvalidTime;
             }
 
@@ -996,6 +1069,7 @@ const Scanner = struct {
             !ascii.isDigit(self.input[self.cursor + 2]) or self.input[self.cursor + 3] != ':')
         {
             if (!date.isValid()) {
+                self.setErrorMessage("invalid date literal");
                 return error.InvalidDate;
             }
 
@@ -1017,6 +1091,7 @@ const Scanner = struct {
         const tz = try self.readTimezone();
         if (tz == null) {
             if (!dt.isValid()) {
+                self.setErrorMessage("invalid datetime value");
                 return error.InvalidDatetime;
             }
 
@@ -1025,6 +1100,7 @@ const Scanner = struct {
 
         dt.tz = tz;
         if (!dt.isValid()) {
+            self.setErrorMessage("invalid datetime value");
             return error.InvalidDatetime;
         }
 
@@ -1045,6 +1121,7 @@ const Scanner = struct {
         }
 
         if (self.cursor < self.end and null == mem.indexOfScalar(u8, "# \r\n\t,}]", self.input[self.cursor])) {
+            self.setErrorMessage("invalid trailing characters after boolean literal");
             return error.UnexpectedToken;
         }
 
@@ -1070,15 +1147,24 @@ const Scanner = struct {
                     2 => "_01",
                     else => unreachable,
                 };
-                const end_idx = mem.indexOfNonePos(u8, self.input, start, allowed) orelse return error.UnexpectedToken;
-                if (end_idx == start) return error.InvalidNumber;
+                const end_idx = mem.indexOfNonePos(u8, self.input, start, allowed) orelse {
+                    self.setErrorMessage("invalid digits for base-prefixed integer");
+                    return error.UnexpectedToken;
+                };
+                if (end_idx == start) {
+                    self.setErrorMessage("missing digits after base prefix");
+                    return error.InvalidNumber;
+                }
                 // Validate underscores (not first/last, not doubled)
                 var prev_underscore = false;
                 var i: usize = start;
                 while (i < end_idx) : (i += 1) {
                     const c = self.input[i];
                     if (c == '_') {
-                        if (prev_underscore or i == start or i + 1 == end_idx) return error.InvalidNumber;
+                        if (prev_underscore or i == start or i + 1 == end_idx) {
+                            self.setErrorMessage("invalid underscore placement in number");
+                            return error.InvalidNumber;
+                        }
                         prev_underscore = true;
                     } else {
                         prev_underscore = false;
@@ -1102,11 +1188,20 @@ const Scanner = struct {
         const start = self.cursor;
         var idx = self.cursor;
         if (self.input[idx] == '+' or self.input[idx] == '-') idx += 1;
-        if (idx >= self.end) return error.UnexpectedEndOfInput;
+        if (idx >= self.end) {
+            self.setErrorMessage("unexpected end of input while reading number");
+            return error.UnexpectedEndOfInput;
+        }
         if (self.input[idx] == 'i' or self.input[idx] == 'n') return self.scanFloat();
         // Find token end
-        idx = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse return error.UnexpectedToken;
-        if (idx == start) return error.InvalidNumber;
+        idx = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse {
+            self.setErrorMessage("malformed number literal");
+            return error.UnexpectedToken;
+        };
+        if (idx == start) {
+            self.setErrorMessage("missing digits in number");
+            return error.InvalidNumber;
+        }
         const slice = self.input[start..idx];
         const has_dot = mem.indexOfScalar(u8, slice, '.') != null;
         const has_exp = mem.indexOfAny(u8, slice, "eE") != null;
@@ -1116,15 +1211,22 @@ const Scanner = struct {
         // Validate underscores and leading zero rule
         var s_off: usize = 0;
         if (slice[0] == '+' or slice[0] == '-') s_off = 1;
-        if (slice[s_off] == '0' and slice.len > s_off + 1) return error.InvalidNumber;
+        if (slice[s_off] == '0' and slice.len > s_off + 1) {
+            self.setErrorMessage("leading zeros are not allowed in integers");
+            return error.InvalidNumber;
+        }
         var prev_underscore = false;
         var j: usize = s_off;
         while (j < slice.len) : (j += 1) {
             const c = slice[j];
             if (c == '_') {
-                if (prev_underscore or j == s_off or j + 1 == slice.len) return error.InvalidNumber;
+                if (prev_underscore or j == s_off or j + 1 == slice.len) {
+                    self.setErrorMessage("invalid underscore placement in number");
+                    return error.InvalidNumber;
+                }
                 prev_underscore = true;
             } else if (!ascii.isDigit(c)) {
+                self.setErrorMessage("invalid character in integer literal");
                 return error.InvalidNumber;
             } else {
                 prev_underscore = false;
@@ -1151,7 +1253,10 @@ const Scanner = struct {
         if (self.cursor + 3 <= self.end and (mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "inf") or mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "nan"))) {
             self.cursor += 3;
         } else {
-            self.cursor = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse return error.UnexpectedToken;
+            self.cursor = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse {
+                self.setErrorMessage("malformed float literal");
+                return error.UnexpectedToken;
+            };
         }
 
         const slice = self.input[start..self.cursor];
@@ -1161,9 +1266,15 @@ const Scanner = struct {
         while (i < slice.len) : (i += 1) {
             const c = slice[i];
             if (c == '_') {
-                if (i == 0 or i + 1 == slice.len) return error.InvalidNumber;
+                if (i == 0 or i + 1 == slice.len) {
+                    self.setErrorMessage("invalid underscore placement in float literal");
+                    return error.InvalidNumber;
+                }
                 const nxt = slice[i + 1];
-                if (!ascii.isDigit(prev_char) or !ascii.isDigit(nxt)) return error.InvalidNumber;
+                if (!ascii.isDigit(prev_char) or !ascii.isDigit(nxt)) {
+                    self.setErrorMessage("invalid underscore placement in float literal");
+                    return error.InvalidNumber;
+                }
             }
             prev_char = c;
         }
@@ -1182,6 +1293,7 @@ const Scanner = struct {
             if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and buf.items[sign_idx + 1] == '.') {
                 // ok: 0.xxx
             } else if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and ascii.isDigit(buf.items[sign_idx + 1])) {
+                self.setErrorMessage("leading zeros are not allowed in float literal");
                 return error.InvalidNumber;
             }
         }
@@ -1189,16 +1301,31 @@ const Scanner = struct {
         if (mem.indexOfScalar(u8, buf.items, '.') != null) {
             // Must have digits on both sides of '.'
             const dot_idx = mem.indexOfScalar(u8, buf.items, '.').?;
-            if (dot_idx == 0 or dot_idx + 1 >= buf.items.len) return error.InvalidNumber;
-            if (!ascii.isDigit(buf.items[dot_idx - 1]) or !ascii.isDigit(buf.items[dot_idx + 1])) return error.InvalidNumber;
+            if (dot_idx == 0 or dot_idx + 1 >= buf.items.len) {
+                self.setErrorMessage("decimal point must have digits on both sides");
+                return error.InvalidNumber;
+            }
+            if (!ascii.isDigit(buf.items[dot_idx - 1]) or !ascii.isDigit(buf.items[dot_idx + 1])) {
+                self.setErrorMessage("decimal point must have digits on both sides");
+                return error.InvalidNumber;
+            }
         }
         // Validate exponent placement: must have digits before and after 'e' or 'E' (with optional sign)
         if (mem.indexOfAny(u8, buf.items, "eE")) |e_idx| {
-            if (e_idx == 0) return error.InvalidNumber;
-            if (!ascii.isDigit(buf.items[e_idx - 1]) and buf.items[e_idx - 1] != '.') return error.InvalidNumber;
+            if (e_idx == 0) {
+                self.setErrorMessage("invalid exponent format");
+                return error.InvalidNumber;
+            }
+            if (!ascii.isDigit(buf.items[e_idx - 1]) and buf.items[e_idx - 1] != '.') {
+                self.setErrorMessage("invalid exponent format");
+                return error.InvalidNumber;
+            }
             var after = e_idx + 1;
             if (after < buf.items.len and (buf.items[after] == '+' or buf.items[after] == '-')) after += 1;
-            if (after >= buf.items.len or !ascii.isDigit(buf.items[after])) return error.InvalidNumber;
+            if (after >= buf.items.len or !ascii.isDigit(buf.items[after])) {
+                self.setErrorMessage("invalid exponent format");
+                return error.InvalidNumber;
+            }
         }
         const f = try std.fmt.parseFloat(f64, buf.items);
         return .{ .float = f };
@@ -1609,6 +1736,7 @@ const Parser = struct {
             if (token == .right_brace) {
                 if (was_comma) {
                     // Trailing comma before closing brace is invalid
+                    self.scanner.setErrorMessage("trailing comma before '}' in inline table");
                     return error.UnexpectedToken;
                 }
                 // Allow closing immediately after a key-value without requiring a comma
@@ -1621,14 +1749,17 @@ const Parser = struct {
                     was_comma = true;
                     continue;
                 }
+                self.scanner.setErrorMessage("unexpected ',' in inline table");
                 return error.UnexpectedToken;
             }
 
             if (need_comma) {
+                self.scanner.setErrorMessage("missing ',' between inline table entries");
                 return error.UnexpectedToken;
             }
 
             if (token == .line_feed) {
+                self.scanner.setErrorMessage("newline not allowed inside inline table");
                 return error.UnexpectedToken;
             }
 
@@ -1636,6 +1767,7 @@ const Parser = struct {
             var current_table = try self.descendToTable(keys[0 .. keys.len - 1], &ret, false);
             if (current_table.flag.inlined) {
                 // Cannot extend inline table.
+                self.scanner.setErrorMessage("cannot extend inline table");
                 return error.UnexpectedToken;
             }
 
@@ -1645,10 +1777,12 @@ const Parser = struct {
             if (token != .equal) {
                 if (token == .line_feed) {
                     // Unexpected newline.
+                    self.scanner.setErrorMessage("newline not allowed after key in inline table (expected '=')");
                     return error.UnexpectedToken;
                 }
 
                 // Missing `=`.
+                self.scanner.setErrorMessage("expected '=' after key in inline table");
                 return error.UnexpectedToken;
             }
 
@@ -1678,6 +1812,7 @@ const Parser = struct {
 
         const next_token = try self.scanner.nextKey();
         if (next_token != .right_bracket) {
+            self.scanner.setErrorMessage("expected closing ']' for table header");
             return error.UnexpectedToken;
         }
 
@@ -1687,20 +1822,28 @@ const Parser = struct {
         if (table.value.table.getPtr(last_key)) |value| {
             // Disallow redefining an inline table or array as a standard table
             switch (value.value) {
-                .array => return error.UnexpectedToken,
+                .array => {
+                    self.scanner.setErrorMessage("cannot redefine array as table");
+                    return error.UnexpectedToken;
+                },
                 .table => {},
-                else => return error.UnexpectedToken,
+                else => {
+                    self.scanner.setErrorMessage("cannot redefine value as table");
+                    return error.UnexpectedToken;
+                },
             }
 
             table = value;
             if (table.flag.explicit or table.flag.inlined or !table.flag.standard) {
                 // Table cannot be defined more than once and inline tables cannot be extended.
+                self.scanner.setErrorMessage("table cannot be defined more than once");
                 return error.UnexpectedToken;
             }
         } else {
             // Add the missing table.
             if (table.flag.inlined) {
                 // Inline table may not be extended.
+                self.scanner.setErrorMessage("cannot extend inline table");
                 return error.UnexpectedToken;
             }
 
@@ -1723,6 +1866,7 @@ const Parser = struct {
 
         const next_token = try self.scanner.nextKey();
         if (next_token != .double_right_bracket) {
+            self.scanner.setErrorMessage("expected closing ']]' for array of tables header");
             return error.UnexpectedToken;
         }
 
@@ -1742,6 +1886,7 @@ const Parser = struct {
                     .array => |*array| {
                         if (value.flag.inlined) {
                             // Cannot expand array.
+                            self.scanner.setErrorMessage("cannot extend inline array");
                             return error.UnexpectedToken;
                         }
 
@@ -1787,6 +1932,7 @@ const Parser = struct {
 
         if (current_value.flag.inlined) {
             // Cannot extend inline array.
+            self.scanner.setErrorMessage("cannot extend inline array");
             return error.UnexpectedToken;
         }
 
@@ -1800,6 +1946,7 @@ const Parser = struct {
         const keys = try self.parseKey();
         var token = try self.scanner.nextKey();
         if (token != .equal) {
+            self.scanner.setErrorMessage("expected '=' after key");
             return error.UnexpectedToken;
         }
 
@@ -1820,6 +1967,7 @@ const Parser = struct {
             } else {
                 if (i > 0 and table.flag.explicit) {
                     // Cannot extend a previously defined table using dotted expression.
+                    self.scanner.setErrorMessage("cannot extend previously defined table using dotted key");
                     return error.UnexpectedToken;
                 }
                 table = try self.addTable(&table.value.table, key);
@@ -1832,11 +1980,13 @@ const Parser = struct {
 
         if (table.flag.inlined) {
             // Inline table cannot be extended.
+            self.scanner.setErrorMessage("cannot extend inline table");
             return error.UnexpectedToken;
         }
 
         if (keys.len > 1 and table.flag.explicit) {
             // Cannot extend a previously defined table using dotted expression.
+            self.scanner.setErrorMessage("cannot extend previously defined table using dotted key");
             return error.UnexpectedToken;
         }
 
@@ -1848,6 +1998,7 @@ const Parser = struct {
         const keys = try self.parseKeyStartingWith(first);
         var token = try self.scanner.nextKey();
         if (token != .equal) {
+            self.scanner.setErrorMessage("expected '=' after key");
             return error.UnexpectedToken;
         }
 
@@ -1866,6 +2017,7 @@ const Parser = struct {
                 }
             } else {
                 if (i > 0 and table.flag.explicit) {
+                    self.scanner.setErrorMessage("cannot extend previously defined table using dotted key");
                     return error.UnexpectedToken;
                 }
                 table = try self.addTable(&table.value.table, key);
@@ -1877,10 +2029,12 @@ const Parser = struct {
         }
 
         if (table.flag.inlined) {
+            self.scanner.setErrorMessage("cannot extend inline table");
             return error.UnexpectedToken;
         }
 
         if (keys.len > 1 and table.flag.explicit) {
+            self.scanner.setErrorMessage("cannot extend previously defined table using dotted key");
             return error.UnexpectedToken;
         }
 
