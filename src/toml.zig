@@ -51,6 +51,111 @@ pub const Value = union(enum) {
     }
 };
 
+/// Rich error information for parse failures
+pub const ParseErrorInfo = struct {
+    /// The Zig error name, e.g. "UnexpectedToken", "InvalidNumber"
+    error_name: []const u8,
+    /// 1-based line index where the error occurred
+    line: usize,
+    /// 1-based column (byte offset within the line)
+    column: usize,
+    /// A slice of the input containing the line where the error happened
+    snippet: []const u8,
+};
+
+fn computeLineColumnAndSnippet(input: []const u8, cursor: usize) struct { line: usize, column: usize, snippet: []const u8 } {
+    var i: usize = 0;
+    var line: usize = 1;
+    while (i < cursor and i < input.len) : (i += 1) {
+        if (input[i] == '\n') line += 1;
+    }
+
+    var start: usize = if (cursor > 0) cursor - 1 else 0;
+    while (start > 0 and input[start - 1] != '\n') : (start -= 1) {}
+
+    var end: usize = cursor;
+    while (end < input.len and input[end] != '\n') : (end += 1) {}
+
+    const col = (cursor - start) + 1;
+    return .{ .line = line, .column = col, .snippet = input[start..end] };
+}
+
+/// Extended parse that reports diagnostics on failure without throwing away error location.
+/// If diag_out is non-null, it will be populated when this function returns an error.
+pub fn parseEx(allocator: Allocator, input: []const u8, diag_out: ?*ParseErrorInfo) !Value {
+    if (!utf8Validate(input)) {
+        if (diag_out) |outp| {
+            const pos = computeLineColumnAndSnippet(input, 0);
+            outp.* = .{ .error_name = "InvalidUtf8", .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+        }
+        return error.InvalidUtf8;
+    }
+
+    var tmp_arena = std.heap.ArenaAllocator.init(allocator);
+    defer tmp_arena.deinit();
+    const scratch = tmp_arena.allocator();
+
+    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
+    var scanner = Scanner.initCompleteInput(input);
+    var parser = Parser.init(scratch, &scanner, &parsing_root);
+
+    while (true) {
+        var token = scanner.nextKey() catch |e| {
+            if (diag_out) |outp| {
+                const pos = computeLineColumnAndSnippet(input, scanner.cursor);
+                outp.* = .{ .error_name = @errorName(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+            }
+            return e;
+        };
+        if (token == .end_of_file) {
+            break;
+        }
+
+        const step_err: ?anyerror = switch (token) {
+            .line_feed => null,
+            .left_bracket => blk: {
+                parser.parseTableExpression() catch |e| break :blk e;
+                break :blk null;
+            },
+            .double_left_bracket => blk: {
+                parser.parseArrayTableExpression() catch |e| break :blk e;
+                break :blk null;
+            },
+            .literal, .string, .literal_string => blk: {
+                parser.parseKeyValueExpressionStartingWith(token) catch |e| break :blk e;
+                break :blk null;
+            },
+            else => error.UnexpectedToken,
+        };
+        if (step_err) |e| {
+            if (diag_out) |outp| {
+                const pos = computeLineColumnAndSnippet(input, scanner.cursor);
+                outp.* = .{ .error_name = @errorName(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+            }
+            return e;
+        }
+
+        token = scanner.nextKey() catch |e| {
+            if (diag_out) |outp| {
+                const pos = computeLineColumnAndSnippet(input, scanner.cursor);
+                outp.* = .{ .error_name = @errorName(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+            }
+            return e;
+        };
+        if (token == .line_feed or token == .end_of_file) {
+            continue;
+        }
+
+        if (diag_out) |outp| {
+            const pos = computeLineColumnAndSnippet(input, scanner.cursor);
+            outp.* = .{ .error_name = @errorName(error.UnexpectedToken), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
+        }
+        return error.UnexpectedToken;
+    }
+
+    return parseResult(allocator, parsing_root);
+}
+
 const Token = union(enum) {
     dot,
     equal,

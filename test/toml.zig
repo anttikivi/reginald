@@ -25,7 +25,12 @@ pub fn main() !void {
     const toml_bytes = try stdin.readAllAlloc(allocator, 1024 * 1024); // Adjust size as needed
     defer allocator.free(toml_bytes);
 
-    var parsed = try toml.parse(allocator, toml_bytes);
+    var parsed = toml.parse(allocator, toml_bytes) catch |e| {
+        var diag: toml.ParseErrorInfo = undefined;
+        _ = toml.parseEx(allocator, toml_bytes, &diag) catch {};
+        std.debug.print("error: {s} at {d}:{d}\n{s}\n", .{ diag.error_name, diag.line, diag.column, diag.snippet });
+        return e;
+    };
     defer parsed.deinit(allocator);
     // const parsed = toml.parse(allocator, toml_bytes) catch {
     //     process.exit(1);

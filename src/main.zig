@@ -1,12 +1,13 @@
-const build_options = @import("build_options");
-const builtin = @import("builtin");
 const std = @import("std");
+const builtin = @import("builtin");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 const cli = @import("cli.zig");
 const Config = @import("Config.zig");
 const filepath = @import("filepath.zig");
+const toml = @import("toml.zig");
 
 const native_os = builtin.target.os.tag;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -58,13 +59,13 @@ pub fn main() !void {
 }
 
 fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
-    if (args.len <= 1) {
-        var bw = std.io.bufferedWriter(std.io.getStdOut().writer());
-        const w = bw.writer();
-        try w.writeAll("usage!\n");
-        try bw.flush();
-        return;
-    }
+    // if (args.len <= 1) {
+    //     var bw = std.io.bufferedWriter(std.io.getStdOut().writer());
+    //     const w = bw.writer();
+    //     try w.writeAll("usage!\n");
+    //     try bw.flush();
+    //     return;
+    // }
 
     _ = arena;
 
@@ -76,6 +77,43 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     defer if (wd) |s| {
         gpa.free(s);
     };
+
+    const cfg_file = Config.loadFile(gpa, parsed_args, wd) catch |err| {
+        switch (err) {
+            error.FileNotFound, error.IsDir => {
+                try std.io.getStdErr().writer().print("config file not found\n", .{});
+
+                return err;
+            },
+            else => return err,
+        }
+    };
+    defer gpa.free(cfg_file);
+
+    var diag_out: toml.ParseErrorInfo = .{
+        .column = undefined,
+        .error_name = undefined,
+        .line = undefined,
+        .snippet = undefined,
+    };
+    var toml_value = toml.parseEx(gpa, cfg_file, &diag_out) catch |e| {
+        const errw = std.io.getStdErr().writer();
+        // Print a human-friendly diagnostic with location and caret
+        // Note: diag_out is filled by parseEx on failure
+        _ = try errw.print("TOML parse error: {s}\n", .{diag_out.error_name});
+        _ = try errw.print("at {d}:{d}\n", .{ diag_out.line, diag_out.column });
+        _ = try errw.print("{s}\n", .{diag_out.snippet});
+        if (diag_out.column > 0) {
+            var i: usize = 1;
+            while (i < diag_out.column) : (i += 1) {
+                try errw.writeByte(' ');
+            }
+            try errw.writeByte('^');
+            try errw.writeByte('\n');
+        }
+        return e;
+    };
+    defer toml_value.deinit(gpa);
 }
 
 /// Resolve the working directory of the current run. Caller owns the return
@@ -84,7 +122,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
 fn workingDirPath(allocator: Allocator, parsed_args: cli.Parsed) !?[]const u8 {
     if (parsed_args.values.get("working_directory")) |wd| {
         switch (wd) {
-            .string => |s| return filepath.expand(allocator, s),
+            .string => |s| return try filepath.expand(allocator, s),
             else => unreachable,
         }
     }
@@ -104,6 +142,4 @@ fn workingDirPath(allocator: Allocator, parsed_args: cli.Parsed) !?[]const u8 {
 
 test {
     std.testing.refAllDecls(@This());
-    _ = @import("filepath.zig");
-    _ = @import("toml.zig");
 }
