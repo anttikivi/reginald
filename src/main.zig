@@ -72,5 +72,6 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
 
 test {
     std.testing.refAllDecls(@This());
+    _ = @import("filepath.zig");
     _ = @import("toml.zig");
 }
