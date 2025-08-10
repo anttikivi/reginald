@@ -77,7 +77,9 @@ jobs:
         run: zig build test --summary all
 
   toml-test:
-    name: Run toml-test (${{ matrix.arch }}-${{ matrix.os }}) on ${{ matrix.runner }}
+    name:
+      Run toml-test (${{ matrix.arch }}-${{ matrix.os }}) on ${{ matrix.runner
+      }}
     if:
       "!contains(github.event.head_commit.message, '[ci skip]') &&
       !contains(github.event.head_commit.message, '[skip ci]') &&
@@ -107,6 +109,8 @@ jobs:
 
       - name: Install the Go toolchain
         uses: actions/setup-go@v5.5.0
+        with:
+          go-version: "1.24"
 
       - name: Set up toml-test
         run: go install github.com/toml-lang/toml-test/cmd/toml-test@latest
