@@ -1,14 +1,33 @@
+//! TOML document parser and value model. This parser implements the full
+//! TOML 1.0.0 specification.
+//!
+//! The parser can be used with either `parse` or `parseWithDiagnostics`. The latter of
+//! the functions offers additional diagnostics for the caller when the parser
+//! fails.
+//!
+//! Quick start:
+//! ```zig
+//! const std = @import("std");
+//! const toml = @import("toml.zig");
+//!
+//! pub fn main() !void {
+//!     const gpa = std.heap.page_allocator;
+//!     const input = "name = \"Reginald\"\nworkers = 4\n";
+//!
+//!     var root = try toml.parse(gpa, input);
+//!     defer root.deinit(gpa);
+//!
+//!     const tbl = root.table; // the root of a TOML document is always a table
+//!     const workers = tbl.get("workers").?.int;
+//!     std.debug.print("workers: {d}\n", .{workers});
+//! }
+//! ```
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ascii = std.ascii;
 const assert = std.debug.assert;
 const mem = std.mem;
-
-/// Represents a TOML array value that is normally wrapped in a `Value`.
-pub const Array = std.ArrayList(Value);
-
-/// Represents a TOML table value that is normally wrapped in a `Value`.
-pub const Table = std.StringArrayHashMap(Value);
 
 /// Represents any TOML value that potentially contains other TOML values.
 /// The result for parsing a TOML document is a `Value` that represents the root
@@ -26,8 +45,9 @@ pub const Value = union(enum) {
     table: Table,
 
     /// Recursively free memory for this value and all nested values.
-    /// The `allocator` must be the same one used in `parse` to create this Value.
-    pub fn deinit(self: *Value, allocator: Allocator) void {
+    /// The `allocator` must be the same one that was passed to parsing function
+    /// that produced this value.
+    pub fn deinit(self: *@This(), allocator: Allocator) void {
         switch (self.*) {
             .string => |s| allocator.free(s),
             .array => |*arr| {
@@ -46,170 +66,27 @@ pub const Value = union(enum) {
                 }
                 t.deinit();
             },
-            else => {},
+            else => {}, // no-op
         }
     }
 };
 
-/// Rich error information for parse failures
-pub const ParseErrorInfo = struct {
-    /// The Zig error name, e.g. "UnexpectedToken", "InvalidNumber"
-    error_name: []const u8,
-    /// A more helpful human-readable message about what went wrong
-    message: []const u8,
-    /// 1-based line index where the error occurred
-    line: usize,
-    /// 1-based column (byte offset within the line)
-    column: usize,
-    /// A slice of the input containing the line where the error happened
-    snippet: []const u8,
-};
+/// Represents a TOML array value that is normally wrapped in a `Value`.
+///
+/// The items are owned by the parent `Value` and freed by `Value.deinit()`.
+pub const Array = std.ArrayList(Value);
 
-fn computeLineColumnAndSnippet(input: []const u8, cursor: usize) struct { line: usize, column: usize, snippet: []const u8 } {
-    var i: usize = 0;
-    var line: usize = 1;
-    while (i < cursor and i < input.len) : (i += 1) {
-        if (input[i] == '\n') line += 1;
-    }
+/// Represents a TOML table value that is normally wrapped in a `Value`.
+///
+/// The keys and values are owned by the parent `Value` and freed by
+/// `Value.deinit()`.
+pub const Table = std.StringArrayHashMap(Value);
 
-    var start: usize = if (cursor > 0) cursor - 1 else 0;
-    while (start > 0 and input[start - 1] != '\n') : (start -= 1) {}
-
-    var end: usize = cursor;
-    while (end < input.len and input[end] != '\n') : (end += 1) {}
-
-    const col = (cursor - start) + 1;
-    return .{ .line = line, .column = col, .snippet = input[start..end] };
-}
-
-/// Extended parse that reports diagnostics on failure without throwing away error location.
-/// If diag_out is non-null, it will be populated when this function returns an error.
-pub fn parseEx(allocator: Allocator, input: []const u8, diag_out: ?*ParseErrorInfo) !Value {
-    if (!utf8Validate(input)) {
-        if (diag_out) |outp| {
-            const pos = computeLineColumnAndSnippet(input, 0);
-            outp.* = .{ .error_name = "InvalidUtf8", .message = "input is not valid UTF-8", .line = pos.line, .column = pos.column, .snippet = pos.snippet };
-        }
-        return error.InvalidUtf8;
-    }
-
-    var tmp_arena = std.heap.ArenaAllocator.init(allocator);
-    defer tmp_arena.deinit();
-    const scratch = tmp_arena.allocator();
-
-    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
-    var scanner = Scanner.initCompleteInput(input);
-    scanner.last_error_message = null;
-    var parser = Parser.init(scratch, &scanner, &parsing_root);
-
-    while (true) {
-        var token = scanner.nextKey() catch |e| {
-            if (diag_out) |outp| {
-                const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-                outp.* = .{ .error_name = @errorName(e), .message = scanner.last_error_message orelse defaultErrorMessage(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
-            }
-            return e;
-        };
-        if (token == .end_of_file) {
-            break;
-        }
-
-        const step_err: ?anyerror = switch (token) {
-            .line_feed => null,
-            .left_bracket => blk: {
-                parser.parseTableExpression() catch |e| break :blk e;
-                break :blk null;
-            },
-            .double_left_bracket => blk: {
-                parser.parseArrayTableExpression() catch |e| break :blk e;
-                break :blk null;
-            },
-            .literal, .string, .literal_string => blk: {
-                parser.parseKeyValueExpressionStartingWith(token) catch |e| break :blk e;
-                break :blk null;
-            },
-            else => error.UnexpectedToken,
-        };
-        if (step_err) |e| {
-            if (diag_out) |outp| {
-                const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-                outp.* = .{ .error_name = @errorName(e), .message = scanner.last_error_message orelse defaultErrorMessage(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
-            }
-            return e;
-        }
-
-        token = scanner.nextKey() catch |e| {
-            if (diag_out) |outp| {
-                const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-                outp.* = .{ .error_name = @errorName(e), .message = scanner.last_error_message orelse defaultErrorMessage(e), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
-            }
-            return e;
-        };
-        if (token == .line_feed or token == .end_of_file) {
-            continue;
-        }
-
-        if (diag_out) |outp| {
-            const pos = computeLineColumnAndSnippet(input, scanner.cursor);
-            outp.* = .{ .error_name = @errorName(error.UnexpectedToken), .message = scanner.last_error_message orelse defaultErrorMessage(error.UnexpectedToken), .line = pos.line, .column = pos.column, .snippet = pos.snippet };
-        }
-        return error.UnexpectedToken;
-    }
-
-    return parseResult(allocator, parsing_root);
-}
-
-fn defaultErrorMessage(e: anyerror) []const u8 {
-    return switch (e) {
-        error.UnexpectedToken => "unexpected token",
-        error.SyntaxError => "syntax error",
-        error.UnexpectedEndOfInput => "unexpected end of input",
-        error.InvalidNumber => "invalid number literal",
-        error.InvalidDate => "invalid date literal",
-        error.InvalidTime => "invalid time literal",
-        error.InvalidDatetime => "invalid datetime literal",
-        error.DuplicateKey => "duplicate key",
-        error.NoTableFound => "invalid dotted key path (no such table)",
-        error.NotArrayOfTables => "expected array of tables",
-        error.EmptyArray => "array cannot be empty here",
-        error.InvalidUtf8 => "input is not valid UTF-8",
-        error.InvalidCharacter => "invalid character",
-        else => "parse error",
-    };
-}
-
-const Token = union(enum) {
-    dot,
-    equal,
-    comma,
-    left_bracket, // [
-    double_left_bracket, // [[
-    right_bracket, // ]
-    double_right_bracket, // ]]
-    left_brace, // {
-    right_brace, // }
-
-    literal: []const u8,
-    string: []const u8,
-    multiline_string: []const u8,
-    literal_string: []const u8,
-    multiline_literal_string: []const u8,
-
-    int: i64,
-    float: f64,
-    bool: bool,
-
-    datetime: Datetime,
-    local_datetime: Datetime,
-    local_date: Date,
-    local_time: Time,
-
-    line_feed,
-    end_of_file,
-};
-
-/// Represents a TOML datetime value. The value can be either a normal datetime
-/// or a local datetime, and the `tz` is set to `null` in local datetimes.
+/// Represents a TOML datetime value.
+///
+/// The value can be either a normal datetime or a local datetime. When the time
+/// zone offset is present, `tz` is minutes from UTC. For local datetimes (no
+/// offset), `tz` is `null`.
 pub const Datetime = struct {
     year: u16,
     month: u8,
@@ -220,9 +97,41 @@ pub const Datetime = struct {
     nano: ?u32 = null,
     tz: ?i16 = null,
 
+    /// For formatting with std.fmt. Supports only the default format:
+    /// RFC3339-like (YYYY-MM-DDTHH:MM:SS[.fffffffff][Z|+hh:mm])
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        if (fmt.len != 0) {
+            std.fmt.invalidFmtError(fmt, self);
+        }
+
+        try writer.print(
+            "{d}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}",
+            .{ self.year, self.month, self.day, self.hour, self.minute, self.second },
+        );
+
+        if (self.nano) |nano| {
+            try writer.print(".{d:0>9}", .{nano});
+        }
+
+        if (self.tz) |tz| {
+            const t: u16 = @intCast(@abs(tz));
+            if (t == 0) {
+                try writer.writeAll("Z");
+            } else {
+                const h: u16 = t / 60;
+                const m: u16 = t % 60;
+                const sign = if (tz < 0) "-" else "+";
+                try writer.print("{s}{d:0>2}:{d:0>2}", .{ sign, h, m });
+            }
+        }
+    }
+
     fn isValid(self: @This()) bool {
-        // TODO: Can year be zero? Otherwise years need no validation as
-        // the integer is unsigned.
         if (self.month == 0 or self.month > 12) {
             return false;
         }
@@ -262,45 +171,11 @@ pub const Datetime = struct {
             return false;
         }
 
-        // TODO: Should we validate the fractional seconds?
-
         if (self.tz == null) {
             return true;
         }
 
         return isValidTimezone(self.tz.?);
-    }
-
-    /// Allocates the datetime into a formatted string. The caller owns
-    /// the result and must call `free` on it.
-    ///
-    /// TODO: This is not the standard way of doing this.
-    pub fn string(self: *const @This(), allocator: Allocator) ![]const u8 {
-        var value: []const u8 = try std.fmt.allocPrint(
-            allocator,
-            "{d}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}",
-            .{ self.year, self.month, self.day, self.hour, self.minute, self.second },
-        );
-
-        if (self.nano) |nano| {
-            value = try std.fmt.allocPrint(allocator, "{s}.{d:0>9}", .{ value, nano });
-        }
-
-        if (self.tz) |tz| {
-            const t: u16 = @abs(tz);
-
-            if (t == 0) {
-                return std.fmt.allocPrint(allocator, "{s}Z", .{value});
-            }
-
-            const h = t / 60;
-            const m = t % 60;
-            const sign = if (tz < 0) "-" else "+";
-
-            return std.fmt.allocPrint(allocator, "{s}{s}{d:0>2}:{d:0>2}", .{ value, sign, h, m });
-        } else {
-            return value;
-        }
     }
 };
 
@@ -310,9 +185,21 @@ pub const Date = struct {
     month: u8,
     day: u8,
 
+    /// For formatting with std.fmt. Supports only default format.
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        if (fmt.len != 0) {
+            std.fmt.invalidFmtError(fmt, self);
+        }
+
+        try writer.print("{d}-{d:0>2}-{d:0>2}", .{ self.year, self.month, self.day });
+    }
+
     fn isValid(self: @This()) bool {
-        // TODO: Can year be zero? Otherwise years need no validation as
-        // the integer is unsigned.
         if (self.month == 0 or self.month > 12) {
             return false;
         }
@@ -332,19 +219,8 @@ pub const Date = struct {
             30,
             31,
         };
-        return self.day > 0 and self.day <= days_in_month[self.month - 1];
-    }
 
-    /// Allocates the date into a formatted string. The caller owns the result
-    /// and must call `free` on it.
-    ///
-    /// TODO: This is not the standard way of doing this.
-    pub fn string(self: *const @This(), allocator: Allocator) ![]const u8 {
-        return std.fmt.allocPrint(
-            allocator,
-            "{d}-{d:0>2}-{d:0>2}",
-            .{ self.year, self.month, self.day },
-        );
+        return self.day > 0 and self.day <= days_in_month[self.month - 1];
     }
 };
 
@@ -354,6 +230,24 @@ pub const Time = struct {
     minute: u8,
     second: u8,
     nano: ?u32 = null,
+
+    /// For formatting with std.fmt. Supports only default format.
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        if (fmt.len != 0) {
+            std.fmt.invalidFmtError(fmt, self);
+        }
+
+        try writer.print("{d:0>2}:{d:0>2}:{d:0>2}", .{ self.hour, self.minute, self.second });
+
+        if (self.nano) |nano| {
+            try writer.print(".{d:0>9}", .{nano});
+        }
+    }
 
     fn isValid(self: @This()) bool {
         if (self.hour > 23) {
@@ -366,24 +260,86 @@ pub const Time = struct {
 
         return self.second <= 59;
     }
+};
 
-    /// Allocates the time into a formatted string. The caller owns the result
-    /// and must call `free` on it.
-    ///
-    /// TODO: This is not the standard way of doing this.
-    pub fn string(self: *const @This(), allocator: Allocator) ![]const u8 {
-        const value: []const u8 = try std.fmt.allocPrint(
-            allocator,
-            "{d:0>2}:{d:0>2}:{d:0>2}",
-            .{ self.hour, self.minute, self.second },
-        );
+/// Rich diagnostics information for parse failures.
+///
+/// This structure is populated by `parseWithDiagnostics` when parsing fails.
+/// The fields are safe to print directly. `snippet` points into the original
+/// `input`, so it remains valid for the lifetime of that slice.
+pub const Diagnostics = struct {
+    /// A short human‑readable description of the problem.
+    message: []const u8 = undefined,
 
-        if (self.nano) |nano| {
-            return std.fmt.allocPrint(allocator, "{s}.{d:0>9}", .{ value, nano });
+    /// 1‑based line index where the error occurred.
+    line: usize = undefined,
+
+    /// 1‑based column (byte offset within the line).
+    column: usize = undefined,
+
+    /// The line of text where the error occurred (slice of the original input).
+    snippet: []const u8 = undefined,
+
+    /// For formatting with std.fmt. Supports only the default format, and
+    /// provides a helpful way to easily print the diagnostics information.
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        if (fmt.len != 0) {
+            std.fmt.invalidFmtError(fmt, self);
         }
 
-        return value;
+        try writer.print(
+            "error parsing TOML document on line {d}, column {d}\n",
+            .{ self.line, self.column },
+        );
+
+        try writer.print("{s}\n", .{self.snippet});
+
+        // TODO: Is this smart way to do this?
+        var i: usize = 1;
+        while (i < self.column - 1) : (i += 1) {
+            try writer.writeByte(' ');
+        }
+
+        try writer.writeByte('^');
+        try writer.writeByte(' ');
+        try writer.writeAll(self.message);
     }
+};
+
+/// Represents a token in the TOML document.
+const Token = union(enum) {
+    dot,
+    equal,
+    comma,
+    left_bracket, // [
+    double_left_bracket, // [[
+    right_bracket, // ]
+    double_right_bracket, // ]]
+    left_brace, // {
+    right_brace, // }
+
+    literal: []const u8,
+    string: []const u8,
+    multiline_string: []const u8,
+    literal_string: []const u8,
+    multiline_literal_string: []const u8,
+
+    int: i64,
+    float: f64,
+    bool: bool,
+
+    datetime: Datetime,
+    local_datetime: Datetime,
+    local_date: Date,
+    local_time: Time,
+
+    line_feed,
+    end_of_file,
 };
 
 /// The parsing API that emits tokens based on the TOML document input.
@@ -395,8 +351,10 @@ const Scanner = struct {
     cursor: usize = 0,
     end: usize = 0,
     line: u64 = 0,
+
     /// Last error message set by scanning/parsing routines for richer diagnostics
     last_error_message: ?[]const u8 = null,
+
     /// Internal buffer for formatted error messages
     err_buf: [256]u8 = undefined,
     err_len: usize = 0,
@@ -423,6 +381,7 @@ const Scanner = struct {
             self.last_error_message = fmt_str;
             return;
         };
+
         self.err_len = written.len;
         self.last_error_message = self.err_buf[0..self.err_len];
     }
@@ -617,7 +576,6 @@ const Scanner = struct {
             }
         }
 
-        // If we're at end-of-input, surface that explicitly to callers.
         return .end_of_file;
     }
 
@@ -633,8 +591,6 @@ const Scanner = struct {
 
     /// Scan the upcoming multiline string in the TOML document and return
     /// a token matching it.
-    ///
-    /// TODO: Clear up the allocations.
     fn scanMultilineString(self: *@This()) !Token {
         assert(self.matchN('"', 3));
 
@@ -717,7 +673,6 @@ const Scanner = struct {
             return error.UnexpectedToken;
         }
 
-        // TODO: Need for allocation?
         const result: Token = .{ .multiline_string = self.input[start..self.cursor] };
 
         if (!self.matchN('"', 3)) {
@@ -733,8 +688,6 @@ const Scanner = struct {
 
     /// Scan the upcoming regular string in the TOML document and return a token
     /// matching it.
-    ///
-    /// TODO: Clear up the allocations.
     fn scanString(self: *@This()) !Token {
         assert(self.match('"'));
 
@@ -781,7 +734,6 @@ const Scanner = struct {
             return error.UnexpectedToken; // bad escape character
         }
 
-        // TODO: Need for allocation?
         const result: Token = .{ .string = self.input[start..self.cursor] };
 
         assert(self.match('"'));
@@ -829,7 +781,6 @@ const Scanner = struct {
             }
         }
 
-        // TODO: Need for allocation?
         const result: Token = .{ .multiline_literal_string = self.input[start..self.cursor] };
 
         if (!self.matchN('\'', 3)) {
@@ -867,7 +818,6 @@ const Scanner = struct {
             }
         }
 
-        // TODO: Need for allocation?
         const result: Token = .{ .literal_string = self.input[start..self.cursor] };
 
         assert(self.match('\''));
@@ -902,7 +852,9 @@ const Scanner = struct {
     /// Scan an upcoming literal, for example a key.
     fn scanLiteral(self: *@This()) Token {
         const start = self.cursor;
-        while (self.cursor < self.end and (ascii.isAlphanumeric(self.input[self.cursor]) or self.input[self.cursor] == '_' or self.input[self.cursor] == '-')) : (self.cursor += 1) {}
+        while (self.cursor < self.end and (ascii.isAlphanumeric(self.input[self.cursor]) or
+            self.input[self.cursor] == '_' or self.input[self.cursor] == '-')) : (self.cursor += 1)
+        {}
         return .{ .literal = self.input[start..self.cursor] };
     }
 
@@ -963,7 +915,9 @@ const Scanner = struct {
         self.cursor += 1;
         ret.nano = 0;
         var i: usize = 0;
-        while (self.cursor < self.end and ascii.isDigit(self.input[self.cursor]) and i < 9) : (self.cursor += 1) {
+        while (self.cursor < self.end and
+            ascii.isDigit(self.input[self.cursor]) and i < 9) : (self.cursor += 1)
+        {
             ret.nano = ret.nano.? * 10 + (self.input[self.cursor] - '0');
             i += 1;
         }
@@ -977,7 +931,6 @@ const Scanner = struct {
 
     /// Read a date in the YYYY-MM-DD format from the upcoming characters.
     fn readDate(self: *@This()) !Date {
-        // Note: we no longer need to track the absolute start; validations are done by isValid
         var ret: Date = .{ .year = undefined, .month = undefined, .day = undefined };
         ret.year = @intCast(try self.readFixedDigits(4));
         if (self.cursor >= self.end or self.input[self.cursor] != '-') {
@@ -994,7 +947,6 @@ const Scanner = struct {
 
         self.cursor += 1;
         ret.day = @intCast(try self.readFixedDigits(2));
-        // day validity checked via isValid later in scanDatetime when needed
 
         return ret;
     }
@@ -1014,7 +966,6 @@ const Scanner = struct {
         };
 
         self.cursor += 1;
-        // track start not needed due to fixed-width parser
 
         const hour: i16 = @intCast(try self.readFixedDigits(2));
         if (self.cursor >= self.end or self.input[self.cursor] != ':') {
@@ -1110,17 +1061,23 @@ const Scanner = struct {
     /// Scan a possible upcoming boolean value.
     fn scanBool(self: *@This()) !Token {
         var val: bool = undefined;
-        if (self.cursor + 3 < self.end and mem.eql(u8, "true", self.input[self.cursor .. self.cursor + 4])) {
+        if (self.cursor + 3 < self.end and
+            mem.eql(u8, "true", self.input[self.cursor .. self.cursor + 4]))
+        {
             val = true;
             self.cursor += 4;
-        } else if (self.cursor + 4 < self.end and mem.eql(u8, "false", self.input[self.cursor .. self.cursor + 5])) {
+        } else if (self.cursor + 4 < self.end and
+            mem.eql(u8, "false", self.input[self.cursor .. self.cursor + 5]))
+        {
             val = false;
             self.cursor += 5;
         } else {
             return error.UnexpectedToken;
         }
 
-        if (self.cursor < self.end and null == mem.indexOfScalar(u8, "# \r\n\t,}]", self.input[self.cursor])) {
+        if (self.cursor < self.end and
+            null == mem.indexOfScalar(u8, "# \r\n\t,}]", self.input[self.cursor]))
+        {
             self.setErrorMessage("invalid trailing characters after boolean literal");
             return error.UnexpectedToken;
         }
@@ -1147,15 +1104,17 @@ const Scanner = struct {
                     2 => "_01",
                     else => unreachable,
                 };
+
                 const end_idx = mem.indexOfNonePos(u8, self.input, start, allowed) orelse {
                     self.setErrorMessage("invalid digits for base-prefixed integer");
                     return error.UnexpectedToken;
                 };
+
                 if (end_idx == start) {
                     self.setErrorMessage("missing digits after base prefix");
                     return error.InvalidNumber;
                 }
-                // Validate underscores (not first/last, not doubled)
+
                 var prev_underscore = false;
                 var i: usize = start;
                 while (i < end_idx) : (i += 1) {
@@ -1170,52 +1129,73 @@ const Scanner = struct {
                         prev_underscore = false;
                     }
                 }
-                // Build buffer without underscores
+
                 var buf = std.ArrayList(u8).init(std.heap.page_allocator);
                 defer buf.deinit();
+
                 i = start;
                 while (i < end_idx) : (i += 1) {
                     const c = self.input[i];
-                    if (c != '_') try buf.append(c);
+                    if (c != '_') {
+                        try buf.append(c);
+                    }
                 }
+
                 const n = try std.fmt.parseInt(i64, buf.items, b);
                 self.cursor = end_idx;
+
                 return .{ .int = n };
             }
         }
 
-        // Decimal or float
+        // Decimal or float.
         const start = self.cursor;
         var idx = self.cursor;
-        if (self.input[idx] == '+' or self.input[idx] == '-') idx += 1;
+        if (self.input[idx] == '+' or self.input[idx] == '-') {
+            idx += 1;
+        }
+
         if (idx >= self.end) {
             self.setErrorMessage("unexpected end of input while reading number");
             return error.UnexpectedEndOfInput;
         }
-        if (self.input[idx] == 'i' or self.input[idx] == 'n') return self.scanFloat();
+
+        if (self.input[idx] == 'i' or self.input[idx] == 'n') {
+            return self.scanFloat();
+        }
+
         // Find token end
         idx = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse {
             self.setErrorMessage("malformed number literal");
             return error.UnexpectedToken;
         };
+
         if (idx == start) {
             self.setErrorMessage("missing digits in number");
             return error.InvalidNumber;
         }
+
         const slice = self.input[start..idx];
         const has_dot = mem.indexOfScalar(u8, slice, '.') != null;
         const has_exp = mem.indexOfAny(u8, slice, "eE") != null;
+
         if (has_dot or has_exp) {
             return self.scanFloat();
         }
-        // Validate underscores and leading zero rule
+
+        // Validate underscores and leading zero rule.
         var s_off: usize = 0;
-        if (slice[0] == '+' or slice[0] == '-') s_off = 1;
+        if (slice[0] == '+' or slice[0] == '-') {
+            s_off = 1;
+        }
+
         if (slice[s_off] == '0' and slice.len > s_off + 1) {
             self.setErrorMessage("leading zeros are not allowed in integers");
             return error.InvalidNumber;
         }
+
         var prev_underscore = false;
+
         var j: usize = s_off;
         while (j < slice.len) : (j += 1) {
             const c = slice[j];
@@ -1232,36 +1212,54 @@ const Scanner = struct {
                 prev_underscore = false;
             }
         }
-        // Build buffer without underscores
+
         var buf = std.ArrayList(u8).init(std.heap.page_allocator);
         defer buf.deinit();
+
         j = 0;
         while (j < slice.len) : (j += 1) {
             const c = slice[j];
-            if (c != '_') try buf.append(c);
+            if (c != '_') {
+                try buf.append(c);
+            }
         }
+
         const n = try std.fmt.parseInt(i64, buf.items, 10);
         self.cursor = idx;
+
         return .{ .int = n };
     }
 
     /// Scan a possible upcoming floating-point literal.
     fn scanFloat(self: *@This()) !Token {
         const start = self.cursor;
-        if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') self.cursor += 1;
+        if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') {
+            self.cursor += 1;
+        }
 
-        if (self.cursor + 3 <= self.end and (mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "inf") or mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "nan"))) {
+        if (self.cursor + 3 <= self.end and
+            (mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "inf") or
+                mem.eql(u8, self.input[self.cursor .. self.cursor + 3], "nan")))
+        {
             self.cursor += 3;
         } else {
-            self.cursor = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse {
+            self.cursor = mem.indexOfNonePos(
+                u8,
+                self.input,
+                self.cursor,
+                "_0123456789eE.+-",
+            ) orelse {
                 self.setErrorMessage("malformed float literal");
                 return error.UnexpectedToken;
             };
         }
 
         const slice = self.input[start..self.cursor];
-        // Validate underscores not at ends or adjacent to dot or exponent signs
+
+        // Validate underscores not at ends or adjacent to dot or exponent
+        // signs.
         var prev_char: u8 = 0;
+
         var i: usize = 0;
         while (i < slice.len) : (i += 1) {
             const c = slice[i];
@@ -1278,56 +1276,79 @@ const Scanner = struct {
             }
             prev_char = c;
         }
-        // Build buffer without underscores
+
         var buf = std.ArrayList(u8).init(std.heap.page_allocator);
         defer buf.deinit();
+
         i = 0;
         while (i < slice.len) : (i += 1) {
             const c = slice[i];
-            if (c != '_') try buf.append(c);
+            if (c != '_') {
+                try buf.append(c);
+            }
         }
-        // Reject leading zero before decimal point (e.g. 03.14) per TOML
+
+        // Reject leading zero before decimal point (e.g. 03.14) per TOML.
         if (buf.items.len >= 2) {
             var sign_idx: usize = 0;
-            if (buf.items[0] == '+' or buf.items[0] == '-') sign_idx = 1;
-            if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and buf.items[sign_idx + 1] == '.') {
+            if (buf.items[0] == '+' or buf.items[0] == '-') {
+                sign_idx = 1;
+            }
+
+            if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and
+                buf.items[sign_idx + 1] == '.')
+            {
                 // ok: 0.xxx
-            } else if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and ascii.isDigit(buf.items[sign_idx + 1])) {
+            } else if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and
+                ascii.isDigit(buf.items[sign_idx + 1]))
+            {
                 self.setErrorMessage("leading zeros are not allowed in float literal");
                 return error.InvalidNumber;
             }
         }
-        // Disallow floats like 1., .1, or exponents with missing mantissa per TOML
+
+        // Disallow floats like 1., .1, or exponents with missing mantissa per
+        // TOML.
         if (mem.indexOfScalar(u8, buf.items, '.') != null) {
-            // Must have digits on both sides of '.'
+            // Must have digits on both sides of '.'.
             const dot_idx = mem.indexOfScalar(u8, buf.items, '.').?;
             if (dot_idx == 0 or dot_idx + 1 >= buf.items.len) {
                 self.setErrorMessage("decimal point must have digits on both sides");
                 return error.InvalidNumber;
             }
+
             if (!ascii.isDigit(buf.items[dot_idx - 1]) or !ascii.isDigit(buf.items[dot_idx + 1])) {
                 self.setErrorMessage("decimal point must have digits on both sides");
                 return error.InvalidNumber;
             }
         }
-        // Validate exponent placement: must have digits before and after 'e' or 'E' (with optional sign)
+
+        // Validate exponent placement: must have digits before and after 'e' or
+        // 'E' (with optional sign).
         if (mem.indexOfAny(u8, buf.items, "eE")) |e_idx| {
             if (e_idx == 0) {
                 self.setErrorMessage("invalid exponent format");
                 return error.InvalidNumber;
             }
+
             if (!ascii.isDigit(buf.items[e_idx - 1]) and buf.items[e_idx - 1] != '.') {
                 self.setErrorMessage("invalid exponent format");
                 return error.InvalidNumber;
             }
+
             var after = e_idx + 1;
-            if (after < buf.items.len and (buf.items[after] == '+' or buf.items[after] == '-')) after += 1;
+            if (after < buf.items.len and (buf.items[after] == '+' or buf.items[after] == '-')) {
+                after += 1;
+            }
+
             if (after >= buf.items.len or !ascii.isDigit(buf.items[after])) {
                 self.setErrorMessage("invalid exponent format");
                 return error.InvalidNumber;
             }
         }
+
         const f = try std.fmt.parseFloat(f64, buf.items);
+
         return .{ .float = f };
     }
 
@@ -1342,7 +1363,11 @@ const Scanner = struct {
                 }
 
                 const left: u8 = if (i == 0) 0 else self.input[self.cursor + i - 1];
-                const right: u8 = if (self.cursor + i >= self.end) 0 else self.input[self.cursor + i + 1];
+                const right: u8 = if (self.cursor + i >= self.end)
+                    0
+                else
+                    self.input[self.cursor + i + 1];
+
                 if (!ascii.isDigit(left) and !(base == 16 and ascii.isHex(left))) {
                     return false;
                 }
@@ -1356,14 +1381,20 @@ const Scanner = struct {
         var i: usize = 0;
         while (i < len) : (i += 1) {
             if (self.input[self.cursor + i] == '.') {
-                if (i == 0 or !ascii.isDigit(self.input[self.cursor - 1]) or !ascii.isDigit(self.input[self.cursor + 1])) {
+                if (i == 0 or !ascii.isDigit(self.input[self.cursor - 1]) or
+                    !ascii.isDigit(self.input[self.cursor + 1]))
+                {
                     return false;
                 }
             }
         }
 
         if (base == 10) {
-            i = if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') self.cursor + 1 else self.cursor;
+            i = if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-')
+                self.cursor + 1
+            else
+                self.cursor;
+
             if (self.input[i] == '0' and ascii.isDigit(self.input[i + 1])) {
                 return false;
             }
@@ -1487,7 +1518,12 @@ const Parser = struct {
     /// The function returns the final table represented by the keys. If
     /// the table in question is parsed from a standard table header,
     /// `is_standard` should be `true`.
-    fn descendToTable(self: *@This(), keys: [][]const u8, root: *ParsingValue, is_standard: bool) !*ParsingValue {
+    fn descendToTable(
+        self: *@This(),
+        keys: [][]const u8,
+        root: *ParsingValue,
+        is_standard: bool,
+    ) !*ParsingValue {
         var table = root;
 
         for (keys) |key| {
@@ -1570,7 +1606,10 @@ const Parser = struct {
                 'u', 'U' => {
                     const len: usize = if (c == 'u') 4 else 8;
                     const start = i + 1;
-                    if (start + len > orig.len) return error.UnexpectedEndOfInput;
+                    if (start + len > orig.len) {
+                        return error.UnexpectedEndOfInput;
+                    }
+
                     const s = orig[start .. start + len];
                     const codepoint = try std.fmt.parseInt(u21, s, 16);
                     var buf: [4]u8 = undefined;
@@ -1579,13 +1618,20 @@ const Parser = struct {
                     i += 1 + len - 1; // -1 because loop will i+=1
                 },
                 ' ', '\t', '\r', '\n' => {
-                    // Line-ending backslash: trim all immediately following spaces, tabs, and newlines.
+                    // Line-ending backslash: trim all immediately following
+                    // spaces, tabs, and newlines.
                     var idx = i;
                     var consumed = false;
-                    while (idx < orig.len and (orig[idx] == ' ' or orig[idx] == '\t' or orig[idx] == '\r' or orig[idx] == '\n')) : (idx += 1) {
+                    while (idx < orig.len and (orig[idx] == ' ' or orig[idx] == '\t' or
+                        orig[idx] == '\r' or orig[idx] == '\n')) : (idx += 1)
+                    {
                         consumed = true;
                     }
-                    if (!consumed) return error.UnexpectedToken;
+
+                    if (!consumed) {
+                        return error.UnexpectedToken;
+                    }
+
                     i = idx - 1; // continue after the whitespace block
                 },
                 else => try dst.append(c),
@@ -1735,11 +1781,12 @@ const Parser = struct {
             var token = try self.scanner.nextKey();
             if (token == .right_brace) {
                 if (was_comma) {
-                    // Trailing comma before closing brace is invalid
+                    // Trailing comma before closing brace is invalid.
                     self.scanner.setErrorMessage("trailing comma before '}' in inline table");
                     return error.UnexpectedToken;
                 }
-                // Allow closing immediately after a key-value without requiring a comma
+                // Allow closing immediately after a key-value without requiring
+                // a comma.
                 break;
             }
 
@@ -1937,7 +1984,6 @@ const Parser = struct {
         }
 
         try current_value.value.array.append(.{ .value = .{ .table = .init(self.allocator) } });
-        // TODO: This will most probably cause a problem.
         self.current_table = &current_value.value.array.items[current_value.value.array.items.len - 1];
     }
 
@@ -1966,8 +2012,11 @@ const Parser = struct {
                 }
             } else {
                 if (i > 0 and table.flag.explicit) {
-                    // Cannot extend a previously defined table using dotted expression.
-                    self.scanner.setErrorMessage("cannot extend previously defined table using dotted key");
+                    // Cannot extend a previously defined table using dotted
+                    // expression.
+                    self.scanner.setErrorMessage(
+                        "cannot extend previously defined table using dotted key",
+                    );
                     return error.UnexpectedToken;
                 }
                 table = try self.addTable(&table.value.table, key);
@@ -2017,7 +2066,9 @@ const Parser = struct {
                 }
             } else {
                 if (i > 0 and table.flag.explicit) {
-                    self.scanner.setErrorMessage("cannot extend previously defined table using dotted key");
+                    self.scanner.setErrorMessage(
+                        "cannot extend previously defined table using dotted key",
+                    );
                     return error.UnexpectedToken;
                 }
                 table = try self.addTable(&table.value.table, key);
@@ -2066,6 +2117,9 @@ const Parser = struct {
     }
 };
 
+/// Parse a TOML document. On success, returns the root `Value` (always
+/// a `.table`). The returned `Value` tree is allocated from `allocator` and
+/// must be freed by calling `Value.deinit()`.
 pub fn parse(allocator: Allocator, input: []const u8) !Value {
     // TODO: Maybe add an option to skip the UTF-8 validation for faster
     // parsing.
@@ -2074,9 +2128,9 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
     }
 
     // Use a temporary arena for all intermediate parsing allocations.
-    var tmp_arena = std.heap.ArenaAllocator.init(allocator);
-    defer tmp_arena.deinit();
-    const scratch = tmp_arena.allocator();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
 
     var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
     var scanner = Scanner.initCompleteInput(input);
@@ -2085,6 +2139,7 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
     // Set an upper limit for the loop for safety. There cannot be more tokens
     // than there are characters in the input. If the input is streamed, this
     // needs changing.
+    // TODO: See about setting the limit back.
     while (true) {
         var token = try scanner.nextKey();
         if (token == .end_of_file) {
@@ -2096,7 +2151,10 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
             .left_bracket => try parser.parseTableExpression(),
             .double_left_bracket => try parser.parseArrayTableExpression(),
             .end_of_file => unreachable,
-            .literal, .string, .literal_string => try parser.parseKeyValueExpressionStartingWith(token),
+            .literal,
+            .string,
+            .literal_string,
+            => try parser.parseKeyValueExpressionStartingWith(token),
             else => return error.UnexpectedToken,
         }
 
@@ -2109,6 +2167,157 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
     }
 
     return parseResult(allocator, parsing_root);
+}
+
+/// Parse a TOML document with better diagnostics output. On success, returns
+/// the root `Value` (always a `.table`). On failure, returns an error and, if
+/// `diag` is non-null, fills it with a human‑readable message and the exact
+/// source location (line, column, snippet).
+///
+/// The returned `Value` tree is allocated from `allocator` and must be freed by
+/// calling `Value.deinit()`.
+pub fn parseWithDiagnostics(allocator: Allocator, input: []const u8, diag: ?*Diagnostics) !Value {
+    if (!utf8Validate(input)) {
+        if (diag) |outp| {
+            const pos = computePlace(input, 0);
+            outp.* = .{
+                .message = "input is not valid UTF-8",
+                .line = pos.line,
+                .column = pos.column,
+                .snippet = pos.snippet,
+            };
+        }
+        return error.InvalidUtf8;
+    }
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
+    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
+    var scanner = Scanner.initCompleteInput(input);
+    scanner.last_error_message = null;
+    var parser = Parser.init(scratch, &scanner, &parsing_root);
+
+    // TODO: See about setting the limit back.
+    while (true) {
+        var token = scanner.nextKey() catch |e| {
+            if (diag) |outp| {
+                const pos = computePlace(input, scanner.cursor);
+                outp.* = .{
+                    .message = scanner.last_error_message orelse defaultErrorMessage(e),
+                    .line = pos.line,
+                    .column = pos.column,
+                    .snippet = pos.snippet,
+                };
+            }
+            return e;
+        };
+        if (token == .end_of_file) {
+            break;
+        }
+
+        const step_err: ?anyerror = switch (token) {
+            .line_feed => null,
+            .left_bracket => blk: {
+                parser.parseTableExpression() catch |e| break :blk e;
+                break :blk null;
+            },
+            .double_left_bracket => blk: {
+                parser.parseArrayTableExpression() catch |e| break :blk e;
+                break :blk null;
+            },
+            .literal, .string, .literal_string => blk: {
+                parser.parseKeyValueExpressionStartingWith(token) catch |e| break :blk e;
+                break :blk null;
+            },
+            else => error.UnexpectedToken,
+        };
+        if (step_err) |e| {
+            if (diag) |outp| {
+                const pos = computePlace(input, scanner.cursor);
+                outp.* = .{
+                    .message = scanner.last_error_message orelse defaultErrorMessage(e),
+                    .line = pos.line,
+                    .column = pos.column,
+                    .snippet = pos.snippet,
+                };
+            }
+            return e;
+        }
+
+        token = scanner.nextKey() catch |e| {
+            if (diag) |outp| {
+                const pos = computePlace(input, scanner.cursor);
+                outp.* = .{
+                    .message = scanner.last_error_message orelse defaultErrorMessage(e),
+                    .line = pos.line,
+                    .column = pos.column,
+                    .snippet = pos.snippet,
+                };
+            }
+            return e;
+        };
+        if (token == .line_feed or token == .end_of_file) {
+            continue;
+        }
+
+        if (diag) |outp| {
+            const pos = computePlace(input, scanner.cursor);
+            outp.* = .{
+                .message = scanner.last_error_message orelse defaultErrorMessage(
+                    error.UnexpectedToken,
+                ),
+                .line = pos.line,
+                .column = pos.column,
+                .snippet = pos.snippet,
+            };
+        }
+        return error.UnexpectedToken;
+    }
+
+    return parseResult(allocator, parsing_root);
+}
+
+fn computePlace(input: []const u8, cursor: usize) struct {
+    line: usize,
+    column: usize,
+    snippet: []const u8,
+} {
+    var i: usize = 0;
+    var line: usize = 1;
+    while (i < cursor and i < input.len) : (i += 1) {
+        if (input[i] == '\n') line += 1;
+    }
+
+    var start: usize = if (cursor > 0) cursor - 1 else 0;
+    while (start > 0 and input[start - 1] != '\n') : (start -= 1) {}
+
+    var end: usize = cursor;
+    while (end < input.len and input[end] != '\n') : (end += 1) {}
+
+    const col = (cursor - start) + 1;
+    return .{ .line = line, .column = col, .snippet = input[start..end] };
+}
+
+/// Map an error tag to a short, user‑facing message.
+fn defaultErrorMessage(e: anyerror) []const u8 {
+    return switch (e) {
+        error.UnexpectedToken => "unexpected token",
+        error.SyntaxError => "syntax error",
+        error.UnexpectedEndOfInput => "unexpected end of input",
+        error.InvalidNumber => "invalid number literal",
+        error.InvalidDate => "invalid date literal",
+        error.InvalidTime => "invalid time literal",
+        error.InvalidDatetime => "invalid datetime literal",
+        error.DuplicateKey => "duplicate key",
+        error.NoTableFound => "invalid dotted key path (no such table)",
+        error.NotArrayOfTables => "expected array of tables",
+        error.EmptyArray => "array cannot be empty here",
+        error.InvalidUtf8 => "input is not valid UTF-8",
+        error.InvalidCharacter => "invalid character",
+        else => "parse error",
+    };
 }
 
 /// Convert the intermediate parsing values into the proper TOML return values.
@@ -2308,7 +2517,7 @@ test "parse datetimes and local types" {
     }
 }
 
-test "invalid: float leading zero and duplicate inline key" {
+test "float leading zero and duplicate inline key" {
     const testing = std.testing;
     const alloc = testing.allocator;
 

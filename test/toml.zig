@@ -22,23 +22,16 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const stdin = io.getStdIn().reader();
-    const toml_bytes = try stdin.readAllAlloc(allocator, 1024 * 1024); // Adjust size as needed
+    const toml_bytes = try stdin.readAllAlloc(allocator, 1024 * 1024); // adjust size if needed
     defer allocator.free(toml_bytes);
 
     var parsed = toml.parse(allocator, toml_bytes) catch |e| {
-        var diag: toml.ParseErrorInfo = undefined;
-        _ = toml.parseEx(allocator, toml_bytes, &diag) catch {};
-        if (diag.message.len > 0) {
-            std.debug.print("error: {s}: {s} at {d}:{d}\n{s}\n", .{ diag.error_name, diag.message, diag.line, diag.column, diag.snippet });
-        } else {
-            std.debug.print("error: {s} at {d}:{d}\n{s}\n", .{ diag.error_name, diag.line, diag.column, diag.snippet });
-        }
+        var diag: toml.Diagnostics = undefined;
+        _ = toml.parseWithDiagnostics(allocator, toml_bytes, &diag) catch {};
+        std.debug.print("{}\n", .{diag});
         return e;
     };
     defer parsed.deinit(allocator);
-    // const parsed = toml.parse(allocator, toml_bytes) catch {
-    //     process.exit(1);
-    // };
 
     const json_value = try createJsonValue(allocator, parsed);
     try json.stringify(json_value, .{}, io.getStdOut().writer());
@@ -92,25 +85,29 @@ fn objectFromValue(allocator: Allocator, toml_value: toml.Value) Error!json.Valu
         .datetime => |dt| {
             var obj = json.ObjectMap.init(allocator);
             try obj.put("type", json.Value{ .string = "datetime" });
-            try obj.put("value", json.Value{ .string = try dt.string(allocator) });
+            const s = try fmt.allocPrint(allocator, "{}", .{dt});
+            try obj.put("value", json.Value{ .string = s });
             return .{ .object = obj };
         },
         .local_datetime => |dt| {
             var obj = json.ObjectMap.init(allocator);
             try obj.put("type", json.Value{ .string = "datetime-local" });
-            try obj.put("value", json.Value{ .string = try dt.string(allocator) });
+            const s = try fmt.allocPrint(allocator, "{}", .{dt});
+            try obj.put("value", json.Value{ .string = s });
             return .{ .object = obj };
         },
         .local_date => |d| {
             var obj = json.ObjectMap.init(allocator);
             try obj.put("type", json.Value{ .string = "date-local" });
-            try obj.put("value", json.Value{ .string = try d.string(allocator) });
+            const s = try fmt.allocPrint(allocator, "{}", .{d});
+            try obj.put("value", json.Value{ .string = s });
             return .{ .object = obj };
         },
         .local_time => |t| {
             var obj = json.ObjectMap.init(allocator);
             try obj.put("type", json.Value{ .string = "time-local" });
-            try obj.put("value", json.Value{ .string = try t.string(allocator) });
+            const s = try fmt.allocPrint(allocator, "{}", .{t});
+            try obj.put("value", json.Value{ .string = s });
             return .{ .object = obj };
         },
         .array => |arr| {

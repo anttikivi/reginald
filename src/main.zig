@@ -69,8 +69,8 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
 
     _ = arena;
 
-    const w = std.io.getStdErr().writer();
-    var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], w);
+    const errw = std.io.getStdErr().writer();
+    var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], errw);
     defer parsed_args.deinit();
 
     const wd = try workingDirPath(gpa, parsed_args);
@@ -90,31 +90,9 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     };
     defer gpa.free(cfg_file);
 
-    var diag_out: toml.ParseErrorInfo = .{
-        .column = undefined,
-        .error_name = undefined,
-        .message = undefined,
-        .line = undefined,
-        .snippet = undefined,
-    };
-    var toml_value = toml.parseEx(gpa, cfg_file, &diag_out) catch |e| {
-        const errw = std.io.getStdErr().writer();
-        // Print a human-friendly diagnostic with location and caret
-        // Note: diag_out is filled by parseEx on failure
-        _ = try errw.print("TOML parse error: {s}\n", .{diag_out.error_name});
-        if (diag_out.message.len > 0) {
-            _ = try errw.print("{s}\n", .{diag_out.message});
-        }
-        _ = try errw.print("at {d}:{d}\n", .{ diag_out.line, diag_out.column });
-        _ = try errw.print("{s}\n", .{diag_out.snippet});
-        if (diag_out.column > 0) {
-            var i: usize = 1;
-            while (i < diag_out.column) : (i += 1) {
-                try errw.writeByte(' ');
-            }
-            try errw.writeByte('^');
-            try errw.writeByte('\n');
-        }
+    var diag: toml.Diagnostics = undefined;
+    var toml_value = toml.parseWithDiagnostics(gpa, cfg_file, &diag) catch |e| {
+        try errw.print("{}\n", .{diag});
         return e;
     };
     defer toml_value.deinit(gpa);
