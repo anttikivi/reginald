@@ -4,8 +4,6 @@
 //! the different config sources so that the user's config can be represented
 //! losslessly.
 
-const Config = @This();
-
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
@@ -15,15 +13,18 @@ const fs = std.fs;
 const cli = @import("cli.zig");
 const filepath = @import("filepath.zig");
 
+/// Allocator that the config uses for its internal allocations.
+allocator: Allocator,
+
 /// Path to the config file.
 config_file: []const u8 = "",
 
-/// All of the relative paths are resolved relative to this.
-working_directory: []const u8 = ".",
+/// The base directory for resolving the configured paths within the program.
+directory: []const u8 = ".",
 
-/// The maximum number of concurrent jobs to allow. If this is less than 1,
-/// unlimited concurrent jobs are allowed.
-max_jobs: i64 = -1,
+// /// The maximum number of concurrent jobs to allow. If this is less than 1,
+// /// unlimited concurrent jobs are allowed.
+// max_jobs: i64 = -1,
 
 /// If true, the program shows the help message and exits. When this is set to
 /// true, the actual config instance should never be loaded.
@@ -38,6 +39,11 @@ quiet: bool = false,
 
 /// Whether verbose output is enabled.
 verbose: bool = false,
+
+/// The current working directory that maybe set with the `-C` option.
+/// The config file's location is resolved relative to this directory, and it's
+/// used as the default `directory`.
+working_directory: []const u8 = ".",
 
 const native_os = builtin.target.os.tag;
 
@@ -56,7 +62,7 @@ const unix_config_lookup = [_][]const u8{
 };
 
 /// Type of a config value as a more general value instead of raw types.
-const ValueType = enum { bool, int, string };
+pub const ValueType = enum { bool, int, string };
 
 /// Represents the data for creating command-line options and config file
 /// entries and checking environment variables for a config option.
@@ -70,6 +76,17 @@ pub const Metadata = struct {
 
     /// The one-letter command-line option.
     short: ?u8 = null,
+
+    /// The name of the environment variable that is checked for the value of
+    /// this option. The prefix for the environment variables is prepended to
+    /// this value. The default is the name of option. The name of the variable
+    /// is always converted to uppercase.
+    environment_variable: ?[]const u8 = null,
+
+    /// The name of the variable in the config file that is checked for
+    /// the value of this option. The default is the name of option where all
+    /// underscores are replaced by hyphens.
+    config_file_name: ?[]const u8 = null,
 
     /// Short description of the option on the command-line help output.
     description: ?[]const u8 = null,
@@ -85,10 +102,18 @@ pub const Metadata = struct {
     /// the config file.
     disable_config_file: bool = false,
 
-    /// Subcommands for which the command-line option for this config option
-    /// should be created for instead of creating it as a global command-line
-    /// option.
-    subcommands: ?[]const cli.Subcommand = null,
+    /// If this config option is a string and it should represent a path, this
+    /// should be `true` so that it is parsed as a path. Paths are expanded,
+    /// i.e. user home directories are expanded. Environment variables are
+    /// expanded in all strings.
+    ///
+    /// TODO: Is there need to expand environment variables in all strings.
+    is_path: bool = false,
+
+    // /// Subcommands for which the command-line option for this config option
+    // /// should be created for instead of creating it as a global command-line
+    // /// option.
+    // subcommands: ?[]const cli.Subcommand = null,
 };
 
 pub const metadata = [_]Metadata{
@@ -98,20 +123,21 @@ pub const metadata = [_]Metadata{
         .short = 'c',
         .description = "use config file from `<path>`",
         .disable_config_file = true,
+        .is_path = true,
     },
     .{
-        .name = "working_directory",
-        .long = "directory",
-        .short = 'C',
+        .name = "directory",
+        .short = 'd',
         .description = "run Reginald as if it was started from `<path>`",
+        .is_path = true,
     },
-    .{
-        .name = "max_jobs",
-        .long = "jobs",
-        .short = 'j',
-        .description = "maximum number of jobs to run concurrently",
-        .subcommands = &[_]cli.Subcommand{.apply},
-    },
+    // .{
+    //     .name = "max_jobs",
+    //     .long = "jobs",
+    //     .short = 'j',
+    //     .description = "maximum number of jobs to run concurrently",
+    //     .subcommands = &[_]cli.Subcommand{.apply},
+    // },
     .{
         .name = "print_help",
         .long = "help",
@@ -135,7 +161,172 @@ pub const metadata = [_]Metadata{
         .short = 'v',
         .description = "print more verbose output",
     },
+    .{
+        .name = "working_directory",
+        .long = "chdir",
+        .short = 'C',
+        .description = "run Reginald as if it was started from `<path>`",
+        .disable_config_file = true,
+        .is_path = true,
+    },
 };
+
+/// Initialize the config instance and parse the the global config options into
+/// it. This includes resolving the config file location, reading it, and
+/// parsing the global config option values from it, from the environment
+/// variables, and from the CLI options. The caller owns the created `Config`
+/// and must call `deinit` on it.
+pub fn init(allocator: Allocator, args: cli.Parsed) !@This() {
+    var cfg: @This() = .{ .allocator = allocator };
+    errdefer cfg.deinit();
+
+    try cfg.parseInitValue("working_directory", args);
+
+    return cfg;
+}
+
+/// Free the memory allocated by the `Config`.
+pub fn deinit(self: *@This()) void {
+    self.allocator.free(self.working_directory);
+}
+
+/// Convert an ASCII string given as a config values to a bool.
+pub fn parseBool(a: []const u8) !bool {
+    if (a.len > 5) {
+        return error.InvalidValue;
+    }
+
+    var buf: [5]u8 = undefined;
+    const v = std.ascii.lowerString(&buf, a);
+
+    if (std.mem.eql(u8, v, "true")) {
+        return true;
+    } else if (std.mem.eql(u8, v, "t")) {
+        return true;
+    } else if (std.mem.eql(u8, v, "1")) {
+        return true;
+    } else if (std.mem.eql(u8, v, "false")) {
+        return false;
+    } else if (std.mem.eql(u8, v, "f")) {
+        return false;
+    } else if (std.mem.eql(u8, v, "0")) {
+        return false;
+    }
+
+    return error.InvalidValue;
+}
+
+pub fn valueType(m: Metadata) !ValueType {
+    // We need to loop through the fields instead of using the built-in
+    // functions for accessing by name as the parameter is not known at compile
+    // time.
+    inline for (std.meta.fields(@This())) |field| {
+        if (std.mem.eql(u8, field.name, m.name)) {
+            return switch (field.type) {
+                bool => .bool,
+                i64 => .int,
+                []const u8 => .string,
+                else => error.InvalidField,
+            };
+        }
+    }
+
+    return error.UnknownField;
+}
+
+fn fieldValueType(comptime name: []const u8) ValueType {
+    // We need to loop through the fields instead of using the built-in
+    // functions for accessing by name as the parameter is not known at compile
+    // time.
+    return switch (@FieldType(@This(), name)) {
+        bool => .bool,
+        i64 => .int,
+        []const u8 => .string,
+        else => @compileError("Config field " ++ name ++ " has invalid type"),
+    };
+}
+
+/// Parse a config value that is required for the initialization of the program
+/// and reading the rest of the config values.
+fn parseInitValue(self: *@This(), comptime name: []const u8, args: cli.Parsed) !void {
+    const meta = findMetadata(name) orelse return error.UnknownOption;
+    const vt = fieldValueType(name);
+
+    if (args.values.get(meta.name)) |val| {
+        if (@as(ValueType, val) != vt) {
+            return error.TypeMismatch;
+        }
+
+        @field(self, name) = switch (@FieldType(@This(), name)) {
+            bool => val.bool,
+            i64 => val.int,
+            []const u8 => blk: {
+                if (meta.is_path) {
+                    break :blk try filepath.expand(self.allocator, val.string);
+                } else {
+                    break :blk try filepath.expandEnv(self.allocator, val.string);
+                }
+            },
+            else => @compileError("Config field " ++ name ++ " has invalid type"),
+        };
+
+        return;
+    }
+
+    if (meta.disable_env) {
+        return;
+    }
+
+    const meta_env = meta.environment_variable orelse meta.name;
+    var env_name = try std.mem.concat(
+        self.allocator,
+        u8,
+        &[_][]const u8{ build_options.env_prefix, "_", meta_env },
+    );
+    defer self.allocator.free(env_name);
+
+    std.mem.replaceScalar(u8, env_name, '-', '_');
+
+    var buf: [1024]u8 = undefined;
+    env_name = std.ascii.upperString(&buf, env_name);
+
+    if (std.process.getEnvVarOwned(self.allocator, env_name)) |s| {
+        defer self.allocator.free(s);
+        if (s.len != 0) {
+            @field(self, name) = switch (@FieldType(@This(), name)) {
+                bool => try parseBool(s),
+                i64 => try std.fmt.parseInt(i64, s, 0),
+                []const u8 => blk: {
+                    if (meta.is_path) {
+                        break :blk try filepath.expand(self.allocator, s);
+                    } else {
+                        break :blk try filepath.expandEnv(self.allocator, s);
+                    }
+                },
+                else => @compileError("Config field " ++ name ++ " has invalid type"),
+            };
+        }
+    } else |err| switch (err) {
+        error.EnvironmentVariableNotFound => {}, // no-op, use default
+        else => return err,
+    }
+
+    if (@FieldType(@This(), name) == []const u8) {
+        @field(self, name) = try self.allocator.dupe(u8, @field(self, name));
+    }
+}
+
+/// Return the config metadata entry for the given name or null if no entry is
+/// found for the name.
+fn findMetadata(name: []const u8) ?Metadata {
+    inline for (metadata) |m| {
+        if (std.mem.eql(u8, m.name, name)) {
+            return m;
+        }
+    }
+
+    return null;
+}
 
 /// Find the first matching config file and load its contents. The caller owns
 /// the returned contents and should call `free` on them.
@@ -311,50 +502,6 @@ pub fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const
     }
 
     return error.FileNotFound;
-}
-
-pub fn valueType(m: Metadata) !ValueType {
-    // We need to loop through the fields instead of using the built-in
-    // functions for accessing by name as the parameter is not known at compile
-    // time.
-    inline for (std.meta.fields(Config)) |field| {
-        if (std.mem.eql(u8, field.name, m.name)) {
-            return switch (field.type) {
-                bool => .bool,
-                i64 => .int,
-                []const u8 => .string,
-                else => error.InvalidField,
-            };
-        }
-    }
-
-    return error.UnknownField;
-}
-
-/// Convert an ASCII string given as a config values to a bool.
-pub fn parseBool(a: []const u8) !bool {
-    if (a.len > 5) {
-        return error.InvalidValue;
-    }
-
-    var buf: [5]u8 = undefined;
-    const v = std.ascii.lowerString(&buf, a);
-
-    if (std.mem.eql(u8, v, "true")) {
-        return true;
-    } else if (std.mem.eql(u8, v, "t")) {
-        return true;
-    } else if (std.mem.eql(u8, v, "1")) {
-        return true;
-    } else if (std.mem.eql(u8, v, "false")) {
-        return false;
-    } else if (std.mem.eql(u8, v, "f")) {
-        return false;
-    } else if (std.mem.eql(u8, v, "0")) {
-        return false;
-    }
-
-    return error.InvalidValue;
 }
 
 /// Try to load a config file. Caller owns the result and should call `free` on

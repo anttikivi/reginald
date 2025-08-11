@@ -15,17 +15,23 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
     // TODO: It could be ok to remove these safety checks.
     comptime {
-        if (std.meta.fields(Config).len != Config.metadata.len) {
+        // Add one to take the `allocator` field into account?
+        if (std.meta.fields(Config).len != Config.metadata.len + 1) {
             @compileError("length of the config metadata does not match the config");
         }
 
         for (std.meta.fields(Config)) |field| {
+            if (std.mem.eql(u8, field.name, "allocator")) {
+                continue;
+            }
+
             var found = false;
             for (Config.metadata) |m| {
                 if (std.mem.eql(u8, field.name, m.name)) {
                     found = true;
                 }
             }
+
             if (!found) {
                 @compileError("config field " ++ field.name ++ " not present in metadata");
             }
@@ -70,8 +76,6 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     //     return;
     // }
 
-    _ = arena;
-
     const errw = std.io.getStdErr().writer();
     var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], errw);
     defer parsed_args.deinit();
@@ -101,29 +105,29 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
         }
     }
 
-    const wd = try workingDirPath(gpa, parsed_args);
-    defer if (wd) |s| {
-        gpa.free(s);
-    };
+    var cfg = try Config.init(arena, parsed_args);
+    defer cfg.deinit();
 
-    const cfg_file = Config.loadFile(gpa, parsed_args, wd) catch |err| {
-        switch (err) {
-            error.FileNotFound, error.IsDir => {
-                try std.io.getStdErr().writer().print("config file not found\n", .{});
+    std.debug.print("wd: {s}\n", .{cfg.working_directory});
 
-                return err;
-            },
-            else => return err,
-        }
-    };
-    defer gpa.free(cfg_file);
-
-    var diag: toml.Diagnostics = undefined;
-    var toml_value = toml.parseWithDiagnostics(gpa, cfg_file, &diag) catch |e| {
-        try errw.print("{}\n", .{diag});
-        return e;
-    };
-    defer toml_value.deinit(gpa);
+    // const cfg_file = Config.loadFile(gpa, parsed_args, wd) catch |err| {
+    //     switch (err) {
+    //         error.FileNotFound, error.IsDir => {
+    //             try std.io.getStdErr().writer().print("config file not found\n", .{});
+    //
+    //             return err;
+    //         },
+    //         else => return err,
+    //     }
+    // };
+    // defer gpa.free(cfg_file);
+    //
+    // var diag: toml.Diagnostics = undefined;
+    // var toml_value = toml.parseWithDiagnostics(gpa, cfg_file, &diag) catch |e| {
+    //     try errw.print("{}\n", .{diag});
+    //     return e;
+    // };
+    // defer toml_value.deinit(gpa);
 }
 
 /// Resolve the working directory of the current run. Caller owns the return

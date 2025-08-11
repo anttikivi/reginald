@@ -6,11 +6,11 @@ const testing = std.testing;
 const Config = @import("Config.zig");
 const Metadata = Config.Metadata;
 
-/// Subcommands available in Reginald.
-pub const Subcommand = enum { none, apply };
+// /// Subcommands available in Reginald.
+// pub const Subcommand = enum { none, apply };
 
 /// Value of a parsed command-line option.
-const OptionValue = union(enum) {
+const OptionValue = union(Config.ValueType) {
     bool: bool,
     int: i64,
     string: []const u8,
@@ -23,7 +23,7 @@ pub const Parsed = struct {
     /// The arguments remaining after parsing when unknown arguments don't make
     /// the parser return an error.
     args: [][]const u8,
-    subcommand: Subcommand,
+    // subcommand: Subcommand,
 
     /// Values of the command-line options that were found and parsed
     /// successfully. The values are stored by the name of the config option
@@ -76,7 +76,7 @@ fn parseArgsWithOptions(
     args: []const []const u8,
     writer: anytype,
 ) !Parsed {
-    var subcommand: Subcommand = .none;
+    const subcommand: ?[]const u8 = null;
     var unknown: std.ArrayList([]const u8) = switch (on_unknown) {
         .fail => undefined,
         .skip => .init(allocator),
@@ -340,23 +340,31 @@ fn parseArgsWithOptions(
             continue;
         }
 
-        if (std.meta.stringToEnum(Subcommand, arg)) |tag| {
-            switch (tag) {
-                .apply => subcommand = .apply,
-                .none => {
-                    try writer.print("unknown command `{s}`\n", .{arg});
-                    return error.InvalidArgs;
-                },
-            }
-        } else {
-            switch (on_unknown) {
-                .fail => {
-                    try writer.print("unknown argument: {s}\n", .{arg});
-                    return error.InvalidArgs;
-                },
-                .skip => try unknown.append(try allocator.dupe(u8, arg)),
-            }
+        switch (on_unknown) {
+            .fail => {
+                try writer.print("unknown argument: {s}\n", .{arg});
+                return error.InvalidArgs;
+            },
+            .skip => try unknown.append(try allocator.dupe(u8, arg)),
         }
+
+        // if (std.meta.stringToEnum(Subcommand, arg)) |tag| {
+        //     switch (tag) {
+        //         .apply => subcommand = .apply,
+        //         .none => {
+        //             try writer.print("unknown command `{s}`\n", .{arg});
+        //             return error.InvalidArgs;
+        //         },
+        //     }
+        // } else {
+        //     switch (on_unknown) {
+        //         .fail => {
+        //             try writer.print("unknown argument: {s}\n", .{arg});
+        //             return error.InvalidArgs;
+        //         },
+        //         .skip => try unknown.append(try allocator.dupe(u8, arg)),
+        //     }
+        // }
     }
 
     return .{
@@ -365,33 +373,35 @@ fn parseArgsWithOptions(
             .fail => try allocator.alloc([]const u8, 0), // TODO: Stupid?
             .skip => try unknown.toOwnedSlice(),
         },
-        .subcommand = subcommand,
+        // .subcommand = subcommand,
         .values = values,
     };
 }
 
 /// Look up the config option metadata with the given long command-line option
 /// name.
-fn optionMetadataForLong(name: []const u8, subcmd: Subcommand) ?Metadata {
+fn optionMetadataForLong(name: []const u8, subcmd: ?[]const u8) ?Metadata {
+    _ = subcmd;
+
     for (Config.metadata) |m| {
         if (m.disable_cli_option) {
             continue;
         }
 
-        if (m.subcommands) |slice| {
-            var found = false;
-
-            for (slice) |s| {
-                if (s == subcmd) {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found) {
-                continue;
-            }
-        }
+        // if (m.subcommands) |slice| {
+        //     var found = false;
+        //
+        //     for (slice) |s| {
+        //         if (s == subcmd) {
+        //             found = true;
+        //             break;
+        //         }
+        //     }
+        //
+        //     if (!found) {
+        //         continue;
+        //     }
+        // }
 
         if (m.long) |long| {
             if (std.mem.eql(u8, long, name)) {
@@ -407,26 +417,28 @@ fn optionMetadataForLong(name: []const u8, subcmd: Subcommand) ?Metadata {
 
 /// Look up the config option metadata with the given short, one-letter
 /// command-line option name.
-fn optionMetadataForShort(short: u8, subcmd: Subcommand) ?Metadata {
+fn optionMetadataForShort(short: u8, subcmd: ?[]const u8) ?Metadata {
+    _ = subcmd;
+
     for (Config.metadata) |m| {
         if (m.disable_cli_option) {
             continue;
         }
 
-        if (m.subcommands) |slice| {
-            var found = false;
-
-            for (slice) |s| {
-                if (s == subcmd) {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found) {
-                continue;
-            }
-        }
+        // if (m.subcommands) |slice| {
+        //     var found = false;
+        //
+        //     for (slice) |s| {
+        //         if (s == subcmd) {
+        //             found = true;
+        //             break;
+        //         }
+        //     }
+        //
+        //     if (!found) {
+        //         continue;
+        //     }
+        // }
 
         if (m.short) |c| {
             if (c == short) {
@@ -555,16 +567,16 @@ test "multiple string options" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
-    try testing.expect(parsed.values.contains("working_directory"));
+    try testing.expect(parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
     try testing.expect(parsed.values.get("config_file") != null);
-    try testing.expect(parsed.values.get("working_directory") != null);
+    try testing.expect(parsed.values.get("directory") != null);
     try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
-    try testing.expectEqualStrings("/tmp", parsed.values.get("working_directory").?.string);
+    try testing.expectEqualStrings("/tmp", parsed.values.get("directory").?.string);
 
     try testing.expectEqual(0, parsed.args.len);
 }
@@ -632,7 +644,7 @@ test "bool and string option" {
 }
 
 test "string option mixed" {
-    const args = [_][:0]const u8{ "reginald", "--directory=/tmp", "--config", "/tmp/config.toml" };
+    const args = [_][:0]const u8{ "reginald", "--chdir=/tmp", "--config", "/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
@@ -958,143 +970,143 @@ test "invalid empty short" {
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
-test "subcommand apply" {
-    const args = [_][:0]const u8{ "reginald", "apply" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
+// test "subcommand apply" {
+//     const args = [_][:0]const u8{ "reginald", "apply" };
+//     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+//     defer parsed.deinit();
+//
+//     try testing.expect(!parsed.values.contains("config_file"));
+//     try testing.expect(!parsed.values.contains("print_version"));
+//     try testing.expect(!parsed.values.contains("print_help"));
+//     try testing.expect(!parsed.values.contains("quiet"));
+//     try testing.expect(!parsed.values.contains("verbose"));
+//     try testing.expect(!parsed.values.contains("working_directory"));
+//
+//     try testing.expectEqual(0, parsed.args.len);
+//
+//     try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+// }
+//
+// test "subcommand int option" {
+//     const args = [_][:0]const u8{ "reginald", "apply", "--jobs", "20" };
+//     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+//     defer parsed.deinit();
+//
+//     try testing.expect(!parsed.values.contains("config_file"));
+//     try testing.expect(!parsed.values.contains("print_version"));
+//     try testing.expect(!parsed.values.contains("print_help"));
+//     try testing.expect(!parsed.values.contains("quiet"));
+//     try testing.expect(!parsed.values.contains("verbose"));
+//     try testing.expect(!parsed.values.contains("working_directory"));
+//     try testing.expect(parsed.values.contains("max_jobs"));
+//
+//     try testing.expect(parsed.values.get("max_jobs") != null);
+//     try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+//
+//     try testing.expectEqual(0, parsed.args.len);
+//
+//     try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+// }
+//
+// test "subcommand global option before" {
+//     const args = [_][:0]const u8{ "reginald", "--verbose", "apply", "--jobs", "20" };
+//     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+//     defer parsed.deinit();
+//
+//     try testing.expect(parsed.values.contains("max_jobs"));
+//     try testing.expect(parsed.values.contains("verbose"));
+//     try testing.expect(!parsed.values.contains("config_file"));
+//     try testing.expect(!parsed.values.contains("print_version"));
+//     try testing.expect(!parsed.values.contains("print_help"));
+//     try testing.expect(!parsed.values.contains("quiet"));
+//     try testing.expect(!parsed.values.contains("working_directory"));
+//
+//     try testing.expect(parsed.values.get("max_jobs") != null);
+//     try testing.expect(parsed.values.get("verbose") != null);
+//     try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+//     try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+//
+//     try testing.expectEqual(0, parsed.args.len);
+//
+//     try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+// }
+//
+// test "subcommand global option after" {
+//     const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "20" };
+//     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+//     defer parsed.deinit();
+//
+//     try testing.expect(parsed.values.contains("max_jobs"));
+//     try testing.expect(parsed.values.contains("verbose"));
+//     try testing.expect(!parsed.values.contains("config_file"));
+//     try testing.expect(!parsed.values.contains("print_version"));
+//     try testing.expect(!parsed.values.contains("print_help"));
+//     try testing.expect(!parsed.values.contains("quiet"));
+//     try testing.expect(!parsed.values.contains("working_directory"));
+//
+//     try testing.expect(parsed.values.get("max_jobs") != null);
+//     try testing.expect(parsed.values.get("verbose") != null);
+//     try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+//     try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+//
+//     try testing.expectEqual(0, parsed.args.len);
+//
+//     try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+// }
+//
+// test "subcommand global option both" {
+//     const args = [_][:0]const u8{ "reginald", "--quiet", "apply", "--verbose", "--jobs", "20" };
+//     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+//     defer parsed.deinit();
+//
+//     try testing.expect(parsed.values.contains("max_jobs"));
+//     try testing.expect(parsed.values.contains("quiet"));
+//     try testing.expect(parsed.values.contains("verbose"));
+//     try testing.expect(!parsed.values.contains("config_file"));
+//     try testing.expect(!parsed.values.contains("print_version"));
+//     try testing.expect(!parsed.values.contains("print_help"));
+//     try testing.expect(!parsed.values.contains("working_directory"));
+//
+//     try testing.expect(parsed.values.get("max_jobs") != null);
+//     try testing.expect(parsed.values.get("quiet") != null);
+//     try testing.expect(parsed.values.get("verbose") != null);
+//     try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
+//     try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
+//     try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+//
+//     try testing.expectEqual(0, parsed.args.len);
+//
+//     try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+// }
+//
+// test "subcommand option before" {
+//     const args = [_][:0]const u8{ "reginald", "--verbose", "--jobs", "20", "apply" };
+//     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
+//     try testing.expectError(error.InvalidArgs, parsed);
+// }
 
-    try testing.expect(!parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expectEqual(0, parsed.args.len);
-
-    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
-}
-
-test "subcommand int option" {
-    const args = [_][:0]const u8{ "reginald", "apply", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(!parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-    try testing.expect(parsed.values.contains("max_jobs"));
-
-    try testing.expect(parsed.values.get("max_jobs") != null);
-    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
-
-    try testing.expectEqual(0, parsed.args.len);
-
-    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
-}
-
-test "subcommand global option before" {
-    const args = [_][:0]const u8{ "reginald", "--verbose", "apply", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("max_jobs"));
-    try testing.expect(parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("max_jobs") != null);
-    try testing.expect(parsed.values.get("verbose") != null);
-    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
-    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
-
-    try testing.expectEqual(0, parsed.args.len);
-
-    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
-}
-
-test "subcommand global option after" {
-    const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("max_jobs"));
-    try testing.expect(parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("max_jobs") != null);
-    try testing.expect(parsed.values.get("verbose") != null);
-    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
-    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
-
-    try testing.expectEqual(0, parsed.args.len);
-
-    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
-}
-
-test "subcommand global option both" {
-    const args = [_][:0]const u8{ "reginald", "--quiet", "apply", "--verbose", "--jobs", "20" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("max_jobs"));
-    try testing.expect(parsed.values.contains("quiet"));
-    try testing.expect(parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("max_jobs") != null);
-    try testing.expect(parsed.values.get("quiet") != null);
-    try testing.expect(parsed.values.get("verbose") != null);
-    try testing.expectEqual(20, parsed.values.get("max_jobs").?.int);
-    try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
-    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
-
-    try testing.expectEqual(0, parsed.args.len);
-
-    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
-}
-
-test "subcommand option before" {
-    const args = [_][:0]const u8{ "reginald", "--verbose", "--jobs", "20", "apply" };
-    const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    try testing.expectError(error.InvalidArgs, parsed);
-}
-
-test "no unknown" {
-    const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "40" };
-    var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("max_jobs"));
-    try testing.expect(parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("max_jobs") != null);
-    try testing.expect(parsed.values.get("verbose") != null);
-    try testing.expectEqual(40, parsed.values.get("max_jobs").?.int);
-    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
-
-    try testing.expectEqual(0, parsed.args.len);
-
-    try testing.expectEqual(Subcommand.apply, parsed.subcommand);
-}
+// test "no unknown" {
+//     const args = [_][:0]const u8{ "reginald", "apply", "--verbose", "--jobs", "40" };
+//     var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
+//     defer parsed.deinit();
+//
+//     try testing.expect(parsed.values.contains("max_jobs"));
+//     try testing.expect(parsed.values.contains("verbose"));
+//     try testing.expect(!parsed.values.contains("config_file"));
+//     try testing.expect(!parsed.values.contains("print_version"));
+//     try testing.expect(!parsed.values.contains("print_help"));
+//     try testing.expect(!parsed.values.contains("quiet"));
+//     try testing.expect(!parsed.values.contains("working_directory"));
+//
+//     try testing.expect(parsed.values.get("max_jobs") != null);
+//     try testing.expect(parsed.values.get("verbose") != null);
+//     try testing.expectEqual(40, parsed.values.get("max_jobs").?.int);
+//     try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+//
+//     try testing.expectEqual(0, parsed.args.len);
+//
+//     try testing.expectEqual(Subcommand.apply, parsed.subcommand);
+// }
 
 test "unknown long option" {
     const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose" };
