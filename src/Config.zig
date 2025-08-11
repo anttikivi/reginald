@@ -74,13 +74,16 @@ pub const Metadata = struct {
     /// Short description of the option on the command-line help output.
     description: ?[]const u8 = null,
 
-    /// If not null and set to true, no command-line option is generated for
-    /// this option.
-    disable_option: ?bool = null,
+    /// If set to true, no command-line option is generated for this option.
+    disable_cli_option: bool = false,
 
-    /// If not null and set to true, value for this config option is not checked
-    /// from an environment variable.
-    disable_env: ?bool = null,
+    /// If set to true, value for this config option is not checked from
+    /// an environment variable.
+    disable_env: bool = false,
+
+    /// If set to true, value for this config option is not checked from
+    /// the config file.
+    disable_config_file: bool = false,
 
     /// Subcommands for which the command-line option for this config option
     /// should be created for instead of creating it as a global command-line
@@ -94,6 +97,7 @@ pub const metadata = [_]Metadata{
         .long = "config",
         .short = 'c',
         .description = "use config file from `<path>`",
+        .disable_config_file = true,
     },
     .{
         .name = "working_directory",
