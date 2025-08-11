@@ -1149,6 +1149,32 @@ test "unknown arg" {
     try testing.expectEqualStrings("not-real", parsed.args[0]);
 }
 
+test "unknown arg and options after" {
+    const args = [_][:0]const u8{ "reginald", "--verbose", "-C", "/tmp", "not-real", "-c", "test", "-e", "-h" };
+    var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(parsed.values.contains("print_help"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(parsed.values.contains("working_directory"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("quiet"));
+
+    try testing.expect(parsed.values.get("config_file") != null);
+    try testing.expect(parsed.values.get("print_help") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+    try testing.expect(parsed.values.get("working_directory") != null);
+    try testing.expectEqualStrings("test", parsed.values.get("config_file").?.string);
+    try testing.expectEqual(true, parsed.values.get("print_help").?.bool);
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+    try testing.expectEqualStrings("/tmp", parsed.values.get("working_directory").?.string);
+
+    try testing.expectEqual(2, parsed.args.len);
+    try testing.expectEqualStrings("not-real", parsed.args[0]);
+    try testing.expectEqualStrings("-e", parsed.args[1]);
+}
+
 test "multiple unknown" {
     const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose", "-ah", "unreal", "-b" };
     var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
