@@ -534,7 +534,7 @@ test "expandEnv Windows" {
 
             const path = "/tmp/%$%/something_else";
             const actual = expandEnv(testing.allocator, path);
-            try testing.expectError(error.InvalidVar, actual);
+            try testing.expectError(error.EnvironmentVariableNotFound, actual);
         }
 
         {
