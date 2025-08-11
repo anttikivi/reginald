@@ -225,7 +225,7 @@ fn expandWindowsEnv(allocator: Allocator, s: []const u8) ExpandError![]const u8 
                 // variable name.
                 for (s[k..]) |c| {
                     if (c == '%') {
-                        return error.InvalidVar;
+                        return error.EnvironmentVariableNotFound;
                     }
                 }
 
