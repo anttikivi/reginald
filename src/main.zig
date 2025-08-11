@@ -59,6 +59,9 @@ pub fn main() !void {
 }
 
 fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
+    var bw = std.io.bufferedWriter(std.io.getStdOut().writer());
+    const w = bw.writer();
+
     // if (args.len <= 1) {
     //     var bw = std.io.bufferedWriter(std.io.getStdOut().writer());
     //     const w = bw.writer();
@@ -72,6 +75,31 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     const errw = std.io.getStdErr().writer();
     var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], errw);
     defer parsed_args.deinit();
+
+    // If there are no unknown arguments and help or version was invoked, we can
+    // short-circuit into printing them and skip parsing the config and plugins.
+    if (parsed_args.args.len == 0) {
+        if (parsed_args.values.get("print_help")) |h| {
+            switch (h) {
+                .bool => {
+                    try w.writeAll("help message!\n");
+                    try bw.flush();
+                    return;
+                },
+                else => unreachable,
+            }
+        } else if (parsed_args.values.get("print_version")) |v| {
+            switch (v) {
+                .bool => {
+                    try w.writeAll(build_options.exe_name ++ " " ++ build_options.version ++ "\n");
+                    try w.writeAll("Licensed under the Apache License, Version 2.0: <https://www.apache.org/licenses/LICENSE-2.0>\n");
+                    try bw.flush();
+                    return;
+                },
+                else => unreachable,
+            }
+        }
+    }
 
     const wd = try workingDirPath(gpa, parsed_args);
     defer if (wd) |s| {

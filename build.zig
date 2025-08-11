@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const reginald_exe_name = "reginald";
 const reginald_version: std.SemanticVersion = .{ .major = 0, .minor = 1, .patch = 0 };
 
 pub fn build(b: *std.Build) !void {
@@ -12,13 +13,15 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     const exe = b.addExecutable(.{
-        .name = "reginald",
+        .name = reginald_exe_name,
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
 
     const exe_options = b.addOptions();
     exe.root_module.addOptions("build_options", exe_options);
+
+    exe_options.addOption([]const u8, "exe_name", reginald_exe_name);
 
     const env_prefix_opt = b.option(
         []const u8,
