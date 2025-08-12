@@ -109,6 +109,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     defer cfg.deinit();
 
     std.debug.print("wd: {s}\n", .{cfg.working_directory});
+    std.debug.print("config: {s}\n", .{cfg.config_file});
 
     // const cfg_file = Config.loadFile(gpa, parsed_args, wd) catch |err| {
     //     switch (err) {
@@ -128,30 +129,6 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     //     return e;
     // };
     // defer toml_value.deinit(gpa);
-}
-
-/// Resolve the working directory of the current run. Caller owns the return
-/// value and should call `free` on it if it is not null. A null return value
-/// means that the current working directory should be used.
-fn workingDirPath(allocator: Allocator, parsed_args: cli.Parsed) !?[]const u8 {
-    if (parsed_args.values.get("working_directory")) |wd| {
-        switch (wd) {
-            .string => |s| return try filepath.expand(allocator, s),
-            else => unreachable,
-        }
-    }
-
-    if (std.process.getEnvVarOwned(allocator, build_options.env_prefix ++ "DIRECTORY")) |s| {
-        defer allocator.free(s);
-        return try filepath.expand(allocator, s);
-    } else |err| {
-        switch (err) {
-            error.EnvironmentVariableNotFound => {}, // no-op
-            else => return err,
-        }
-    }
-
-    return null;
 }
 
 test {

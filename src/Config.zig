@@ -180,6 +180,7 @@ pub fn init(allocator: Allocator, args: cli.Parsed) !@This() {
     var cfg: @This() = .{ .allocator = allocator };
     errdefer cfg.deinit();
 
+    try cfg.parseInitValue("config_file", args);
     try cfg.parseInitValue("working_directory", args);
 
     return cfg;
@@ -330,7 +331,7 @@ fn findMetadata(name: []const u8) ?Metadata {
 
 /// Find the first matching config file and load its contents. The caller owns
 /// the returned contents and should call `free` on them.
-pub fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8) ![]const u8 {
+fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8) ![]const u8 {
     var env_path: ?[]const u8 = null;
     if (std.process.getEnvVarOwned(allocator, build_options.env_prefix ++ "CONFIG")) |s| {
         env_path = s;
