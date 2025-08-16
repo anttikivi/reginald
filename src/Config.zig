@@ -4,11 +4,15 @@
 //! the different config sources so that the user's config can be represented
 //! losslessly.
 
+const Config = @This();
+
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
 const fs = std.fs;
+const mem = std.mem;
 
 const cli = @import("cli.zig");
 const filepath = @import("filepath.zig");
@@ -116,7 +120,7 @@ pub const Metadata = struct {
     // subcommands: ?[]const cli.Subcommand = null,
 };
 
-pub const metadata = [_]Metadata{
+pub const global_options = [_]Metadata{
     .{
         .name = "config_file",
         .long = "config",
@@ -176,19 +180,34 @@ pub const metadata = [_]Metadata{
 /// parsing the global config option values from it, from the environment
 /// variables, and from the CLI options. The caller owns the created `Config`
 /// and must call `deinit` on it.
-pub fn init(allocator: Allocator, args: cli.Parsed) !@This() {
-    var cfg: @This() = .{ .allocator = allocator };
+///
+/// The first `Allocator` passed into the function should the allocator that
+/// the `Config` uses to do the permanent allocations of the values. The second
+/// `Allocator` is used to create a temporary arena that is used for
+/// the temporary allocations during the initialization.
+pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
+    var cfg: Config = .{ .allocator = allocator };
     errdefer cfg.deinit();
 
-    try cfg.parseInitValue("config_file", args);
-    try cfg.parseInitValue("working_directory", args);
+    var arena_instance = std.heap.ArenaAllocator.init(gpa);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
+
+    try cfg.parseInitValue(arena, "config_file", args);
+    try cfg.parseInitValue(arena, "working_directory", args);
+
+    const file_data = try cfg.loadFile(arena);
+    defer arena.free(file_data);
+
+    std.debug.print("{s}\n", .{file_data});
 
     return cfg;
 }
 
 /// Free the memory allocated by the `Config`.
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *Config) void {
     self.allocator.free(self.working_directory);
+    self.allocator.free(self.config_file);
 }
 
 /// Convert an ASCII string given as a config values to a bool.
@@ -200,17 +219,17 @@ pub fn parseBool(a: []const u8) !bool {
     var buf: [5]u8 = undefined;
     const v = std.ascii.lowerString(&buf, a);
 
-    if (std.mem.eql(u8, v, "true")) {
+    if (mem.eql(u8, v, "true")) {
         return true;
-    } else if (std.mem.eql(u8, v, "t")) {
+    } else if (mem.eql(u8, v, "t")) {
         return true;
-    } else if (std.mem.eql(u8, v, "1")) {
+    } else if (mem.eql(u8, v, "1")) {
         return true;
-    } else if (std.mem.eql(u8, v, "false")) {
+    } else if (mem.eql(u8, v, "false")) {
         return false;
-    } else if (std.mem.eql(u8, v, "f")) {
+    } else if (mem.eql(u8, v, "f")) {
         return false;
-    } else if (std.mem.eql(u8, v, "0")) {
+    } else if (mem.eql(u8, v, "0")) {
         return false;
     }
 
@@ -221,8 +240,8 @@ pub fn valueType(m: Metadata) !ValueType {
     // We need to loop through the fields instead of using the built-in
     // functions for accessing by name as the parameter is not known at compile
     // time.
-    inline for (std.meta.fields(@This())) |field| {
-        if (std.mem.eql(u8, field.name, m.name)) {
+    inline for (std.meta.fields(Config)) |field| {
+        if (mem.eql(u8, field.name, m.name)) {
             return switch (field.type) {
                 bool => .bool,
                 i64 => .int,
@@ -239,7 +258,7 @@ fn fieldValueType(comptime name: []const u8) ValueType {
     // We need to loop through the fields instead of using the built-in
     // functions for accessing by name as the parameter is not known at compile
     // time.
-    return switch (@FieldType(@This(), name)) {
+    return switch (@FieldType(Config, name)) {
         bool => .bool,
         i64 => .int,
         []const u8 => .string,
@@ -249,7 +268,7 @@ fn fieldValueType(comptime name: []const u8) ValueType {
 
 /// Parse a config value that is required for the initialization of the program
 /// and reading the rest of the config values.
-fn parseInitValue(self: *@This(), comptime name: []const u8, args: cli.Parsed) !void {
+fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, args: cli.Parsed) !void {
     const meta = findMetadata(name) orelse return error.UnknownOption;
     const vt = fieldValueType(name);
 
@@ -258,14 +277,17 @@ fn parseInitValue(self: *@This(), comptime name: []const u8, args: cli.Parsed) !
             return error.TypeMismatch;
         }
 
-        @field(self, name) = switch (@FieldType(@This(), name)) {
+        @field(self, name) = switch (@FieldType(Config, name)) {
             bool => val.bool,
             i64 => val.int,
             []const u8 => blk: {
                 if (meta.is_path) {
-                    break :blk try filepath.expand(self.allocator, val.string);
+                    break :blk try self.allocator.dupe(u8, try filepath.expand(arena, val.string));
                 } else {
-                    break :blk try filepath.expandEnv(self.allocator, val.string);
+                    break :blk try self.allocator.dupe(
+                        u8,
+                        try filepath.expandEnv(arena, val.string),
+                    );
                 }
             },
             else => @compileError("Config field " ++ name ++ " has invalid type"),
@@ -278,30 +300,30 @@ fn parseInitValue(self: *@This(), comptime name: []const u8, args: cli.Parsed) !
         return;
     }
 
-    const meta_env = meta.environment_variable orelse meta.name;
-    var env_name = try std.mem.concat(
-        self.allocator,
+    const meta_env_var = meta.environment_variable orelse meta.name;
+    const var_name_alloc = try mem.concat(
+        arena,
         u8,
-        &[_][]const u8{ build_options.env_prefix, "_", meta_env },
+        &[_][]const u8{ build_options.env_prefix, "_", meta_env_var },
     );
-    defer self.allocator.free(env_name);
+    defer arena.free(var_name_alloc);
 
-    std.mem.replaceScalar(u8, env_name, '-', '_');
+    mem.replaceScalar(u8, var_name_alloc, '-', '_');
 
     var buf: [1024]u8 = undefined;
-    env_name = std.ascii.upperString(&buf, env_name);
+    const var_name = std.ascii.upperString(&buf, var_name_alloc);
 
-    if (std.process.getEnvVarOwned(self.allocator, env_name)) |s| {
-        defer self.allocator.free(s);
+    if (std.process.getEnvVarOwned(arena, var_name)) |s| {
+        defer arena.free(s);
         if (s.len != 0) {
-            @field(self, name) = switch (@FieldType(@This(), name)) {
+            @field(self, name) = switch (@FieldType(Config, name)) {
                 bool => try parseBool(s),
                 i64 => try std.fmt.parseInt(i64, s, 0),
                 []const u8 => blk: {
                     if (meta.is_path) {
-                        break :blk try filepath.expand(self.allocator, s);
+                        break :blk try self.allocator.dupe(u8, try filepath.expand(arena, s));
                     } else {
-                        break :blk try filepath.expandEnv(self.allocator, s);
+                        break :blk try self.allocator.dupe(u8, try filepath.expandEnv(arena, s));
                     }
                 },
                 else => @compileError("Config field " ++ name ++ " has invalid type"),
@@ -312,7 +334,7 @@ fn parseInitValue(self: *@This(), comptime name: []const u8, args: cli.Parsed) !
         else => return err,
     }
 
-    if (@FieldType(@This(), name) == []const u8) {
+    if (@FieldType(Config, name) == []const u8) {
         @field(self, name) = try self.allocator.dupe(u8, @field(self, name));
     }
 }
@@ -320,8 +342,8 @@ fn parseInitValue(self: *@This(), comptime name: []const u8, args: cli.Parsed) !
 /// Return the config metadata entry for the given name or null if no entry is
 /// found for the name.
 fn findMetadata(name: []const u8) ?Metadata {
-    inline for (metadata) |m| {
-        if (std.mem.eql(u8, m.name, name)) {
+    inline for (global_options) |m| {
+        if (mem.eql(u8, m.name, name)) {
             return m;
         }
     }
@@ -331,68 +353,17 @@ fn findMetadata(name: []const u8) ?Metadata {
 
 /// Find the first matching config file and load its contents. The caller owns
 /// the returned contents and should call `free` on them.
-fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8) ![]const u8 {
-    var env_path: ?[]const u8 = null;
-    if (std.process.getEnvVarOwned(allocator, build_options.env_prefix ++ "CONFIG")) |s| {
-        env_path = s;
-    } else |err| {
-        switch (err) {
-            error.EnvironmentVariableNotFound => {}, // no-op
-            else => return err,
-        }
+fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
+    var wd = try fs.cwd().openDir(self.working_directory, .{});
+    defer wd.close();
+
+    if (!mem.eql(u8, self.config_file, "")) {
+        return try loadOne(arena, self.config_file, &wd);
     }
-
-    var opt_path: ?[]const u8 = null;
-    if (parsed_args.values.get("config_file")) |file| {
-        switch (file) {
-            .string => |s| opt_path = s,
-            else => unreachable,
-        }
-    }
-
-    var path: ?[]const u8 = null;
-
-    if (opt_path) |s| {
-        if (env_path) |p| {
-            allocator.free(p);
-        }
-
-        path = try allocator.dupe(u8, s);
-    } else if (env_path) |s| {
-        path = s; // We already own s.
-    }
-
-    if (path) |p| {
-        defer allocator.free(p);
-
-        const f = try filepath.expand(allocator, p);
-        defer allocator.free(f);
-
-        var wd = fs.cwd();
-        if (wd_path) |s| {
-            wd = try wd.openDir(s, .{});
-        }
-        defer if (wd_path != null) {
-            wd.close();
-        };
-
-        return try loadOne(allocator, f, &wd);
-    }
-
-    // If the user uses an option or environment variable to set the config
-    // file, the lookup should fail if that file is not present. Otherwise, we
-    // should continue and check the default file locations.
-    var wd = fs.cwd();
-    if (wd_path) |s| {
-        wd = try wd.openDir(s, .{});
-    }
-    defer if (wd_path != null) {
-        wd.close();
-    };
 
     // Current working directory first as that's the most natural place.
     inline for (default_extensions) |e| {
-        if (loadOne(allocator, default_filename ++ e, &wd)) |result| {
+        if (loadOne(arena, default_filename ++ e, &wd)) |result| {
             return result;
         } else |err| {
             switch (err) {
@@ -402,14 +373,14 @@ fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8)
         }
     }
 
-    if (std.process.getEnvVarOwned(allocator, "XDG_CONFIG_HOME")) |xdg| {
-        defer allocator.free(xdg);
+    if (std.process.getEnvVarOwned(arena, "XDG_CONFIG_HOME")) |xdg| {
+        defer arena.free(xdg);
 
         // I think this is the encouraged way to handle the lookups.
         var dir = try wd.openDir(xdg, .{});
         defer dir.close();
 
-        if (tryPaths(allocator, unix_config_lookup, &dir)) |result| {
+        if (tryPaths(arena, unix_config_lookup, &dir)) |result| {
             return result;
         } else |err| {
             switch (err) {
@@ -427,13 +398,13 @@ fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8)
     if (native_os == .windows or native_os == .uefi) {
         // TODO: Are these the correct paths for Windows? I don't know it that
         // well.
-        const dirname = try filepath.expand(allocator, "%APPDATA%");
-        defer allocator.free(dirname);
+        const dirname = try filepath.expand(arena, "%APPDATA%");
+        defer arena.free(dirname);
 
         var dir = try wd.openDir(dirname, .{});
         defer dir.close();
 
-        if (tryPaths(allocator, [_][]const u8{ default_filename, "config" }, &dir)) |result| {
+        if (tryPaths(arena, [_][]const u8{ default_filename, "config" }, &dir)) |result| {
             return result;
         } else |err| {
             switch (err) {
@@ -442,19 +413,23 @@ fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8)
             }
         }
     } else if (native_os.isDarwin()) {
-        const app_support_j = try fs.path.join(
-            allocator,
+        const app_support_joined = try fs.path.join(
+            arena,
             &[_][]const u8{ "~", "Library", "Application Support", default_filename },
         );
-        defer allocator.free(app_support_j);
+        defer arena.free(app_support_joined);
 
-        const app_support_name = try filepath.expand(allocator, app_support_j);
-        defer allocator.free(app_support_name);
+        const app_support_expanded = try filepath.expand(arena, app_support_joined);
+        defer arena.free(app_support_expanded);
 
-        var app_support = try wd.openDir(app_support_name, .{});
-        defer app_support.close();
+        var app_support_dir = try wd.openDir(app_support_expanded, .{});
+        defer app_support_dir.close();
 
-        if (tryPaths(allocator, [_][]const u8{ default_filename, "config" }, &app_support)) |result| {
+        if (tryPaths(
+            arena,
+            [_][]const u8{ default_filename, "config" },
+            &app_support_dir,
+        )) |result| {
             return result;
         } else |err| {
             switch (err) {
@@ -465,16 +440,16 @@ fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8)
     }
 
     if (native_os != .windows and native_os != .uefi) {
-        const home_cfg_j = try fs.path.join(allocator, &[_][]const u8{ "~", ".config" });
-        defer allocator.free(home_cfg_j);
+        const home_config_joined = try fs.path.join(arena, &[_][]const u8{ "~", ".config" });
+        defer arena.free(home_config_joined);
 
-        const home_cfg_name = try filepath.expand(allocator, home_cfg_j);
-        defer allocator.free(home_cfg_name);
+        const home_config_expanded = try filepath.expand(arena, home_config_joined);
+        defer arena.free(home_config_expanded);
 
-        var home_cfg = try wd.openDir(home_cfg_name, .{});
-        defer home_cfg.close();
+        var home_config_dir = try wd.openDir(home_config_expanded, .{});
+        defer home_config_dir.close();
 
-        if (tryPaths(allocator, unix_config_lookup, &home_cfg)) |result| {
+        if (tryPaths(arena, unix_config_lookup, &home_config_dir)) |result| {
             return result;
         } else |err| {
             switch (err) {
@@ -483,16 +458,20 @@ fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8)
             }
         }
 
-        const home_j = try fs.path.join(allocator, &[_][]const u8{ "~", default_filename });
-        defer allocator.free(home_j);
+        const home_joined = try fs.path.join(arena, &[_][]const u8{ "~", default_filename });
+        defer arena.free(home_joined);
 
-        const home_name = try filepath.expand(allocator, home_j);
-        defer allocator.free(home_name);
+        const home_name_expanded = try filepath.expand(arena, home_joined);
+        defer arena.free(home_name_expanded);
 
-        var home = try wd.openDir(home_name, .{});
-        defer home.close();
+        var home_dir = try wd.openDir(home_name_expanded, .{});
+        defer home_dir.close();
 
-        if (tryPaths(allocator, [_][]const u8{ default_filename, "." ++ default_filename }, &home)) |result| {
+        if (tryPaths(
+            arena,
+            [_][]const u8{ default_filename, "." ++ default_filename },
+            &home_dir,
+        )) |result| {
             return result;
         } else |err| {
             switch (err) {
@@ -507,7 +486,7 @@ fn loadFile(allocator: Allocator, parsed_args: cli.Parsed, wd_path: ?[]const u8)
 
 /// Try to load a config file. Caller owns the result and should call `free` on
 /// it.
-fn loadOne(allocator: Allocator, f: []const u8, dir: *std.fs.Dir) ![]const u8 {
+fn loadOne(arena: Allocator, f: []const u8, dir: *std.fs.Dir) ![]const u8 {
     const stat = try dir.statFile(f);
     const size = stat.size;
     const max_size = 1 << 20;
@@ -527,13 +506,13 @@ fn loadOne(allocator: Allocator, f: []const u8, dir: *std.fs.Dir) ![]const u8 {
     }
 
     // TODO: Is one MB enough?
-    return try dir.readFileAlloc(allocator, f, 1 << 20);
+    return try dir.readFileAlloc(arena, f, 1 << 20);
 }
 
-fn tryPaths(allocator: Allocator, comptime paths: anytype, dir: *std.fs.Dir) ![]const u8 {
+fn tryPaths(arena: Allocator, comptime paths: anytype, dir: *std.fs.Dir) ![]const u8 {
     inline for (paths) |f| {
         inline for (default_extensions) |e| {
-            if (loadOne(allocator, f ++ e, dir)) |result| {
+            if (loadOne(arena, f ++ e, dir)) |result| {
                 return result;
             } else |err| {
                 switch (err) {

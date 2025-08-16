@@ -383,7 +383,7 @@ fn parseArgsWithOptions(
 fn optionMetadataForLong(name: []const u8, subcmd: ?[]const u8) ?Metadata {
     _ = subcmd;
 
-    for (Config.metadata) |m| {
+    for (Config.global_options) |m| {
         if (m.disable_cli_option) {
             continue;
         }
@@ -420,7 +420,7 @@ fn optionMetadataForLong(name: []const u8, subcmd: ?[]const u8) ?Metadata {
 fn optionMetadataForShort(short: u8, subcmd: ?[]const u8) ?Metadata {
     _ = subcmd;
 
-    for (Config.metadata) |m| {
+    for (Config.global_options) |m| {
         if (m.disable_cli_option) {
             continue;
         }
