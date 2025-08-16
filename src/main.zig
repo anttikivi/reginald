@@ -60,16 +60,16 @@ pub fn main() !void {
         _ = debug_allocator.deinit();
     };
 
-    var total_counter = if (is_debug) CountingAllocator.init(gpa) else undefined;
-    defer if (is_debug) {
-        std.debug.print("Currently allocated: {d}\n", .{total_counter.liveSize()});
-        std.debug.print("Total allocated: {d}\n", .{total_counter.alloc_size});
-        total_counter.deinit();
-    };
-
+    var total_counter: ?CountingAllocator = null;
     if (is_debug) {
-        gpa = total_counter.allocator();
+        total_counter = CountingAllocator.init(gpa);
+        gpa = total_counter.?.allocator();
     }
+    defer if (is_debug) {
+        std.debug.print("Currently allocated: {d}\n", .{total_counter.?.liveSize()});
+        std.debug.print("Total allocated: {d}\n", .{total_counter.?.alloc_size});
+        total_counter.?.deinit();
+    };
 
     const args = try std.process.argsAlloc(gpa);
     const args_freed = false;
@@ -79,15 +79,15 @@ pub fn main() !void {
 
     assert(args.len > 0);
 
-    const errw = std.io.getStdErr().writer();
-    var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], errw);
+    const stderr_writer = std.io.getStdErr().writer();
+    var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], stderr_writer);
     var parsed_args_freed = false;
     defer if (!parsed_args_freed) {
         parsed_args.deinit();
     };
 
-    var bw = std.io.bufferedWriter(std.io.getStdOut().writer());
-    const w = bw.writer();
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    const stdout_writer = stdout_buffer.writer();
 
     // If there are no unknown arguments and help or version was invoked, we can
     // short-circuit into printing them and skip parsing the config and plugins.
@@ -95,8 +95,8 @@ pub fn main() !void {
         if (parsed_args.values.get("print_help")) |h| {
             switch (h) {
                 .bool => {
-                    try w.writeAll("help message!\n");
-                    try bw.flush();
+                    try stdout_writer.writeAll("help message!\n");
+                    try stdout_buffer.flush();
                     return;
                 },
                 else => unreachable,
@@ -104,9 +104,9 @@ pub fn main() !void {
         } else if (parsed_args.values.get("print_version")) |v| {
             switch (v) {
                 .bool => {
-                    try w.writeAll(build_options.exe_name ++ " " ++ build_options.version ++ "\n");
-                    try w.writeAll("Licensed under the Apache License, Version 2.0: <https://www.apache.org/licenses/LICENSE-2.0>\n");
-                    try bw.flush();
+                    try stdout_writer.writeAll(build_options.exe_name ++ " " ++ build_options.version ++ "\n");
+                    try stdout_writer.writeAll("Licensed under the Apache License, Version 2.0: <https://www.apache.org/licenses/LICENSE-2.0>\n");
+                    try stdout_buffer.flush();
                     return;
                 },
                 else => unreachable,
@@ -114,23 +114,23 @@ pub fn main() !void {
         }
     }
 
-    var config_counter = if (is_debug) CountingAllocator.init(gpa) else undefined;
+    var config_counter: ?CountingAllocator = null;
+    if (is_debug) {
+        config_counter = CountingAllocator.init(gpa);
+    }
     defer if (is_debug) {
-        std.debug.print("Currently allocated in config: {d}\n", .{config_counter.liveSize()});
-        std.debug.print("Total allocated in config: {d}\n", .{config_counter.alloc_size});
-        config_counter.deinit();
+        std.debug.print("Currently allocated in config: {d}\n", .{config_counter.?.liveSize()});
+        std.debug.print("Total allocated in config: {d}\n", .{config_counter.?.alloc_size});
+        config_counter.?.deinit();
     };
-    var config_allocator_instance = blk: {
-        if (is_debug) {
-            break :blk StaticAllocator.init(config_counter.allocator());
-        } else {
-            break :blk undefined;
-        }
-    };
+    var config_allocator_instance: ?StaticAllocator = null;
+    if (is_debug) {
+        config_allocator_instance = StaticAllocator.init(config_counter.?.allocator());
+    }
     defer if (is_debug) {
-        config_allocator_instance.deinit();
+        config_allocator_instance.?.deinit();
     };
-    const config_allocator = if (is_debug) config_allocator_instance.allocator() else gpa;
+    const config_allocator = if (is_debug) config_allocator_instance.?.allocator() else gpa;
 
     var cfg = try Config.init(config_allocator, gpa, parsed_args);
     defer cfg.deinit();
