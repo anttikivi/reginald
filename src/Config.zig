@@ -16,6 +16,7 @@ const mem = std.mem;
 
 const cli = @import("cli.zig");
 const filepath = @import("filepath.zig");
+const toml = @import("toml.zig");
 
 /// Allocator that the config uses for its internal allocations.
 allocator: Allocator,
@@ -199,7 +200,13 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
     const file_data = try cfg.loadFile(arena);
     defer arena.free(file_data);
 
-    std.debug.print("{s}\n", .{file_data});
+    var diag: toml.Diagnostics = undefined;
+    var toml_value = toml.parseWithDiagnostics(arena, file_data, &diag) catch |e| {
+        const stderr_writer = std.io.getStdErr().writer();
+        try stderr_writer.print("{}\n", .{diag});
+        return e;
+    };
+    defer toml_value.deinit(arena);
 
     return cfg;
 }
