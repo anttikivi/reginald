@@ -12,8 +12,6 @@ const toml = @import("toml");
 
 const native_os = builtin.target.os.tag;
 
-const DatetimeType = enum { datetime, datetime_local, date_local, time_local };
-
 const Error = Allocator.Error || fmt.BufPrintError || error{ InvalidDatetime, InvalidTomlValue };
 
 pub fn main() !void {

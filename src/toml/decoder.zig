@@ -532,6 +532,12 @@ const Parser = struct {
             return error.UnexpectedToken;
         }
 
+        const after_bracket = try self.scanner.nextKey();
+        if (after_bracket != .line_feed and after_bracket != .end_of_file) {
+            self.scanner.setErrorMessage("table header must be followed by newline");
+            return error.UnexpectedToken;
+        }
+
         const last_key = keys[keys.len - 1];
         var table = try self.descendToTable(keys[0 .. keys.len - 1], self.root_table, true);
 
@@ -583,6 +589,12 @@ const Parser = struct {
         const next_token = try self.scanner.nextKey();
         if (next_token != .double_right_bracket) {
             self.scanner.setErrorMessage("expected closing ']]' for array of tables header");
+            return error.UnexpectedToken;
+        }
+
+        const after_bracket = try self.scanner.nextKey();
+        if (after_bracket != .line_feed and after_bracket != .end_of_file) {
+            self.scanner.setErrorMessage("array table header must be followed by newline");
             return error.UnexpectedToken;
         }
 
@@ -817,8 +829,14 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
 
         switch (token) {
             .line_feed => continue,
-            .left_bracket => try parser.parseTableExpression(),
-            .double_left_bracket => try parser.parseArrayTableExpression(),
+            .left_bracket => {
+                try parser.parseTableExpression();
+                continue;
+            },
+            .double_left_bracket => {
+                try parser.parseArrayTableExpression();
+                continue;
+            },
             .end_of_file => unreachable,
             .literal,
             .string,
@@ -915,34 +933,36 @@ pub fn parseWithDiagnostics(allocator: Allocator, input: []const u8, diag: ?*Dia
             return e;
         }
 
-        token = scanner.nextKey() catch |e| {
+        if (token == .literal or token == .string or token == .literal_string) {
+            token = scanner.nextKey() catch |e| {
+                if (diag) |outp| {
+                    const pos = computePlace(input, scanner.cursor);
+                    outp.* = .{
+                        .message = scanner.last_error_message orelse defaultErrorMessage(e),
+                        .line = pos.line,
+                        .column = pos.column,
+                        .snippet = pos.snippet,
+                    };
+                }
+                return e;
+            };
+            if (token == .line_feed or token == .end_of_file) {
+                continue;
+            }
+
             if (diag) |outp| {
                 const pos = computePlace(input, scanner.cursor);
                 outp.* = .{
-                    .message = scanner.last_error_message orelse defaultErrorMessage(e),
+                    .message = scanner.last_error_message orelse defaultErrorMessage(
+                        error.UnexpectedToken,
+                    ),
                     .line = pos.line,
                     .column = pos.column,
                     .snippet = pos.snippet,
                 };
             }
-            return e;
-        };
-        if (token == .line_feed or token == .end_of_file) {
-            continue;
+            return error.UnexpectedToken;
         }
-
-        if (diag) |outp| {
-            const pos = computePlace(input, scanner.cursor);
-            outp.* = .{
-                .message = scanner.last_error_message orelse defaultErrorMessage(
-                    error.UnexpectedToken,
-                ),
-                .line = pos.line,
-                .column = pos.column,
-                .snippet = pos.snippet,
-            };
-        }
-        return error.UnexpectedToken;
     }
 
     return parseResult(allocator, parsing_root);
