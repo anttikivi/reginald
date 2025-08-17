@@ -11,8 +11,11 @@ const builtin = @import("builtin");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const assert = std.debug.assert;
 const fs = std.fs;
 const mem = std.mem;
+const meta = std.meta;
+const StructField = std.builtin.Type.StructField;
 
 const cli = @import("cli.zig");
 const filepath = @import("filepath.zig");
@@ -30,6 +33,9 @@ directory: []const u8 = ".",
 // /// The maximum number of concurrent jobs to allow. If this is less than 1,
 // /// unlimited concurrent jobs are allowed.
 // max_jobs: i64 = -1,
+
+/// The configuration for logging.
+logging: Logging = .{},
 
 /// If true, the program shows the help message and exits. When this is set to
 /// true, the actual config instance should never be loaded.
@@ -61,22 +67,29 @@ const default_extensions = [_][]const u8{".toml"};
 /// Helper constant that contains the different files that should be checked for
 /// config files when trying to find it from "~/.config" or similar.
 const unix_config_lookup = [_][]const u8{
-    default_filename ++ std.fs.path.sep_str ++ default_filename,
-    default_filename ++ std.fs.path.sep_str ++ "config",
+    default_filename ++ fs.path.sep_str ++ default_filename,
+    default_filename ++ fs.path.sep_str ++ "config",
     default_filename,
 };
 
+/// Type for the global logging configuration.
+pub const Logging = struct {
+    /// Whether logs are enabled.
+    enabled: bool = true,
+
+    /// The selected logging level. Only messages of this or higher level will
+    /// be printed.
+    level: std.log.Level = .info,
+};
+
 /// Type of a config value as a more general value instead of raw types.
-pub const ValueType = enum { bool, int, string };
+pub const OptionType = enum { bool, int, string };
 
 /// Represents the data for creating command-line options and config file
 /// entries and checking environment variables for a config option.
-pub const Metadata = struct {
-    /// Name of the config field in `Config`.
-    name: []const u8,
-
+pub const OptionInfo = struct {
     /// Name of the long command-line option. If not set but the command-line
-    /// option is not disable, the name of the field will be used.
+    /// option is not disabled, the name of the field will be used.
     long: ?[]const u8 = null,
 
     /// The one-letter command-line option.
@@ -115,59 +128,64 @@ pub const Metadata = struct {
     /// TODO: Is there need to expand environment variables in all strings.
     is_path: bool = false,
 
-    // /// Subcommands for which the command-line option for this config option
-    // /// should be created for instead of creating it as a global command-line
-    // /// option.
-    // subcommands: ?[]const cli.Subcommand = null,
+    /// If true, this option will accept a string instead of the type in
+    /// `Config`. The value is converted into the config value by calling
+    /// the parser when checking the values.
+    is_parsed: bool = false,
 };
 
-pub const global_options = [_]Metadata{
-    .{
-        .name = "config_file",
+pub const LoggingInfo = struct {
+    enabled: OptionInfo,
+    level: OptionInfo,
+};
+
+pub const GlobalOptionInfo = struct {
+    config_file: OptionInfo = .{
         .long = "config",
         .short = 'c',
+        .environment_variable = "CONFIG",
         .description = "use config file from `<path>`",
         .disable_config_file = true,
         .is_path = true,
     },
-    .{
-        .name = "directory",
+    directory: OptionInfo = .{
         .short = 'd',
         .description = "run Reginald as if it was started from `<path>`",
         .is_path = true,
     },
-    // .{
-    //     .name = "max_jobs",
-    //     .long = "jobs",
-    //     .short = 'j',
-    //     .description = "maximum number of jobs to run concurrently",
-    //     .subcommands = &[_]cli.Subcommand{.apply},
-    // },
-    .{
-        .name = "print_help",
+    logging: LoggingInfo = .{
+        .enabled = .{
+            .long = "log",
+            .description = "enable logging",
+        },
+        .level = .{
+            .long = "log-level",
+            .description = "set logging level so that only log messages with level greater than of equal to `<level>` are enabled",
+            .is_parsed = true,
+        },
+    },
+    print_help: OptionInfo = .{
         .long = "help",
         .short = 'h',
         .description = "show the help message and exit",
         .disable_env = true,
+        .disable_config_file = true,
     },
-    .{
-        .name = "print_version",
+    print_version: OptionInfo = .{
         .long = "version",
         .description = "print the version information and exit",
         .disable_env = true,
+        .disable_config_file = true,
     },
-    .{
-        .name = "quiet",
+    quiet: OptionInfo = .{
         .short = 'q',
         .description = "silence all output expect errors",
     },
-    .{
-        .name = "verbose",
+    verbose: OptionInfo = .{
         .short = 'v',
         .description = "print more verbose output",
     },
-    .{
-        .name = "working_directory",
+    working_directory: OptionInfo = .{
         .long = "chdir",
         .short = 'C',
         .description = "run Reginald as if it was started from `<path>`",
@@ -175,6 +193,8 @@ pub const global_options = [_]Metadata{
         .is_path = true,
     },
 };
+
+pub const global_option_info: GlobalOptionInfo = .{};
 
 /// Initialize the config instance and parse the the global config options into
 /// it. This includes resolving the config file location, reading it, and
@@ -207,6 +227,10 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
         return e;
     };
     defer toml_value.deinit(arena);
+
+    for (toml_value.table.keys()) |key| {
+        std.debug.print("{s}\n", .{key});
+    }
 
     return cfg;
 }
@@ -243,44 +267,110 @@ pub fn parseBool(a: []const u8) !bool {
     return error.InvalidValue;
 }
 
-pub fn valueType(m: Metadata) !ValueType {
-    // We need to loop through the fields instead of using the built-in
-    // functions for accessing by name as the parameter is not known at compile
-    // time.
-    inline for (std.meta.fields(Config)) |field| {
-        if (mem.eql(u8, field.name, m.name)) {
-            return switch (field.type) {
-                bool => .bool,
-                i64 => .int,
-                []const u8 => .string,
-                else => error.InvalidField,
-            };
+/// Get the type of the given config option by name.
+pub fn optionType(name: []const u8) !?OptionType {
+    var field_name = name;
+    const dot_index = mem.indexOfScalar(u8, name, '.');
+    if (dot_index) |i| {
+        field_name = name[0..i];
+    }
+
+    const fields: []const StructField = meta.fields(@TypeOf(global_option_info));
+    inline for (fields) |field| {
+        if (mem.eql(u8, field_name, field.name)) {
+            switch (field.type) {
+                OptionInfo => {
+                    const info = @field(global_option_info, field.name);
+
+                    if (info.is_parsed) {
+                        return .string;
+                    }
+
+                    return switch (@FieldType(Config, field.name)) {
+                        bool => .bool,
+                        i64 => .int,
+                        []const u8 => .string,
+                        else => @compileError("Config field '" ++ field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Config, field.name))),
+                    };
+                },
+                LoggingInfo => if (dot_index) |i| {
+                    const logging_info = @field(global_option_info, field.name);
+                    const logging_field_name = name[i + 1 ..];
+                    const info_fields: []const StructField = meta.fields(@TypeOf(logging_info));
+                    inline for (info_fields) |info_field| {
+                        if (mem.eql(u8, logging_field_name, info_field.name)) {
+                            const info = @field(logging_info, info_field.name);
+
+                            if (info.is_parsed) {
+                                return .string;
+                            }
+
+                            return switch (@FieldType(Logging, info_field.name)) {
+                                bool => .bool,
+                                i64 => .int,
+                                []const u8 => .string,
+                                else => @compileError("Logging config field '" ++ info_field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Logging, info_field.name))),
+                            };
+                        }
+                    }
+
+                    return error.InvalidKey;
+                } else {
+                    return error.InvalidKey;
+                },
+                else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
+            }
         }
     }
 
-    return error.UnknownField;
+    return null;
 }
 
-fn fieldValueType(comptime name: []const u8) ValueType {
-    // We need to loop through the fields instead of using the built-in
-    // functions for accessing by name as the parameter is not known at compile
-    // time.
-    return switch (@FieldType(Config, name)) {
-        bool => .bool,
-        i64 => .int,
-        []const u8 => .string,
-        else => @compileError("Config field " ++ name ++ " has invalid type"),
-    };
+/// Get the option info of the given config option by name.
+pub fn optionInfo(name: []const u8) !?OptionInfo {
+    var field_name = name;
+    const dot_index = mem.indexOfScalar(u8, name, '.');
+    if (dot_index) |i| {
+        field_name = name[0..i];
+    }
+
+    const fields: []const StructField = meta.fields(@TypeOf(global_option_info));
+    inline for (fields) |field| {
+        if (mem.eql(u8, field_name, field.name)) {
+            switch (field.type) {
+                OptionInfo => {
+                    return @field(global_option_info, field.name);
+                },
+                LoggingInfo => if (dot_index) |i| {
+                    const logging_info = @field(global_option_info, field.name);
+                    const logging_field_name = name[i + 1 ..];
+                    const info_fields: []const StructField = meta.fields(@TypeOf(logging_info));
+                    inline for (info_fields) |info_field| {
+                        if (mem.eql(u8, logging_field_name, info_field.name)) {
+                            return @field(logging_info, info_field.name);
+                        }
+                    }
+
+                    return error.InvalidKey;
+                } else {
+                    return error.InvalidKey;
+                },
+                else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
+            }
+        }
+    }
+
+    return null;
 }
 
 /// Parse a config value that is required for the initialization of the program
 /// and reading the rest of the config values.
 fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, args: cli.Parsed) !void {
-    const meta = findMetadata(name) orelse return error.UnknownOption;
-    const vt = fieldValueType(name);
+    const option_info = (try optionInfo(name)).?;
+    const option_type = (try optionType(name)).?;
 
-    if (args.values.get(meta.name)) |val| {
-        if (@as(ValueType, val) != vt) {
+    if (args.values.get(name)) |val| {
+        if (@as(OptionType, val) != option_type) {
             return error.TypeMismatch;
         }
 
@@ -288,7 +378,7 @@ fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, ar
             bool => val.bool,
             i64 => val.int,
             []const u8 => blk: {
-                if (meta.is_path) {
+                if (option_info.is_path) {
                     break :blk try self.allocator.dupe(u8, try filepath.expand(arena, val.string));
                 } else {
                     break :blk try self.allocator.dupe(
@@ -297,17 +387,17 @@ fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, ar
                     );
                 }
             },
-            else => @compileError("Config field " ++ name ++ " has invalid type"),
+            else => @compileError("Config field '" ++ name ++ "' has invalid type"),
         };
 
         return;
     }
 
-    if (meta.disable_env) {
+    if (option_info.disable_env) {
         return;
     }
 
-    const meta_env_var = meta.environment_variable orelse meta.name;
+    const meta_env_var = option_info.environment_variable orelse name;
     const var_name_alloc = try mem.concat(
         arena,
         u8,
@@ -327,7 +417,7 @@ fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, ar
                 bool => try parseBool(s),
                 i64 => try std.fmt.parseInt(i64, s, 0),
                 []const u8 => blk: {
-                    if (meta.is_path) {
+                    if (option_info.is_path) {
                         break :blk try self.allocator.dupe(u8, try filepath.expand(arena, s));
                     } else {
                         break :blk try self.allocator.dupe(u8, try filepath.expandEnv(arena, s));
@@ -344,18 +434,6 @@ fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, ar
     if (@FieldType(Config, name) == []const u8) {
         @field(self, name) = try self.allocator.dupe(u8, @field(self, name));
     }
-}
-
-/// Return the config metadata entry for the given name or null if no entry is
-/// found for the name.
-fn findMetadata(name: []const u8) ?Metadata {
-    inline for (global_options) |m| {
-        if (mem.eql(u8, m.name, name)) {
-            return m;
-        }
-    }
-
-    return null;
 }
 
 /// Find the first matching config file and load its contents. The caller owns

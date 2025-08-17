@@ -1,16 +1,15 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const mem = std.mem;
+const meta = std.meta;
+const StructField = std.builtin.Type.StructField;
 const testing = std.testing;
 
 const Config = @import("Config.zig");
-const Metadata = Config.Metadata;
-
-// /// Subcommands available in Reginald.
-// pub const Subcommand = enum { none, apply };
 
 /// Value of a parsed command-line option.
-const OptionValue = union(Config.ValueType) {
+const OptionValue = union(Config.OptionType) {
     bool: bool,
     int: i64,
     string: []const u8,
@@ -76,7 +75,7 @@ fn parseArgsWithOptions(
     args: []const []const u8,
     writer: anytype,
 ) !Parsed {
-    const subcommand: ?[]const u8 = null;
+    // const subcommand: ?[]const u8 = null;
     var unknown: std.ArrayList([]const u8) = switch (on_unknown) {
         .fail => undefined,
         .skip => .init(allocator),
@@ -100,7 +99,7 @@ fn parseArgsWithOptions(
             }
 
             const long = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| arg[2..j] else arg[2..];
-            const option_meta = optionMetadataForLong(long, subcommand) orelse switch (on_unknown) {
+            const option_name = configNameFromLong(long) orelse switch (on_unknown) {
                 .fail => {
                     try writer.print("invalid command-line option `--{s}`\n", .{long});
                     return error.InvalidArgs;
@@ -111,15 +110,15 @@ fn parseArgsWithOptions(
                 },
             };
 
-            if (values.contains(option_meta.name)) {
+            if (values.contains(option_name)) {
                 try writer.print("option `--{s}` can be specified only once\n", .{long});
                 return error.InvalidArgs;
             }
 
-            i += blk: switch (try Config.valueType(option_meta)) {
+            i += blk: switch ((try Config.optionType(option_name)).?) {
                 .bool => {
                     if (std.mem.eql(u8, arg[2..], long)) {
-                        try values.put(option_meta.name, .{ .bool = true });
+                        try values.put(option_name, .{ .bool = true });
                         break :blk 0;
                     }
 
@@ -128,7 +127,7 @@ fn parseArgsWithOptions(
                         return error.InvalidArgs;
                     };
 
-                    try values.put(option_meta.name, .{ .bool = b });
+                    try values.put(option_name, .{ .bool = b });
                     break :blk 0;
                 },
                 .int => {
@@ -138,7 +137,7 @@ fn parseArgsWithOptions(
                             return error.InvalidArgs;
                         };
 
-                        try values.put(option_meta.name, .{ .int = n });
+                        try values.put(option_name, .{ .int = n });
                         break :blk 0;
                     }
 
@@ -152,7 +151,7 @@ fn parseArgsWithOptions(
                         return error.InvalidArgs;
                     };
 
-                    try values.put(option_meta.name, .{ .int = n });
+                    try values.put(option_name, .{ .int = n });
                     break :blk 1;
                 },
                 .string => {
@@ -161,11 +160,11 @@ fn parseArgsWithOptions(
                         // that the user cannot actually include more quotes
                         // inside the quotes.
                         if (arg[long.len + 3] == '"' and arg[arg.len - 1] == '"') {
-                            try values.put(option_meta.name, .{ .string = arg[long.len + 4 .. arg.len - 1] });
+                            try values.put(option_name, .{ .string = arg[long.len + 4 .. arg.len - 1] });
                             break :blk 0;
                         }
 
-                        try values.put(option_meta.name, .{ .string = arg[long.len + 3 ..] });
+                        try values.put(option_name, .{ .string = arg[long.len + 3 ..] });
                         break :blk 0;
                     }
 
@@ -174,7 +173,7 @@ fn parseArgsWithOptions(
                         return error.InvalidArgs;
                     }
 
-                    try values.put(option_meta.name, .{ .string = args[i + 1] });
+                    try values.put(option_name, .{ .string = args[i + 1] });
                     break :blk 1;
                 },
             };
@@ -214,7 +213,7 @@ fn parseArgsWithOptions(
                     break;
                 }
 
-                const option_meta = optionMetadataForShort(c, subcommand) orelse switch (on_unknown) {
+                const option_name = configNameFromShort(c) orelse switch (on_unknown) {
                     .fail => {
                         try writer.print("unknown command-line option `-{c}` in `{s}`\n", .{ c, arg });
                         return error.InvalidArgs;
@@ -231,12 +230,12 @@ fn parseArgsWithOptions(
                     },
                 };
 
-                if (values.contains(option_meta.name)) {
+                if (values.contains(option_name)) {
                     try writer.print("option `-{c}` can be specified only once\n", .{c});
                     return error.InvalidArgs;
                 }
 
-                switch (try Config.valueType(option_meta)) {
+                switch ((try Config.optionType(option_name)).?) {
                     .bool => {
                         if (arg.len > j + 1 and arg[j + 1] == '=') {
                             const b = Config.parseBool(arg[j + 2 ..]) catch {
@@ -244,11 +243,11 @@ fn parseArgsWithOptions(
                                 return error.InvalidArgs;
                             };
 
-                            try values.put(option_meta.name, .{ .bool = b });
+                            try values.put(option_name, .{ .bool = b });
                             continue :outer;
                         }
 
-                        try values.put(option_meta.name, .{ .bool = true });
+                        try values.put(option_name, .{ .bool = true });
                     },
                     .int => {
                         if (arg.len > j + 1 and arg[j + 1] == '=') {
@@ -257,7 +256,7 @@ fn parseArgsWithOptions(
                                 return error.InvalidArgs;
                             };
 
-                            try values.put(option_meta.name, .{ .int = n });
+                            try values.put(option_name, .{ .int = n });
                             continue :outer;
                         }
 
@@ -267,7 +266,7 @@ fn parseArgsWithOptions(
                                 return error.InvalidArgs;
                             };
 
-                            try values.put(option_meta.name, .{ .int = n });
+                            try values.put(option_name, .{ .int = n });
 
                             continue :outer;
                         }
@@ -284,7 +283,7 @@ fn parseArgsWithOptions(
                             return error.InvalidArgs;
                         };
 
-                        try values.put(option_meta.name, .{ .int = n });
+                        try values.put(option_name, .{ .int = n });
                         continue :outer;
                     },
                     .string => {
@@ -293,11 +292,11 @@ fn parseArgsWithOptions(
                             // so that the user cannot actually include more
                             // quotes inside the quotes.
                             if (arg[j + 2] == '"' and arg[arg.len - 1] == '"') {
-                                try values.put(option_meta.name, .{ .string = arg[j + 3 .. arg.len - 1] });
+                                try values.put(option_name, .{ .string = arg[j + 3 .. arg.len - 1] });
                                 continue :outer;
                             }
 
-                            try values.put(option_meta.name, .{ .string = arg[j + 2 ..] });
+                            try values.put(option_name, .{ .string = arg[j + 2 ..] });
                             continue :outer;
                         }
 
@@ -306,14 +305,14 @@ fn parseArgsWithOptions(
                             // so that the user cannot actually include more
                             // quotes inside the quotes.
                             if (arg[j + 1] == '"' and arg[arg.len - 1] == '"') {
-                                try values.put(option_meta.name, .{ .string = arg[j + 2 .. arg.len - 1] });
+                                try values.put(option_name, .{ .string = arg[j + 2 .. arg.len - 1] });
                                 continue :outer;
                             }
 
                             // TODO: This has good potential for bugs or simply
                             // confusion as we check the next characters for
                             // the string value for the option.
-                            try values.put(option_meta.name, .{ .string = arg[j + 1 ..] });
+                            try values.put(option_name, .{ .string = arg[j + 1 ..] });
                             continue :outer;
                         }
 
@@ -324,7 +323,7 @@ fn parseArgsWithOptions(
 
                         i += 1;
 
-                        try values.put(option_meta.name, .{ .string = args[i] });
+                        try values.put(option_name, .{ .string = args[i] });
                         continue :outer;
                     },
                 }
@@ -378,72 +377,91 @@ fn parseArgsWithOptions(
     };
 }
 
-/// Look up the config option metadata with the given long command-line option
-/// name.
-fn optionMetadataForLong(name: []const u8, subcmd: ?[]const u8) ?Metadata {
-    _ = subcmd;
+/// Look up the config name for the given long command-line option name.
+fn configNameFromLong(name: []const u8) ?[]const u8 {
+    const fields: []const StructField = meta.fields(@TypeOf(Config.global_option_info));
+    inline for (fields) |field| {
+        switch (field.type) {
+            Config.OptionInfo => {
+                const info: Config.OptionInfo = @field(Config.global_option_info, field.name);
+                if (info.disable_cli_option) {
+                    continue;
+                }
 
-    for (Config.global_options) |m| {
-        if (m.disable_cli_option) {
-            continue;
-        }
+                if (info.long) |long| {
+                    if (mem.eql(u8, name, long)) {
+                        return field.name;
+                    }
+                } else if (mem.eql(u8, name, field.name)) {
+                    return field.name;
+                }
+            },
 
-        // if (m.subcommands) |slice| {
-        //     var found = false;
-        //
-        //     for (slice) |s| {
-        //         if (s == subcmd) {
-        //             found = true;
-        //             break;
-        //         }
-        //     }
-        //
-        //     if (!found) {
-        //         continue;
-        //     }
-        // }
+            // We can have custom handling for all of the "custom" info types
+            // (i.e. tables in config file) as we know all of the global options
+            // ahead of time. There is no need to try and generalize.
+            Config.LoggingInfo => {
+                const logging_info: Config.LoggingInfo = @field(
+                    Config.global_option_info,
+                    field.name,
+                );
+                const logging_fields: []const StructField = meta.fields(@TypeOf(logging_info));
+                inline for (logging_fields) |info_field| {
+                    assert(info_field.type == Config.OptionInfo);
 
-        if (m.long) |long| {
-            if (std.mem.eql(u8, long, name)) {
-                return m;
-            }
-        } else if (std.mem.eql(u8, m.name, name)) {
-            return m;
+                    const info: Config.OptionInfo = @field(logging_info, info_field.name);
+                    if (info.disable_cli_option) {
+                        continue;
+                    }
+
+                    if (info.long) |long| {
+                        if (mem.eql(u8, name, long)) {
+                            return "logging_" ++ field.name;
+                        }
+                    } else if (mem.eql(u8, name, "logging-" ++ field.name)) {
+                        return "logging_" ++ field.name;
+                    }
+                }
+            },
+            else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
         }
     }
 
     return null;
 }
 
-/// Look up the config option metadata with the given short, one-letter
-/// command-line option name.
-fn optionMetadataForShort(short: u8, subcmd: ?[]const u8) ?Metadata {
-    _ = subcmd;
+/// Look up the config name for the given one-character short command-line
+/// option.
+fn configNameFromShort(c: u8) ?[]const u8 {
+    const fields: []const StructField = meta.fields(@TypeOf(Config.global_option_info));
+    inline for (fields) |field| {
+        switch (field.type) {
+            Config.OptionInfo => {
+                const info: Config.OptionInfo = @field(Config.global_option_info, field.name);
+                if (info.short) |b| {
+                    if (b == c) {
+                        return field.name;
+                    }
+                }
+            },
+            Config.LoggingInfo => {
+                const logging_info: Config.LoggingInfo = @field(
+                    Config.global_option_info,
+                    field.name,
+                );
+                const info_fields: []const StructField = meta.fields(@TypeOf(logging_info));
+                inline for (info_fields) |info_field| {
+                    assert(info_field.type == Config.OptionInfo);
 
-    for (Config.global_options) |m| {
-        if (m.disable_cli_option) {
-            continue;
-        }
-
-        // if (m.subcommands) |slice| {
-        //     var found = false;
-        //
-        //     for (slice) |s| {
-        //         if (s == subcmd) {
-        //             found = true;
-        //             break;
-        //         }
-        //     }
-        //
-        //     if (!found) {
-        //         continue;
-        //     }
-        // }
-
-        if (m.short) |c| {
-            if (c == short) {
-                return m;
-            }
+                    const info: Config.OptionInfo = @field(logging_info, info_field.name);
+                    if (info.short) |b| {
+                        if (b == c) {
+                            return "logging_" ++ field.name;
+                        }
+                    }
+                }
+            },
+            else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
         }
     }
 

@@ -14,37 +14,41 @@ const toml = @import("toml.zig");
 const native_os = builtin.target.os.tag;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+};
+
 pub fn main() !void {
     // TODO: It could be ok to remove these safety checks.
-    comptime {
-        // Add one to take the `allocator` field into account?
-        if (std.meta.fields(Config).len != Config.global_options.len + 1) {
-            @compileError("length of the config metadata does not match the config");
-        }
-
-        for (std.meta.fields(Config)) |field| {
-            if (std.mem.eql(u8, field.name, "allocator")) {
-                continue;
-            }
-
-            var found = false;
-            for (Config.global_options) |m| {
-                if (std.mem.eql(u8, field.name, m.name)) {
-                    found = true;
-                }
-            }
-
-            if (!found) {
-                @compileError("config field " ++ field.name ++ " not present in metadata");
-            }
-        }
-
-        for (Config.global_options) |m| {
-            if (!@hasField(Config, m.name)) {
-                @compileError("metadata name " ++ m.name ++ " not present in config");
-            }
-        }
-    }
+    // comptime {
+    //     // Add one to take the `allocator` field into account?
+    //     if (std.meta.fields(Config).len != Config.global_options.len + 1) {
+    //         @compileError("length of the config metadata does not match the config");
+    //     }
+    //
+    //     for (std.meta.fields(Config)) |field| {
+    //         if (std.mem.eql(u8, field.name, "allocator")) {
+    //             continue;
+    //         }
+    //
+    //         var found = false;
+    //         for (Config.global_options) |m| {
+    //             if (std.mem.eql(u8, field.name, m.name)) {
+    //                 found = true;
+    //             }
+    //         }
+    //
+    //         if (!found) {
+    //             @compileError("config field " ++ field.name ++ " not present in metadata");
+    //         }
+    //     }
+    //
+    //     for (Config.global_options) |m| {
+    //         if (!@hasField(Config, m.name)) {
+    //             @compileError("metadata name " ++ m.name ++ " not present in config");
+    //         }
+    //     }
+    // }
 
     var gpa, const is_debug = gpa: {
         if (native_os == .wasi) {
