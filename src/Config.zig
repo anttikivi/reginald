@@ -241,6 +241,31 @@ pub fn deinit(self: *Config) void {
     self.allocator.free(self.config_file);
 }
 
+/// Ensure that the additional information for the Config fields match
+/// the Config fields.
+pub fn checkInfo() void {
+    assert(std.meta.fields(Config).len == std.meta.fields(@TypeOf(Config.global_option_info)).len + 1);
+
+    for (std.meta.fields(Config)) |field| {
+        if (std.mem.eql(u8, field.name, "allocator")) {
+            continue;
+        }
+
+        var found = false;
+        for (std.meta.fields(@TypeOf(Config.global_option_info))) |info_field| {
+            if (std.mem.eql(u8, field.name, info_field.name)) {
+                found = true;
+            }
+        }
+
+        assert(found);
+    }
+
+    for (std.meta.fields(@TypeOf(Config.global_option_info))) |field| {
+        assert(@hasField(Config, field.name));
+    }
+}
+
 /// Convert an ASCII string given as a config values to a bool.
 pub fn parseBool(a: []const u8) !bool {
     if (a.len > 5) {
