@@ -30,6 +30,11 @@ config_file: []const u8 = "",
 /// The base directory for resolving the configured paths within the program.
 directory: []const u8 = ".",
 
+/// When true, the config values that are slices are extended to the values from
+/// the previous sources instead of having the value with the highest priority
+/// override the ones that came before.
+extend: bool = false,
+
 // /// The maximum number of concurrent jobs to allow. If this is less than 1,
 // /// unlimited concurrent jobs are allowed.
 // max_jobs: i64 = -1,
@@ -170,6 +175,10 @@ pub const GlobalOptionInfo = struct {
         .description = "run Reginald as if it was started from `<path>`",
         .is_path = true,
     },
+    extend: OptionInfo = .{
+        .short = 'e',
+        .description = "extend the slices in the config with values from each sources instead of overriding",
+    },
     logging: LoggingInfo = .{
         .enabled = .{
             .long = "log",
@@ -233,9 +242,18 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
     var cfg: Config = .{ .allocator = allocator };
     errdefer cfg.deinit();
 
-    var arena_instance = std.heap.ArenaAllocator.init(gpa);
+    var arena_instance = ArenaAllocator.init(gpa);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
+
+    // Start by allocating all of the strings so that they can always be freed
+    // safely. The last value is always freed whenever it is replaced by a new
+    // one.
+    inline for (meta.fields(Config)) |field| {
+        if (field.type == []const u8) {
+            @field(cfg, field.name) = try cfg.allocator.dupe(u8, @field(cfg, field.name));
+        }
+    }
 
     try cfg.parseInitValue(arena, "config_file", args);
     try cfg.parseInitValue(arena, "working_directory", args);
@@ -243,9 +261,10 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
     const file_data = try cfg.loadFile(arena);
     defer arena.free(file_data);
 
+    const stderr_writer = std.io.getStdErr().writer();
+
     var diag: toml.Diagnostics = undefined;
     var toml_value = toml.parseWithDiagnostics(arena, file_data, &diag) catch |e| {
-        const stderr_writer = std.io.getStdErr().writer();
         try stderr_writer.print("{}\n", .{diag});
         return e;
     };
@@ -255,13 +274,23 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
         std.debug.print("{s}\n", .{key});
     }
 
+    var used_keys = std.ArrayList([]const u8).init(arena);
+    defer used_keys.deinit();
+
+    try used_keys.appendSlice(&[_][]const u8{ "config_file", "working_directory" });
+
+    try cfg.parseGlobalValue(arena, "extend", args, toml_value, stderr_writer);
+
     return cfg;
 }
 
 /// Free the memory allocated by the `Config`.
 pub fn deinit(self: *Config) void {
-    self.allocator.free(self.working_directory);
-    self.allocator.free(self.config_file);
+    inline for (meta.fields(Config)) |field| {
+        if (field.type == []const u8) {
+            self.allocator.free(@field(self, field.name));
+        }
+    }
 }
 
 /// Ensure that the additional information for the Config fields match
@@ -503,6 +532,237 @@ fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, ar
     } else |err| switch (err) {
         error.EnvironmentVariableNotFound => {}, // no-op, use default
         else => return err,
+    }
+}
+
+/// Parse a global config value from all of the sources.
+fn parseGlobalValue(
+    self: *Config,
+    arena: Allocator,
+    comptime name: []const u8,
+    args: cli.Parsed,
+    file_data: toml.Value,
+    err_writer: anytype,
+) !void {
+    assert(file_data == .table);
+
+    const info = (try optionInfo(name)).?;
+    const option_type = (try optionType(name)).?;
+
+    const file_key: []const u8 = blk: {
+        if (info.config_file_name) |s| {
+            break :blk s;
+        } else {
+            const s = try arena.dupe(u8, name);
+            std.mem.replaceScalar(u8, s, '_', '-');
+            break :blk s;
+        }
+    };
+    if (file_data.table.get(file_key)) |value| {
+        @field(self, name) = blk: switch (@FieldType(Config, name)) {
+            bool => switch (value) {
+                .bool => |b| break :blk b,
+                else => |v| {
+                    try err_writer.print(
+                        "value `{}` given for `{s}` in config file has type `{s}`, expected `{s}`\n",
+                        .{ v, file_key, @tagName(value), @tagName(option_type) },
+                    );
+                    return error.InvalidConfig;
+                },
+            },
+            i64 => switch (value) {
+                .int => |i| break :blk i,
+                else => |v| {
+                    try err_writer.print(
+                        "value `{}` given for `{s}` in config file has type `{s}`, expected `{s}`\n",
+                        .{ v, file_key, @tagName(value), @tagName(option_type) },
+                    );
+                    return error.InvalidConfig;
+                },
+            },
+            []const u8 => switch (value) {
+                .string => |s| {
+                    self.allocator.free(@field(self, name));
+                    break :blk self.allocator.dupe(u8, s);
+                },
+                else => |v| {
+                    try err_writer.print(
+                        "value `{}` given for `{s}` in config file has type `{s}`, expected `{s}`\n",
+                        .{ v, file_key, @tagName(value), @tagName(option_type) },
+                    );
+                    return error.InvalidConfig;
+                },
+            },
+            []const []const u8 => if (info.is_path) {
+                switch (value) {
+                    .string => |str| {
+                        var values: std.ArrayListUnmanaged([]const u8) = .empty;
+                        defer values.deinit();
+
+                        if (self.extend) {
+                            values.appendSlice(arena, @field(self, name));
+                        }
+
+                        var str_iter = mem.splitScalar(u8, str, fs.path.delimiter);
+                        while (str_iter.next()) |s| {
+                            try values.append(arena, s);
+                        }
+
+                        var new_value = try self.allocator.alloc(u8, values.items.len);
+                        for (values.items, 0..) |val, i| {
+                            new_value[i] = try self.allocator.dupe(u8, val);
+                        }
+
+                        break :blk new_value;
+                    },
+                    .array => |arr| {
+                        var values: std.ArrayListUnmanaged([]const u8) = .empty;
+                        defer values.deinit();
+
+                        if (self.extend) {
+                            values.appendSlice(arena, @field(self, name));
+                        }
+
+                        for (arr.items) |item| {
+                            switch (item) {
+                                .string => |s| try values.append(arena, s),
+                                else => |v| {
+                                    try err_writer.print(
+                                        "value `{}` given in `{s}` in config file has type `{s}`, expected string\n",
+                                        .{ v, file_key, @tagName(item), option_type },
+                                    );
+                                    return error.InvalidConfig;
+                                },
+                            }
+                        }
+
+                        var new_value = try self.allocator.alloc(u8, values.items.len);
+                        for (values.items, 0..) |val, i| {
+                            new_value[i] = try self.allocator.dupe(u8, val);
+                        }
+
+                        break :blk new_value;
+                    },
+                    else => |v| {
+                        try err_writer.print(
+                            "value `{}` given for `{s}` in config file has type `{s}`, expected string or array\n",
+                            .{ v, file_key, @tagName(value), option_type },
+                        );
+                        return error.InvalidConfig;
+                    },
+                }
+            } else {
+                unreachable;
+            },
+            else => @compileError("Config field " ++ name ++ " has invalid type"),
+        };
+    }
+
+    if (!info.disable_env) {
+        const info_env_var = info.environment_variable orelse name;
+        const var_name_alloc = try mem.concat(
+            arena,
+            u8,
+            &[_][]const u8{ build_options.env_prefix, "_", info_env_var },
+        );
+        defer arena.free(var_name_alloc);
+
+        mem.replaceScalar(u8, var_name_alloc, '-', '_');
+
+        var buf: [1024]u8 = undefined;
+        const var_name = std.ascii.upperString(&buf, var_name_alloc);
+
+        if (std.process.getEnvVarOwned(arena, var_name)) |s| {
+            defer arena.free(s);
+            if (s.len != 0) {
+                @field(self, name) = switch (@FieldType(Config, name)) {
+                    bool => try parseBool(s),
+                    i64 => try std.fmt.parseInt(i64, s, 0),
+                    []const u8 => blk: {
+                        if (info.is_path) {
+                            break :blk try self.allocator.dupe(u8, try filepath.expand(arena, s));
+                        } else {
+                            break :blk try self.allocator.dupe(u8, try filepath.expandEnv(arena, s));
+                        }
+                    },
+                    []const []const u8 => blk: {
+                        if (info.is_path) {
+                            var values: std.ArrayListUnmanaged([]const u8) = .empty;
+                            defer values.deinit();
+
+                            if (self.extend) {
+                                values.appendSlice(arena, @field(self, name));
+                            }
+
+                            var str_iter = mem.splitScalar(u8, s, fs.path.delimiter);
+                            while (str_iter.next()) |u| {
+                                try values.append(arena, u);
+                            }
+
+                            var new_value = try self.allocator.alloc(u8, values.items.len);
+                            for (values.items, 0..) |val, i| {
+                                new_value[i] = try self.allocator.dupe(u8, val);
+                            }
+
+                            break :blk new_value;
+                        } else {
+                            unreachable;
+                        }
+                    },
+                    else => @compileError("Config field " ++ name ++ " has invalid type"),
+                };
+            }
+        } else |err| switch (err) {
+            error.EnvironmentVariableNotFound => {}, // no-op, use default
+            else => return err,
+        }
+    }
+
+    if (args.values.get(name)) |val| {
+        if (@as(OptionType, val) != option_type) {
+            return error.TypeMismatch;
+        }
+
+        @field(self, name) = switch (@FieldType(Config, name)) {
+            bool => val.bool,
+            i64 => val.int,
+            []const u8 => blk: {
+                if (info.is_path) {
+                    break :blk try self.allocator.dupe(u8, try filepath.expand(arena, val.string));
+                } else {
+                    break :blk try self.allocator.dupe(
+                        u8,
+                        try filepath.expandEnv(arena, val.string),
+                    );
+                }
+            },
+            []const []const u8 => blk: {
+                if (info.is_path) {
+                    var values: std.ArrayListUnmanaged([]const u8) = .empty;
+                    defer values.deinit();
+
+                    if (self.extend) {
+                        values.appendSlice(arena, @field(self, name));
+                    }
+
+                    for (val.paths) |v| {
+                        try values.append(arena, v);
+                    }
+
+                    var new_value = try self.allocator.alloc(u8, values.items.len);
+                    for (values.items, 0..) |v, i| {
+                        new_value[i] = try self.allocator.dupe(u8, v);
+                    }
+
+                    break :blk new_value;
+                } else {
+                    unreachable;
+                }
+            },
+            else => @compileError("Config field '" ++ name ++ "' has invalid type"),
+        };
+
+        return;
     }
 
     if (@FieldType(Config, name) == []const u8) {
