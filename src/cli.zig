@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const mem = std.mem;
-const meta = std.meta;
 const StructField = std.builtin.Type.StructField;
 const testing = std.testing;
 
@@ -99,7 +97,7 @@ fn parseArgsWithOptions(
             }
 
             const long = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| arg[2..j] else arg[2..];
-            const option_name = configNameFromLong(long) orelse switch (on_unknown) {
+            const option_name = (try configNameFromLong(allocator, long)) orelse switch (on_unknown) {
                 .fail => {
                     try writer.print("invalid command-line option `--{s}`\n", .{long});
                     return error.InvalidArgs;
@@ -378,22 +376,29 @@ fn parseArgsWithOptions(
 }
 
 /// Look up the config name for the given long command-line option name.
-fn configNameFromLong(name: []const u8) ?[]const u8 {
-    const fields: []const StructField = meta.fields(@TypeOf(Config.global_option_info));
+fn configNameFromLong(allocator: Allocator, name: []const u8) !?[]const u8 {
+    const fields: []const StructField = std.meta.fields(@TypeOf(Config.global_option_info));
     inline for (fields) |field| {
         switch (field.type) {
             Config.OptionInfo => {
                 const info: Config.OptionInfo = @field(Config.global_option_info, field.name);
+
                 if (info.disable_cli_option) {
                     continue;
                 }
 
                 if (info.long) |long| {
-                    if (mem.eql(u8, name, long)) {
+                    if (std.mem.eql(u8, name, long)) {
                         return field.name;
                     }
-                } else if (mem.eql(u8, name, field.name)) {
-                    return field.name;
+                } else {
+                    const field_name: []u8 = try allocator.dupe(u8, field.name);
+                    defer allocator.free(field_name);
+                    std.mem.replaceScalar(u8, field_name, '_', '-');
+
+                    if (std.mem.eql(u8, name, field_name)) {
+                        return field.name;
+                    }
                 }
             },
 
@@ -405,7 +410,7 @@ fn configNameFromLong(name: []const u8) ?[]const u8 {
                     Config.global_option_info,
                     field.name,
                 );
-                const logging_fields: []const StructField = meta.fields(@TypeOf(logging_info));
+                const logging_fields: []const StructField = std.meta.fields(@TypeOf(logging_info));
                 inline for (logging_fields) |info_field| {
                     assert(info_field.type == Config.OptionInfo);
 
@@ -415,11 +420,18 @@ fn configNameFromLong(name: []const u8) ?[]const u8 {
                     }
 
                     if (info.long) |long| {
-                        if (mem.eql(u8, name, long)) {
-                            return "logging_" ++ field.name;
+                        if (std.mem.eql(u8, name, long)) {
+                            return field.name ++ "." ++ info_field.name;
                         }
-                    } else if (mem.eql(u8, name, "logging-" ++ field.name)) {
-                        return "logging_" ++ field.name;
+                    } else {
+                        // TODO: Is there a need for allocation?
+                        const field_name: []u8 = try allocator.dupe(u8, field.name ++ "-" ++ info_field.name);
+                        defer allocator.free(field_name);
+                        std.mem.replaceScalar(u8, field_name, '_', '-');
+
+                        if (std.mem.eql(u8, name, field_name)) {
+                            return field.name ++ "." ++ info_field.name;
+                        }
                     }
                 }
             },
@@ -433,7 +445,7 @@ fn configNameFromLong(name: []const u8) ?[]const u8 {
 /// Look up the config name for the given one-character short command-line
 /// option.
 fn configNameFromShort(c: u8) ?[]const u8 {
-    const fields: []const StructField = meta.fields(@TypeOf(Config.global_option_info));
+    const fields: []const StructField = std.meta.fields(@TypeOf(Config.global_option_info));
     inline for (fields) |field| {
         switch (field.type) {
             Config.OptionInfo => {
@@ -449,14 +461,14 @@ fn configNameFromShort(c: u8) ?[]const u8 {
                     Config.global_option_info,
                     field.name,
                 );
-                const info_fields: []const StructField = meta.fields(@TypeOf(logging_info));
+                const info_fields: []const StructField = std.meta.fields(@TypeOf(logging_info));
                 inline for (info_fields) |info_field| {
                     assert(info_field.type == Config.OptionInfo);
 
                     const info: Config.OptionInfo = @field(logging_info, info_field.name);
                     if (info.short) |b| {
                         if (b == c) {
-                            return "logging_" ++ field.name;
+                            return field.name ++ "." ++ info_field.name;
                         }
                     }
                 }
@@ -474,6 +486,8 @@ test "no options" {
     defer parsed.deinit();
 
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -490,6 +504,8 @@ test "stop parsing at `--`" {
 
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -505,6 +521,8 @@ test "bool option" {
 
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -524,6 +542,8 @@ test "bool option value" {
     try testing.expect(parsed.values.contains("quiet"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("working_directory"));
@@ -533,6 +553,47 @@ test "bool option value" {
 
     try testing.expectEqual(true, parsed.values.get("quiet").?.bool);
     try testing.expectEqual(false, parsed.values.get("verbose").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "bool option in nested config" {
+    const args = [_][:0]const u8{ "reginald", "--log" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("logging.enabled") != null);
+    try testing.expectEqual(true, parsed.values.get("logging.enabled").?.bool);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "bool option value in nested config" {
+    const args = [_][:0]const u8{ "reginald", "--log=false" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("logging.enabled") != null);
+
+    try testing.expectEqual(false, parsed.values.get("logging.enabled").?.bool);
 
     try testing.expectEqual(0, parsed.args.len);
 }
@@ -561,6 +622,8 @@ test "string option" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -569,6 +632,46 @@ test "string option" {
 
     try testing.expect(parsed.values.get("config_file") != null);
     try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string option in nested config" {
+    const args = [_][:0]const u8{ "reginald", "--log-level", "debug" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("logging.level") != null);
+    try testing.expectEqualStrings("debug", parsed.values.get("logging.level").?.string);
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string option equal sign in nested config" {
+    const args = [_][:0]const u8{ "reginald", "--log-level=info" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("working_directory"));
+
+    try testing.expect(parsed.values.get("logging.level") != null);
+    try testing.expectEqualStrings("info", parsed.values.get("logging.level").?.string);
 
     try testing.expectEqual(0, parsed.args.len);
 }
@@ -586,6 +689,8 @@ test "multiple string options" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -605,6 +710,8 @@ test "string option equals sign" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -623,6 +730,8 @@ test "string option equals sign quoted" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -648,6 +757,8 @@ test "bool and string option" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -668,6 +779,8 @@ test "string option mixed" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("working_directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -687,6 +800,8 @@ test "invalid string order" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -718,6 +833,8 @@ test "short bool option" {
 
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -737,6 +854,8 @@ test "short bool option value" {
     try testing.expect(parsed.values.contains("quiet"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("working_directory"));
@@ -758,6 +877,8 @@ test "short bool option combined" {
     try testing.expect(parsed.values.contains("quiet"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("working_directory"));
@@ -779,6 +900,8 @@ test "short bool option combined last value" {
     try testing.expect(parsed.values.contains("quiet"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("working_directory"));
@@ -810,6 +933,8 @@ test "short string option" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -828,6 +953,8 @@ test "short string option value" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -846,6 +973,8 @@ test "short string option value merged" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -864,6 +993,8 @@ test "short string option empty quoted value" {
     defer parsed.deinit();
 
     try testing.expect(parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -883,6 +1014,8 @@ test "short option combined" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -903,6 +1036,8 @@ test "short option combined value" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -923,6 +1058,8 @@ test "short option combined value merged" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -943,6 +1080,8 @@ test "short option combined value merged quoted" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -963,6 +1102,8 @@ test "short option combined value merged empty quoted" {
 
     try testing.expect(parsed.values.contains("config_file"));
     try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -1133,6 +1274,8 @@ test "unknown long option" {
 
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
@@ -1153,6 +1296,8 @@ test "unknown short option" {
     try testing.expect(parsed.values.contains("print_help"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("working_directory"));
@@ -1174,6 +1319,8 @@ test "unknown arg" {
     try testing.expect(parsed.values.contains("print_help"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("working_directory"));
@@ -1196,6 +1343,8 @@ test "unknown arg and options after" {
     try testing.expect(parsed.values.contains("print_help"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(parsed.values.contains("working_directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("quiet"));
 
@@ -1221,6 +1370,8 @@ test "multiple unknown" {
     try testing.expect(parsed.values.contains("print_help"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
     try testing.expect(!parsed.values.contains("print_version"));
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("working_directory"));
