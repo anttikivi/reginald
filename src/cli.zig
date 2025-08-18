@@ -157,7 +157,7 @@ fn parseArgsWithOptions(
                     }
 
                     if (i + 1 >= args.len) {
-                        try writer.print("option `--{s}` requires a value", .{long});
+                        try writer.print("option `--{s}` requires a value\n", .{long});
                         return error.InvalidArgs;
                     }
 
@@ -193,11 +193,12 @@ fn parseArgsWithOptions(
                 },
                 .paths => {
                     var array = std.ArrayList([]const u8).init(allocator);
+                    defer array.deinit();
+
                     // TODO: This might be too sloppy.
                     if (values.get(option_name)) |s| {
                         try array.appendSlice(s.paths);
                     }
-                    errdefer array.deinit();
 
                     var value: []const u8 = "";
                     var used: usize = 0;
@@ -207,7 +208,7 @@ fn parseArgsWithOptions(
                         // the whole argument even if there is multiple paths in
                         // the string. Should we allow adding quotes around each
                         // path (probably not, right)?
-                        if (arg[long.len + 3] == '"' and arg[long.len - 1] == '"') {
+                        if (arg[long.len + 3] == '"' and arg[arg.len - 1] == '"') {
                             value = arg[long.len + 4 .. arg.len - 1];
                         } else {
                             value = arg[long.len + 3 ..];
@@ -223,11 +224,23 @@ fn parseArgsWithOptions(
                     var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
                     while (iter.next()) |s| {
                         if (s.len > 0) {
-                            try array.append(try allocator.dupe(u8, s));
+                            try array.append(s);
                         }
                     }
 
-                    try values.put(option_name, .{ .paths = try array.toOwnedSlice() });
+                    const paths = try allocator.alloc([]const u8, array.items.len);
+                    for (array.items, 0..) |path, j| {
+                        paths[j] = try allocator.dupe(u8, path);
+                    }
+
+                    if (values.get(option_name)) |old| {
+                        for (old.paths) |p| {
+                            allocator.free(p);
+                        }
+                        allocator.free(old.paths);
+                    }
+
+                    try values.put(option_name, .{ .paths = paths });
                     break :blk used;
                 },
             };
@@ -284,12 +297,14 @@ fn parseArgsWithOptions(
                     },
                 };
 
-                if (values.contains(option_name)) {
+                const option_type = (try Config.optionType(option_name)).?;
+
+                if (option_type != .paths and values.contains(option_name)) {
                     try writer.print("option `-{c}` can be specified only once\n", .{c});
                     return error.InvalidArgs;
                 }
 
-                switch ((try Config.optionType(option_name)).?) {
+                switch (option_type) {
                     .bool => {
                         if (arg.len > j + 1 and arg[j + 1] == '=') {
                             const b = Config.parseBool(arg[j + 2 ..]) catch {
@@ -382,11 +397,12 @@ fn parseArgsWithOptions(
                     },
                     .paths => {
                         var array = std.ArrayList([]const u8).init(allocator);
+                        defer array.deinit();
+
                         // TODO: This might be too sloppy.
                         if (values.get(option_name)) |s| {
                             try array.appendSlice(s.paths);
                         }
-                        errdefer array.deinit();
 
                         var value: []const u8 = "";
 
@@ -413,11 +429,23 @@ fn parseArgsWithOptions(
                         var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
                         while (iter.next()) |s| {
                             if (s.len > 0) {
-                                try array.append(try allocator.dupe(u8, s));
+                                try array.append(s);
                             }
                         }
 
-                        try values.put(option_name, .{ .paths = try array.toOwnedSlice() });
+                        const paths = try allocator.alloc([]const u8, array.items.len);
+                        for (array.items, 0..) |path, k| {
+                            paths[k] = try allocator.dupe(u8, path);
+                        }
+
+                        if (values.get(option_name)) |old| {
+                            for (old.paths) |p| {
+                                allocator.free(p);
+                            }
+                            allocator.free(old.paths);
+                        }
+
+                        try values.put(option_name, .{ .paths = paths });
                         continue :outer;
                     },
                 }

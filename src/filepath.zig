@@ -9,7 +9,7 @@ const mem = std.mem;
 const process = std.process;
 const testing = std.testing;
 
-pub const delimiter_str = std.fmt.comptimePrint("{}", .{std.fs.path.delimiter});
+pub const delimiter_str = std.fmt.comptimePrint("{c}", .{std.fs.path.delimiter});
 
 const ExpandError = Allocator.Error || process.GetEnvVarOwnedError;
 
