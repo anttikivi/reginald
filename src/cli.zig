@@ -5,12 +5,14 @@ const StructField = std.builtin.Type.StructField;
 const testing = std.testing;
 
 const Config = @import("Config.zig");
+const filepath = @import("filepath.zig");
 
 /// Value of a parsed command-line option.
 const OptionValue = union(Config.OptionType) {
     bool: bool,
     int: i64,
     string: []const u8,
+    paths: []const []const u8,
 };
 
 /// Result of the command-line argument parser.
@@ -32,6 +34,19 @@ pub const Parsed = struct {
             self.allocator.free(s);
         }
         self.allocator.free(self.args);
+
+        var values_iter = self.values.iterator();
+        while (values_iter.next()) |entry| {
+            switch (entry.value_ptr.*) {
+                .paths => |paths| {
+                    for (paths) |p| {
+                        self.allocator.free(p);
+                    }
+                    self.allocator.free(paths);
+                },
+                else => {},
+            }
+        }
         self.values.deinit();
     }
 };
@@ -108,12 +123,14 @@ fn parseArgsWithOptions(
                 },
             };
 
-            if (values.contains(option_name)) {
+            const option_type = (try Config.optionType(option_name)).?;
+
+            if (option_type != .paths and values.contains(option_name)) {
                 try writer.print("option `--{s}` can be specified only once\n", .{long});
                 return error.InvalidArgs;
             }
 
-            i += blk: switch ((try Config.optionType(option_name)).?) {
+            i += blk: switch (option_type) {
                 .bool => {
                     if (std.mem.eql(u8, arg[2..], long)) {
                         try values.put(option_name, .{ .bool = true });
@@ -173,6 +190,45 @@ fn parseArgsWithOptions(
 
                     try values.put(option_name, .{ .string = args[i + 1] });
                     break :blk 1;
+                },
+                .paths => {
+                    var array = std.ArrayList([]const u8).init(allocator);
+                    // TODO: This might be too sloppy.
+                    if (values.get(option_name)) |s| {
+                        try array.appendSlice(s.paths);
+                    }
+                    errdefer array.deinit();
+
+                    var value: []const u8 = "";
+                    var used: usize = 0;
+
+                    if (!std.mem.eql(u8, arg[2..], long)) {
+                        // TODO: Right now, we only allow quotes around
+                        // the whole argument even if there is multiple paths in
+                        // the string. Should we allow adding quotes around each
+                        // path (probably not, right)?
+                        if (arg[long.len + 3] == '"' and arg[long.len - 1] == '"') {
+                            value = arg[long.len + 4 .. arg.len - 1];
+                        } else {
+                            value = arg[long.len + 3 ..];
+                        }
+                    } else if (i + 1 < args.len) {
+                        value = args[i + 1];
+                        used += 1;
+                    } else {
+                        try writer.print("option `--{s}` requires a value\n", .{long});
+                        return error.InvalidArgs;
+                    }
+
+                    var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
+                    while (iter.next()) |s| {
+                        if (s.len > 0) {
+                            try array.append(try allocator.dupe(u8, s));
+                        }
+                    }
+
+                    try values.put(option_name, .{ .paths = try array.toOwnedSlice() });
+                    break :blk used;
                 },
             };
 
@@ -322,6 +378,46 @@ fn parseArgsWithOptions(
                         i += 1;
 
                         try values.put(option_name, .{ .string = args[i] });
+                        continue :outer;
+                    },
+                    .paths => {
+                        var array = std.ArrayList([]const u8).init(allocator);
+                        // TODO: This might be too sloppy.
+                        if (values.get(option_name)) |s| {
+                            try array.appendSlice(s.paths);
+                        }
+                        errdefer array.deinit();
+
+                        var value: []const u8 = "";
+
+                        if (arg.len > j + 1 and arg[j + 1] == '=') {
+                            if (arg[j + 2] == '"' and arg[arg.len - 1] == '"') {
+                                value = arg[j + 3 .. arg.len - 1];
+                            } else {
+                                value = arg[j + 2 ..];
+                            }
+                        } else if (arg.len > j + 1) {
+                            if (arg[j + 1] == '"' and arg[arg.len - 1] == '"') {
+                                value = arg[j + 2 .. arg.len - 1];
+                            } else {
+                                value = arg[j + 1 ..];
+                            }
+                        } else if (i + 1 < args.len) {
+                            i += 1;
+                            value = args[i];
+                        } else {
+                            try writer.print("option `-{c}` requires a value\n", .{c});
+                            return error.InvalidArgs;
+                        }
+
+                        var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
+                        while (iter.next()) |s| {
+                            if (s.len > 0) {
+                                try array.append(try allocator.dupe(u8, s));
+                            }
+                        }
+
+                        try values.put(option_name, .{ .paths = try array.toOwnedSlice() });
                         continue :outer;
                     },
                 }
@@ -1127,6 +1223,420 @@ test "invalid empty short" {
     const args = [_][:0]const u8{ "reginald", "-" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
+}
+
+test "string slice option one value" {
+    const args = [_][:0]const u8{ "reginald", "--plugin-dirs", "/tmp/plugins" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{"/tmp/plugins"};
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice equal sign option one value" {
+    const args = [_][:0]const u8{ "reginald", "--plugin-dirs=/tmp/plugins" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{"/tmp/plugins"};
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice option multiple value single arg" {
+    const args = [_][:0]const u8{
+        "reginald",
+        "--plugin-dirs",
+        "/tmp/plugins" ++ filepath.delimiter_str ++ "/private/plugins" ++ filepath.delimiter_str ++ "~/reginald/plugins",
+    };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{ "/tmp/plugins", "/private/plugins", "~/reginald/plugins" };
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice equal sign option multiple value single arg" {
+    const args = [_][:0]const u8{
+        "reginald",
+        "--plugin-dirs=/tmp/plugins" ++ filepath.delimiter_str ++ "/private/plugins" ++ filepath.delimiter_str ++ "~/reginald/plugins",
+    };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{ "/tmp/plugins", "/private/plugins", "~/reginald/plugins" };
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice option multiple value multiple arg" {
+    const args = [_][:0]const u8{
+        "reginald",
+        "--plugin-dirs",
+        "/tmp/plugins",
+        "-P",
+        "/private/plugins",
+        "--plugin-dirs",
+        "~/reginald/plugins",
+    };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{ "/tmp/plugins", "/private/plugins", "~/reginald/plugins" };
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice option single value short" {
+    const args = [_][:0]const u8{ "reginald", "-P", "/tmp/plugins" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{"/tmp/plugins"};
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice equal sign option single value short" {
+    const args = [_][:0]const u8{ "reginald", "-P=/tmp/plugins" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{"/tmp/plugins"};
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice option single value short concat" {
+    const args = [_][:0]const u8{ "reginald", "-P/tmp/plugins" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+    try testing.expect(!parsed.values.contains("verbose"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+
+    const expect = [_][]const u8{"/tmp/plugins"};
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
+}
+
+test "string slice option single value short concat multiple short" {
+    const args = [_][:0]const u8{ "reginald", "-vP/tmp/plugins" };
+    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    defer parsed.deinit();
+
+    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("verbose"));
+    try testing.expect(!parsed.values.contains("config_file"));
+    try testing.expect(!parsed.values.contains("directory"));
+    try testing.expect(!parsed.values.contains("logging.enabled"));
+    try testing.expect(!parsed.values.contains("logging.level"));
+    try testing.expect(!parsed.values.contains("print_version"));
+    try testing.expect(!parsed.values.contains("print_help"));
+    try testing.expect(!parsed.values.contains("quiet"));
+
+    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("verbose") != null);
+
+    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
+
+    const expect = [_][]const u8{"/tmp/plugins"};
+    const actual = parsed.values.get("plugin_directories").?.paths;
+
+    try testing.expectEqual(expect.len, actual.len);
+
+    for (expect) |s| {
+        var found = false;
+        for (actual) |t| {
+            if (std.mem.eql(u8, s, t)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("\n====== expected this output: =========\n", .{});
+            std.debug.print("{s}\n", .{expect});
+            std.debug.print("\n======== instead found this: =========\n", .{});
+            std.debug.print("{s}\n", .{actual});
+            std.debug.print("\n======================================\n", .{});
+        }
+
+        try testing.expect(found);
+    }
+
+    try testing.expectEqual(0, parsed.args.len);
 }
 
 // test "subcommand apply" {

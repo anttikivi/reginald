@@ -37,6 +37,9 @@ directory: []const u8 = ".",
 /// The configuration for logging.
 logging: Logging = .{},
 
+/// The directories to look up for plugins.
+plugin_directories: []const []const u8 = defaultPluginDirs(),
+
 /// If true, the program shows the help message and exits. When this is set to
 /// true, the actual config instance should never be loaded.
 print_help: bool = false,
@@ -72,6 +75,9 @@ const unix_config_lookup = [_][]const u8{
     default_filename,
 };
 
+/// The default name for the plugins directory inside the lookup paths.
+const plugin_dir_name = "plugins";
+
 /// Type for the global logging configuration.
 pub const Logging = struct {
     /// Whether logs are enabled.
@@ -83,7 +89,18 @@ pub const Logging = struct {
 };
 
 /// Type of a config value as a more general value instead of raw types.
-pub const OptionType = enum { bool, int, string };
+pub const OptionType = enum {
+    bool,
+    int,
+    string,
+
+    /// A string slice but the values are assumed to be paths. This is achieved
+    /// by having a config option that is a slice of strings that is marked as
+    /// a path. The difference to a normal string slice, if one is ever added,
+    /// is that this allows specifying multiple paths in one argument using
+    /// the platform-specific path delimiter.
+    paths,
+};
 
 /// Represents the data for creating command-line options and config file
 /// entries and checking environment variables for a config option.
@@ -163,6 +180,12 @@ pub const GlobalOptionInfo = struct {
             .description = "set logging level so that only log messages with level greater than of equal to `<level>` are enabled",
             .is_parsed = true,
         },
+    },
+    plugin_directories: OptionInfo = .{
+        .long = "plugin-dirs",
+        .short = 'P',
+        .description = "search for plugins from `<paths>`",
+        .is_path = true,
     },
     print_help: OptionInfo = .{
         .long = "help",
@@ -315,6 +338,7 @@ pub fn optionType(name: []const u8) !?OptionType {
                         bool => .bool,
                         i64 => .int,
                         []const u8 => .string,
+                        []const []const u8 => .paths,
                         else => @compileError("Config field '" ++ field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Config, field.name))),
                     };
                 },
@@ -334,6 +358,7 @@ pub fn optionType(name: []const u8) !?OptionType {
                                 bool => .bool,
                                 i64 => .int,
                                 []const u8 => .string,
+                                []const []const u8 => .paths,
                                 else => @compileError("Logging config field '" ++ info_field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Logging, info_field.name))),
                             };
                         }
@@ -386,6 +411,30 @@ pub fn optionInfo(name: []const u8) !?OptionInfo {
     }
 
     return null;
+}
+
+fn defaultPluginDirs() []const []const u8 {
+    const xdg_plugin_dir: []const u8 =
+        "$XDG_DATA_HOME" ++ fs.path.sep_str ++ default_filename ++ fs.path.sep_str ++ plugin_dir_name;
+    return blk: {
+        if (native_os == .windows or native_os == .uefi) {
+            break :blk &.{
+                xdg_plugin_dir,
+                "%LOCALAPPDATA%" ++ fs.path.sep_str ++ default_filename ++ fs.path.sep_str ++ plugin_dir_name,
+            };
+        } else if (native_os.isDarwin()) {
+            break :blk &.{
+                xdg_plugin_dir,
+                "~" ++ fs.path.sep_str ++ "Library" ++ fs.path.sep_str ++ "Application Support" ++ fs.path.sep_str ++ default_filename ++ fs.path.sep_str ++ plugin_dir_name,
+                "~" ++ fs.path.sep_str ++ ".local" ++ fs.path.sep_str ++ "share" ++ fs.path.sep_str ++ default_filename ++ fs.path.sep_str ++ plugin_dir_name,
+            };
+        } else {
+            break :blk &.{
+                xdg_plugin_dir,
+                "~" ++ fs.path.sep_str ++ ".local" ++ fs.path.sep_str ++ "share" ++ fs.path.sep_str ++ default_filename ++ fs.path.sep_str ++ plugin_dir_name,
+            };
+        }
+    };
 }
 
 /// Parse a config value that is required for the initialization of the program

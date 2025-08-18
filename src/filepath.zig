@@ -9,6 +9,8 @@ const mem = std.mem;
 const process = std.process;
 const testing = std.testing;
 
+pub const delimiter_str = std.fmt.comptimePrint("{}", .{std.fs.path.delimiter});
+
 const ExpandError = Allocator.Error || process.GetEnvVarOwnedError;
 
 /// Expand environment variables and user home directory in the string in that
