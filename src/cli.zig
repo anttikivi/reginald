@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const assert = std.debug.assert;
+const StringHashMap = std.StringHashMap;
 const StructField = std.builtin.Type.StructField;
 const testing = std.testing;
 
@@ -89,16 +91,16 @@ fn parseArgsWithOptions(
     writer: anytype,
 ) !Parsed {
     // const subcommand: ?[]const u8 = null;
-    var unknown: std.ArrayList([]const u8) = switch (on_unknown) {
+    var unknown: ArrayListUnmanaged([]const u8) = switch (on_unknown) {
         .fail => undefined,
-        .skip => .init(allocator),
+        .skip => .empty,
     };
     errdefer switch (on_unknown) {
         .fail => {},
-        .skip => unknown.deinit(),
+        .skip => unknown.deinit(allocator),
     };
 
-    var values: std.StringHashMap(OptionValue) = .init(allocator);
+    var values: StringHashMap(OptionValue) = .init(allocator);
     errdefer values.deinit();
 
     var i: usize = 0;
@@ -118,7 +120,7 @@ fn parseArgsWithOptions(
                     return error.InvalidArgs;
                 },
                 .skip => {
-                    try unknown.append(try allocator.dupe(u8, arg));
+                    try unknown.append(allocator, try allocator.dupe(u8, arg));
                     continue;
                 },
             };
@@ -192,12 +194,12 @@ fn parseArgsWithOptions(
                     break :blk 1;
                 },
                 .paths => {
-                    var array = std.ArrayList([]const u8).init(allocator);
-                    defer array.deinit();
+                    var array: ArrayListUnmanaged([]const u8) = .empty;
+                    defer array.deinit(allocator);
 
                     // TODO: This might be too sloppy.
                     if (values.get(option_name)) |s| {
-                        try array.appendSlice(s.paths);
+                        try array.appendSlice(allocator, s.paths);
                     }
 
                     var value: []const u8 = "";
@@ -224,7 +226,7 @@ fn parseArgsWithOptions(
                     var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
                     while (iter.next()) |s| {
                         if (s.len > 0) {
-                            try array.append(s);
+                            try array.append(allocator, s);
                         }
                     }
 
@@ -249,9 +251,9 @@ fn parseArgsWithOptions(
         }
 
         if (arg[0] == '-' and arg.len > 1) {
-            var rest: ?std.ArrayList(u8) = null;
-            defer if (rest) |list| {
-                list.deinit();
+            var rest: ?ArrayListUnmanaged(u8) = null;
+            defer if (rest) |*list| {
+                list.deinit(allocator);
             };
 
             var j: usize = 1;
@@ -269,7 +271,7 @@ fn parseArgsWithOptions(
                         },
                         .skip => {
                             if (rest) |*list| {
-                                try list.appendSlice(arg[j..]);
+                                try list.appendSlice(allocator, arg[j..]);
                             } else {
                                 try writer.print("unexpected value separator in `{s}`\n", .{arg});
                                 return error.InvalidArgs;
@@ -287,10 +289,10 @@ fn parseArgsWithOptions(
                     },
                     .skip => {
                         if (rest) |*list| {
-                            try list.append(c);
+                            try list.append(allocator, c);
                         } else {
-                            rest = .init(allocator);
-                            try rest.?.appendSlice(&[_]u8{ '-', c });
+                            rest = .empty;
+                            try rest.?.appendSlice(allocator, &[_]u8{ '-', c });
                         }
 
                         continue;
@@ -396,12 +398,12 @@ fn parseArgsWithOptions(
                         continue :outer;
                     },
                     .paths => {
-                        var array = std.ArrayList([]const u8).init(allocator);
-                        defer array.deinit();
+                        var array: ArrayListUnmanaged([]const u8) = .empty;
+                        defer array.deinit(allocator);
 
                         // TODO: This might be too sloppy.
                         if (values.get(option_name)) |s| {
-                            try array.appendSlice(s.paths);
+                            try array.appendSlice(allocator, s.paths);
                         }
 
                         var value: []const u8 = "";
@@ -429,7 +431,7 @@ fn parseArgsWithOptions(
                         var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
                         while (iter.next()) |s| {
                             if (s.len > 0) {
-                                try array.append(s);
+                                try array.append(allocator, s);
                             }
                         }
 
@@ -454,7 +456,7 @@ fn parseArgsWithOptions(
             switch (on_unknown) {
                 .fail => {},
                 .skip => if (rest) |list| {
-                    try unknown.append(try allocator.dupe(u8, list.items));
+                    try unknown.append(allocator, try allocator.dupe(u8, list.items));
                 },
             }
 
@@ -466,7 +468,7 @@ fn parseArgsWithOptions(
                 try writer.print("unknown argument: {s}\n", .{arg});
                 return error.InvalidArgs;
             },
-            .skip => try unknown.append(try allocator.dupe(u8, arg)),
+            .skip => try unknown.append(allocator, try allocator.dupe(u8, arg)),
         }
 
         // if (std.meta.stringToEnum(Subcommand, arg)) |tag| {
@@ -492,7 +494,7 @@ fn parseArgsWithOptions(
         .allocator = allocator,
         .args = switch (on_unknown) {
             .fail => try allocator.alloc([]const u8, 0), // TODO: Stupid?
-            .skip => try unknown.toOwnedSlice(),
+            .skip => try unknown.toOwnedSlice(allocator),
         },
         // .subcommand = subcommand,
         .values = values,
