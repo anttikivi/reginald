@@ -128,25 +128,6 @@ pub fn main() !void {
 //     return;
 // }
 
-// const cfg_file = Config.loadFile(gpa, parsed_args, wd) catch |err| {
-//     switch (err) {
-//         error.FileNotFound, error.IsDir => {
-//             try std.io.getStdErr().writer().print("config file not found\n", .{});
-//
-//             return err;
-//         },
-//         else => return err,
-//     }
-// };
-// defer gpa.free(cfg_file);
-//
-// var diag: toml.Diagnostics = undefined;
-// var toml_value = toml.parseWithDiagnostics(gpa, cfg_file, &diag) catch |e| {
-//     try errw.print("{}\n", .{diag});
-//     return e;
-// };
-// defer toml_value.deinit(gpa);
-
 test {
     std.testing.refAllDecls(@This());
 }

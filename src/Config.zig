@@ -513,10 +513,6 @@ fn parseStruct(
                     }
                 }
 
-                // if (is_parsed) {
-                //     continue;
-                // }
-
                 if (!is_parsed) {
                     if (@typeInfo(field.type) == .@"struct") {
                         const struct_file_data: ?toml.Value = blk: {
@@ -567,6 +563,46 @@ fn parseStruct(
             }
         },
         else => @compileError("Expected a struct, got " ++ @typeName(T)),
+    }
+
+    if (file_data) |data| {
+        assert(data == .table);
+
+        var iter = data.table.iterator();
+        while (iter.next()) |entry| {
+            var contains = false;
+
+            if (prefix.len > 0) {
+                for (parsed_keys.items) |k| {
+                    if (mem.startsWith(u8, k, prefix ++ ".")) {
+                        if (mem.eql(u8, entry.key_ptr.*, k[prefix.len + 1 ..])) {
+                            contains = true;
+                        }
+                    }
+                }
+            } else {
+                for (parsed_keys.items) |k| {
+                    if (mem.eql(u8, entry.key_ptr.*, k)) {
+                        contains = true;
+                    }
+                }
+            }
+
+            if (!contains) {
+                if (prefix.len > 0) {
+                    try std.io.getStdErr().writer().print(
+                        "unknown key in config file: {s}.{s}\n",
+                        .{ prefix, entry.key_ptr.* },
+                    );
+                } else {
+                    try std.io.getStdErr().writer().print(
+                        "unknown key in config file: {s}\n",
+                        .{entry.key_ptr.*},
+                    );
+                }
+                return error.InvalidConfig;
+            }
+        }
     }
 }
 
