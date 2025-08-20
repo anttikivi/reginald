@@ -151,7 +151,7 @@ pub const OptionInfo = struct {
     /// If true, this option will accept a string instead of the type in
     /// `Config`. The value is converted into the config value by calling
     /// the parser when checking the values.
-    is_parsed: bool = false,
+    parse_from_string: bool = false,
 };
 
 pub const LoggingInfo = struct {
@@ -185,7 +185,7 @@ pub const GlobalOptionInfo = struct {
         .level = .{
             .long = "log-level",
             .description = "set logging level so that only log messages with level greater than of equal to `<level>` are enabled",
-            .is_parsed = true,
+            .parse_from_string = true,
         },
     },
     plugin_directories: OptionInfo = .{
@@ -239,14 +239,12 @@ pub const global_option_info: GlobalOptionInfo = .{};
 /// the temporary allocations during the initialization.
 pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
     var cfg: Config = .{};
-    errdefer cfg.deinit(allocator);
+    // errdefer cfg.deinit(allocator);
 
     var arena_instance = ArenaAllocator.init(gpa);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    // try cfg.parseInitValue(arena, "config_file", args);
-    // try cfg.parseInitValue(arena, "working_directory", args);
     cfg.config_file = try parseField(
         []const u8,
         arena,
@@ -269,36 +267,38 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
     const file_data = try cfg.loadFile(arena);
     defer arena.free(file_data);
 
-    const stderr_writer = std.io.getStdErr().writer();
-
     var diag: toml.Diagnostics = undefined;
     var toml_value = toml.parseWithDiagnostics(arena, file_data, &diag) catch |e| {
-        try stderr_writer.print("{}\n", .{diag});
+        try std.io.getStdErr().writer().print("{}\n", .{diag});
         return e;
     };
     defer toml_value.deinit(arena);
     assert(toml_value == .table);
-
-    for (toml_value.table.keys()) |key| {
-        std.debug.print("{s}\n", .{key});
-    }
 
     var parsed_keys: ArrayListUnmanaged([]const u8) = .empty;
     defer parsed_keys.deinit(arena);
 
     try parsed_keys.appendSlice(arena, &[_][]const u8{ "config_file", "working_directory" });
 
-    // try cfg.parseGlobalValue(arena, "extend", args, toml_value, stderr_writer);
     cfg.extend = try parseField(bool, arena, "extend", cfg.extend, toml_value, args, cfg.extend);
     try parsed_keys.append(arena, "extend");
 
     try parseStruct(arena, &cfg, "", &parsed_keys, toml_value, args, cfg.extend);
 
-    // inline for (meta.fields(Config)) |field| {
-    //     if (field.type == []const u8) {
-    //         @field(cfg, field.name) = try cfg.allocator.dupe(u8, @field(cfg, field.name));
-    //     }
-    // }
+    inline for (meta.fields(Config)) |field| {
+        switch (field.type) {
+            []const u8 => @field(cfg, field.name) = try allocator.dupe(u8, @field(cfg, field.name)),
+            []const []const u8 => {
+                const value = @field(cfg, field.name);
+                var new_value = try allocator.alloc([]const u8, value.len);
+                for (value, 0..) |v, i| {
+                    new_value[i] = try allocator.dupe(u8, v);
+                }
+                @field(cfg, field.name) = new_value;
+            },
+            else => {}, // no-op
+        }
+    }
 
     return cfg;
 }
@@ -306,8 +306,15 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
 /// Free the memory allocated by the `Config`.
 pub fn deinit(self: *Config, allocator: Allocator) void {
     inline for (meta.fields(Config)) |field| {
-        if (field.type == []const u8) {
-            allocator.free(@field(self, field.name));
+        switch (field.type) {
+            []const u8 => allocator.free(@field(self, field.name)),
+            []const []const u8 => {
+                for (@field(self, field.name)) |v| {
+                    allocator.free(v);
+                }
+                allocator.free(@field(self, field.name));
+            },
+            else => {}, // no-op
         }
     }
 }
@@ -374,7 +381,7 @@ pub fn optionType(name: []const u8) !?OptionType {
                 OptionInfo => {
                     const info = @field(global_option_info, field.name);
 
-                    if (info.is_parsed) {
+                    if (info.parse_from_string) {
                         return .string;
                     }
 
@@ -394,7 +401,7 @@ pub fn optionType(name: []const u8) !?OptionType {
                         if (mem.eql(u8, logging_field_name, info_field.name)) {
                             const info = @field(logging_info, info_field.name);
 
-                            if (info.is_parsed) {
+                            if (info.parse_from_string) {
                                 return .string;
                             }
 
@@ -455,75 +462,6 @@ pub fn optionInfo(name: []const u8) !?OptionInfo {
     }
 
     return null;
-}
-
-/// Parse a config value that is required for the initialization of the program
-/// and reading the rest of the config values.
-fn parseInitValue(self: *Config, arena: Allocator, comptime name: []const u8, args: cli.Parsed) !void {
-    const option_info = (try optionInfo(name)).?;
-    const option_type = (try optionType(name)).?;
-
-    if (args.values.get(name)) |val| {
-        if (@as(OptionType, val) != option_type) {
-            return error.TypeMismatch;
-        }
-
-        @field(self, name) = switch (@FieldType(Config, name)) {
-            bool => val.bool,
-            i64 => val.int,
-            []const u8 => blk: {
-                if (option_info.is_path) {
-                    break :blk try arena.dupe(u8, try filepath.expand(arena, val.string));
-                } else {
-                    break :blk try arena.dupe(
-                        u8,
-                        try filepath.expandEnv(arena, val.string),
-                    );
-                }
-            },
-            else => @compileError("Config field '" ++ name ++ "' has invalid type"),
-        };
-
-        return;
-    }
-
-    if (option_info.disable_env) {
-        return;
-    }
-
-    const meta_env_var = option_info.environment_variable orelse name;
-    const var_name_alloc = try mem.concat(
-        arena,
-        u8,
-        &[_][]const u8{ build_options.env_prefix, "_", meta_env_var },
-    );
-    defer arena.free(var_name_alloc);
-
-    mem.replaceScalar(u8, var_name_alloc, '-', '_');
-
-    var buf: [1024]u8 = undefined;
-    const var_name = std.ascii.upperString(&buf, var_name_alloc);
-
-    if (std.process.getEnvVarOwned(arena, var_name)) |s| {
-        defer arena.free(s);
-        if (s.len != 0) {
-            @field(self, name) = switch (@FieldType(Config, name)) {
-                bool => try parseBool(s),
-                i64 => try std.fmt.parseInt(i64, s, 0),
-                []const u8 => blk: {
-                    if (option_info.is_path) {
-                        break :blk try arena.dupe(u8, try filepath.expand(arena, s));
-                    } else {
-                        break :blk try arena.dupe(u8, try filepath.expandEnv(arena, s));
-                    }
-                },
-                else => @compileError("Config field " ++ name ++ " has invalid type"),
-            };
-        }
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {}, // no-op, use default
-        else => return err,
-    }
 }
 
 fn parseStruct(
@@ -632,25 +570,29 @@ fn parseField(
         value = new_value;
     }
 
-    switch (T) {
+    return blk: switch (T) {
         []const u8 => if (option_info.is_path) {
-            value = try filepath.expand(arena, value);
+            break :blk try filepath.expand(arena, value);
         } else {
-            value = try filepath.expandEnv(arena, value);
+            break :blk try filepath.expandEnv(arena, value);
         },
-        []const []const u8 => if (option_info.is_path) {
-            for (value, 0..) |v, i| {
-                value[i] = try filepath.expand(arena, v);
-            }
-        } else {
-            for (value, 0..) |v, i| {
-                value[i] = try filepath.expandEnv(arena, v);
-            }
-        },
-        else => {}, // no-op
-    }
+        []const []const u8 => {
+            var new_value = try arena.alloc([]const u8, value.len);
 
-    return value;
+            if (option_info.is_path) {
+                for (value, 0..) |v, i| {
+                    new_value[i] = try filepath.expand(arena, v);
+                }
+            } else {
+                for (value, 0..) |v, i| {
+                    new_value[i] = try filepath.expandEnv(arena, v);
+                }
+            }
+
+            break :blk new_value;
+        },
+        else => value,
+    };
 }
 
 fn parseFileValue(
@@ -717,7 +659,7 @@ fn parseFileValue(
                     defer values.deinit(arena);
 
                     if (extend) {
-                        values.appendSlice(arena, prev);
+                        try values.appendSlice(arena, prev);
                     }
 
                     var str_iter = mem.splitScalar(u8, str, fs.path.delimiter);
@@ -725,7 +667,7 @@ fn parseFileValue(
                         try values.append(arena, s);
                     }
 
-                    var new_value = try arena.alloc(u8, values.items.len);
+                    var new_value = try arena.alloc([]u8, values.items.len);
                     for (values.items, 0..) |val, i| {
                         new_value[i] = try arena.dupe(u8, val);
                     }
@@ -737,7 +679,7 @@ fn parseFileValue(
                     defer values.deinit(arena);
 
                     if (extend) {
-                        values.appendSlice(arena, prev);
+                        try values.appendSlice(arena, prev);
                     }
 
                     for (arr.items) |item| {
@@ -753,7 +695,7 @@ fn parseFileValue(
                         }
                     }
 
-                    var new_value = try arena.alloc(u8, values.items.len);
+                    var new_value = try arena.alloc([]u8, values.items.len);
                     for (values.items, 0..) |val, i| {
                         new_value[i] = try arena.dupe(u8, val);
                     }
@@ -764,6 +706,16 @@ fn parseFileValue(
                     try std.io.getStdErr().writer().print(
                         "value `{}` given for `{s}` in config file has type `{s}`, expected string or array\n",
                         .{ v, file_key, @tagName(value) },
+                    );
+                    return error.InvalidConfig;
+                },
+            },
+            std.log.Level => switch (value) {
+                .string => |s| break :blk try parseLogLevel(s),
+                else => |v| {
+                    try std.io.getStdErr().writer().print(
+                        "value `{}` given for `{s}` in config file has type `{s}`, expected `{s}`\n",
+                        .{ v, file_key, @tagName(value), "string" },
                     );
                     return error.InvalidConfig;
                 },
@@ -811,7 +763,7 @@ fn parseEnvValue(
                     defer values.deinit(arena);
 
                     if (extend) {
-                        values.appendSlice(arena, prev);
+                        try values.appendSlice(arena, prev);
                     }
 
                     var str_iter = mem.splitScalar(u8, s, fs.path.delimiter);
@@ -819,13 +771,14 @@ fn parseEnvValue(
                         try values.append(arena, u);
                     }
 
-                    var new_value = try arena.alloc(u8, values.items.len);
+                    var new_value = try arena.alloc([]u8, values.items.len);
                     for (values.items, 0..) |val, i| {
                         new_value[i] = try arena.dupe(u8, val);
                     }
 
                     break :blk new_value;
                 },
+                std.log.Level => try parseLogLevel(s),
                 else => @compileError("Config field " ++ key ++ " has invalid type"),
             };
         }
@@ -862,25 +815,49 @@ fn parseArgValue(
                 defer values.deinit(arena);
 
                 if (extend) {
-                    values.appendSlice(arena, prev);
+                    try values.appendSlice(arena, prev);
                 }
 
                 for (val.paths) |v| {
                     try values.append(arena, v);
                 }
 
-                var new_value = try arena.alloc(u8, values.items.len);
+                var new_value = try arena.alloc([]u8, values.items.len);
                 for (values.items, 0..) |v, i| {
                     new_value[i] = try arena.dupe(u8, v);
                 }
 
                 break :blk new_value;
             },
+            std.log.Level => try parseLogLevel(val.string),
             else => @compileError("Config field '" ++ key ++ "' has invalid type"),
         };
     }
 
     return null;
+}
+
+fn parseLogLevel(s: []const u8) !std.log.Level {
+    var buf: [8]u8 = undefined;
+    if (s.len > buf.len) {
+        try std.io.getStdErr().writer().print("invalid value for log level: {s}\n", .{s});
+        return error.InvalidConfig;
+    }
+
+    const l = std.ascii.lowerString(&buf, s);
+
+    if (mem.eql(u8, l, "e") or mem.eql(u8, l, "err") or mem.eql(u8, l, "error")) {
+        return .err;
+    } else if (mem.eql(u8, l, "w") or mem.eql(u8, l, "warn") or mem.eql(u8, l, "warning")) {
+        return .warn;
+    } else if (mem.eql(u8, l, "i") or mem.eql(u8, l, "info")) {
+        return .info;
+    } else if (mem.eql(u8, l, "d") or mem.eql(u8, l, "debug")) {
+        return .debug;
+    }
+
+    try std.io.getStdErr().writer().print("invalid value for log level: {s}\n", .{s});
+    return error.InvalidConfig;
 }
 
 /// Find the first matching config file and load its contents. The caller owns
