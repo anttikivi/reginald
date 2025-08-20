@@ -110,7 +110,7 @@ pub fn main() !void {
     const config_allocator = if (is_debug) config_allocator_instance.?.allocator() else gpa;
 
     var cfg = try Config.init(config_allocator, gpa, parsed_args);
-    defer cfg.deinit(config_allocator);
+    defer cfg.deinit();
 
     std.debug.print("wd: {s}\n", .{cfg.working_directory});
     std.debug.print("config: {s}\n", .{cfg.config_file});

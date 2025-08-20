@@ -19,8 +19,11 @@ const meta = std.meta;
 const StructField = std.builtin.Type.StructField;
 
 const cli = @import("cli.zig");
+const @"comptime" = @import("comptime.zig");
 const filepath = @import("filepath.zig");
 const toml = @import("toml.zig");
+
+allocator: Allocator,
 
 /// Path to the config file.
 config_file: []const u8 = "",
@@ -81,7 +84,6 @@ const unix_config_lookup = [_][]const u8{
 /// The default name for the plugins directory inside the lookup paths.
 const plugin_dir_name = "plugins";
 
-/// Type for the global logging configuration.
 pub const Logging = struct {
     /// Whether logs are enabled.
     enabled: bool = true,
@@ -91,7 +93,6 @@ pub const Logging = struct {
     level: std.log.Level = .info,
 };
 
-/// Type of a config value as a more general value instead of raw types.
 pub const OptionType = enum {
     bool,
     int,
@@ -152,6 +153,16 @@ pub const OptionInfo = struct {
     /// `Config`. The value is converted into the config value by calling
     /// the parser when checking the values.
     parse_from_string: bool = false,
+
+    fn fileKey(self: *const @This(), arena: Allocator, name: []const u8) ![]const u8 {
+        if (self.config_file_name) |s| {
+            return s;
+        }
+
+        const s = try arena.dupe(u8, name);
+        mem.replaceScalar(u8, s, '_', '-');
+        return s;
+    }
 };
 
 pub const LoggingInfo = struct {
@@ -189,9 +200,10 @@ pub const GlobalOptionInfo = struct {
         },
     },
     plugin_directories: OptionInfo = .{
-        .long = "plugin-dirs",
+        .long = "plugin-paths",
         .short = 'P',
-        .config_file_name = "plugin-dirs",
+        .environment_variable = "PLUGIN_PATHS",
+        .config_file_name = "plugin-paths",
         .description = "search for plugins from `<paths>`",
         .is_path = true,
     },
@@ -238,7 +250,7 @@ pub const global_option_info: GlobalOptionInfo = .{};
 /// `Allocator` is used to create a temporary arena that is used for
 /// the temporary allocations during the initialization.
 pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
-    var cfg: Config = .{};
+    var cfg: Config = .{ .allocator = allocator };
     // errdefer cfg.deinit(allocator);
 
     var arena_instance = ArenaAllocator.init(gpa);
@@ -249,6 +261,7 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
         []const u8,
         arena,
         "config_file",
+        comptime comptimeOptionInfo("config_file"),
         cfg.config_file,
         null,
         args,
@@ -258,6 +271,7 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
         []const u8,
         arena,
         "working_directory",
+        comptime comptimeOptionInfo("working_directory"),
         cfg.working_directory,
         null,
         args,
@@ -280,7 +294,16 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
 
     try parsed_keys.appendSlice(arena, &[_][]const u8{ "config_file", "working_directory" });
 
-    cfg.extend = try parseField(bool, arena, "extend", cfg.extend, toml_value, args, cfg.extend);
+    cfg.extend = try parseField(
+        bool,
+        arena,
+        "extend",
+        comptime comptimeOptionInfo("extend"),
+        cfg.extend,
+        toml_value,
+        args,
+        cfg.extend,
+    );
     try parsed_keys.append(arena, "extend");
 
     try parseStruct(arena, &cfg, "", &parsed_keys, toml_value, args, cfg.extend);
@@ -313,12 +336,15 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
 
     inline for (meta.fields(Config)) |field| {
         switch (field.type) {
-            []const u8 => @field(cfg, field.name) = try allocator.dupe(u8, @field(cfg, field.name)),
+            []const u8 => @field(cfg, field.name) = try cfg.allocator.dupe(
+                u8,
+                @field(cfg, field.name),
+            ),
             []const []const u8 => {
                 const value = @field(cfg, field.name);
-                var new_value = try allocator.alloc([]const u8, value.len);
+                var new_value = try cfg.allocator.alloc([]const u8, value.len);
                 for (value, 0..) |v, i| {
-                    new_value[i] = try allocator.dupe(u8, v);
+                    new_value[i] = try cfg.allocator.dupe(u8, v);
                 }
                 @field(cfg, field.name) = new_value;
             },
@@ -330,15 +356,15 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
 }
 
 /// Free the memory allocated by the `Config`.
-pub fn deinit(self: *Config, allocator: Allocator) void {
+pub fn deinit(self: *Config) void {
     inline for (meta.fields(Config)) |field| {
         switch (field.type) {
-            []const u8 => allocator.free(@field(self, field.name)),
+            []const u8 => self.allocator.free(@field(self, field.name)),
             []const []const u8 => {
                 for (@field(self, field.name)) |v| {
-                    allocator.free(v);
+                    self.allocator.free(v);
                 }
-                allocator.free(@field(self, field.name));
+                self.allocator.free(@field(self, field.name));
             },
             else => {}, // no-op
         }
@@ -348,9 +374,13 @@ pub fn deinit(self: *Config, allocator: Allocator) void {
 /// Ensure that the additional information for the Config fields match
 /// the Config fields.
 pub fn checkInfo() void {
-    assert(meta.fields(Config).len == meta.fields(@TypeOf(Config.global_option_info)).len);
+    assert(meta.fields(Config).len == meta.fields(@TypeOf(Config.global_option_info)).len + 1);
 
     for (meta.fields(Config)) |field| {
+        if (mem.eql(u8, field.name, "allocator")) {
+            continue;
+        }
+
         var found = false;
         for (meta.fields(@TypeOf(Config.global_option_info))) |info_field| {
             if (mem.eql(u8, field.name, info_field.name)) {
@@ -416,7 +446,7 @@ pub fn optionType(name: []const u8) !?OptionType {
                         i64 => .int,
                         []const u8 => .string,
                         []const []const u8 => .paths,
-                        else => @compileError("Config field '" ++ field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Config, field.name))),
+                        else => @compileError("config field '" ++ field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Config, field.name))),
                     };
                 },
                 LoggingInfo => if (dot_index) |i| {
@@ -436,7 +466,7 @@ pub fn optionType(name: []const u8) !?OptionType {
                                 i64 => .int,
                                 []const u8 => .string,
                                 []const []const u8 => .paths,
-                                else => @compileError("Logging config field '" ++ info_field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Logging, info_field.name))),
+                                else => @compileError("logging config field '" ++ info_field.name ++ "' has invalid type: " ++ @typeName(@FieldType(Logging, info_field.name))),
                             };
                         }
                     }
@@ -445,7 +475,7 @@ pub fn optionType(name: []const u8) !?OptionType {
                 } else {
                     return error.InvalidKey;
                 },
-                else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
+                else => @compileError("expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
             }
         }
     }
@@ -480,14 +510,37 @@ pub fn optionInfo(name: []const u8) !?OptionInfo {
 
                     return error.InvalidKey;
                 } else {
+                    try std.io.getStdErr().writer().print(
+                        "no config info matching key '{s}'\n",
+                        .{name},
+                    );
                     return error.InvalidKey;
                 },
-                else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
+                else => @compileError("expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
             }
         }
     }
 
     return null;
+}
+
+fn comptimeOptionInfo(comptime key: []const u8) OptionInfo {
+    const parts = @"comptime".splitScalar(u8, key, '.');
+
+    switch (parts.len) {
+        0 => @compileError("invalid option info key: " ++ key),
+        1 => if (@FieldType(@TypeOf(global_option_info), key) != OptionInfo) {
+            @compileError("key '" ++ key ++ "' does not yield an OptionInfo");
+        } else {
+            return @field(global_option_info, key);
+        },
+        2 => if (mem.eql(u8, parts[0], "logging")) {
+            return @field(global_option_info.logging, parts[1]);
+        } else {
+            @compileError("no option info for '" ++ key ++ "'");
+        },
+        else => @compileError("no option info for '" ++ key ++ "'"),
+    }
 }
 
 fn parseStruct(
@@ -504,6 +557,16 @@ fn parseStruct(
     switch (@typeInfo(T)) {
         .@"struct" => |@"struct"| {
             inline for (@"struct".fields) |field| {
+                comptime if (mem.eql(u8, field.name, "allocator")) {
+                    continue;
+                };
+
+                // Tasks are parsed in a single pass after loading the plugin
+                // manifests.
+                comptime if (mem.eql(u8, field.name, "tasks")) {
+                    continue;
+                };
+
                 const key = if (prefix.len > 0) prefix ++ "." ++ field.name else field.name;
 
                 var is_parsed = false;
@@ -515,43 +578,45 @@ fn parseStruct(
 
                 if (!is_parsed) {
                     if (@typeInfo(field.type) == .@"struct") {
-                        const struct_file_data: ?toml.Value = blk: {
-                            if (file_data == null) {
-                                break :blk null;
+                        const struct_data: ?toml.Value = blk: {
+                            if (mem.eql(u8, field.name, "logging")) {
+                                if (file_data.?.table.get("logging")) |value| {
+                                    switch (value) {
+                                        .table => |t| break :blk .{ .table = t },
+                                        else => {
+                                            try std.io.getStdErr().writer().print(
+                                                "config value for `{s}` is `{s}`, expected `{s}`\n",
+                                                .{ key, @tagName(value), "table" },
+                                            );
+                                            return error.InvalidConfig;
+                                        },
+                                    }
+                                }
                             }
 
-                            if (file_data.?.table.get(field.name)) |value| {
-                                switch (value) {
-                                    .table => |t| {
-                                        break :blk .{ .table = t };
-                                    },
-                                    else => {
-                                        try std.io.getStdErr().writer().print(
-                                            "config value for `{s}` is `{s}`, expected `{s}`\n",
-                                            .{ key, @tagName(value), "table" },
-                                        );
-                                        return error.InvalidConfig;
-                                    },
-                                }
-                            } else {
-                                break :blk null;
-                            }
+                            try std.io.getStdErr().writer().print(
+                                "unexpected config struct with key '{s}'\n",
+                                .{field.name},
+                            );
+                            return error.InvalidConfig;
                         };
                         try parseStruct(
                             arena,
                             &@field(ptr.*, field.name),
                             key,
                             parsed_keys,
-                            struct_file_data,
+                            struct_data,
                             args,
                             extend,
                         );
                         try parsed_keys.append(arena, key);
                     } else {
+                        const option_info = comptime comptimeOptionInfo(key);
                         @field(ptr.*, field.name) = try parseField(
                             @FieldType(T, field.name),
                             arena,
                             key,
+                            option_info,
                             @field(ptr.*, field.name),
                             file_data,
                             args,
@@ -562,28 +627,42 @@ fn parseStruct(
                 }
             }
         },
-        else => @compileError("Expected a struct, got " ++ @typeName(T)),
+        else => @compileError("expected a struct, got " ++ @typeName(T)),
+    }
+
+    std.debug.print("Parsed keys:\n", .{});
+
+    for (parsed_keys.items) |item| {
+        std.debug.print("- {s}\n", .{item});
     }
 
     if (file_data) |data| {
         assert(data == .table);
 
-        var iter = data.table.iterator();
-        while (iter.next()) |entry| {
+        const keys = data.table.keys();
+        for (keys) |k| {
             var contains = false;
 
             if (prefix.len > 0) {
-                for (parsed_keys.items) |k| {
-                    if (mem.startsWith(u8, k, prefix ++ ".")) {
-                        if (mem.eql(u8, entry.key_ptr.*, k[prefix.len + 1 ..])) {
+                for (parsed_keys.items) |p| {
+                    const option_info = (try optionInfo(p)).?;
+                    if (mem.startsWith(u8, p, prefix ++ ".")) {
+                        if (mem.eql(u8, k, try option_info.fileKey(arena, p[prefix.len + 1 ..]))) {
                             contains = true;
                         }
                     }
                 }
             } else {
-                for (parsed_keys.items) |k| {
-                    if (mem.eql(u8, entry.key_ptr.*, k)) {
-                        contains = true;
+                for (parsed_keys.items) |p| {
+                    if (mem.eql(u8, p, "logging")) {
+                        if (mem.eql(u8, p, k)) {
+                            contains = true;
+                        }
+                    } else {
+                        const option_info = (try optionInfo(p)).?;
+                        if (mem.eql(u8, k, try option_info.fileKey(arena, p))) {
+                            contains = true;
+                        }
                     }
                 }
             }
@@ -592,12 +671,14 @@ fn parseStruct(
                 if (prefix.len > 0) {
                     try std.io.getStdErr().writer().print(
                         "unknown key in config file: {s}.{s}\n",
-                        .{ prefix, entry.key_ptr.* },
+                        .{ prefix, k },
                     );
+                } else if (mem.eql(u8, k, "tasks")) {
+                    continue;
                 } else {
                     try std.io.getStdErr().writer().print(
                         "unknown key in config file: {s}\n",
-                        .{entry.key_ptr.*},
+                        .{k},
                     );
                 }
                 return error.InvalidConfig;
@@ -610,12 +691,12 @@ fn parseField(
     comptime T: type,
     arena: Allocator,
     key: []const u8,
+    option_info: OptionInfo,
     default: T,
     file_data: ?toml.Value,
     args: cli.Parsed,
     extend: bool,
 ) !T {
-    const option_info = (try optionInfo(key)).?;
     var value: T = default;
 
     const last_key = if (mem.lastIndexOfScalar(u8, key, '.')) |i| key[i + 1 ..] else key;
@@ -672,15 +753,16 @@ fn parseFileValue(
 
     assert(file_data.? == .table);
 
-    const file_key: []const u8 = blk: {
-        if (option_info.config_file_name) |s| {
-            break :blk s;
-        } else {
-            const s = try arena.dupe(u8, key);
-            mem.replaceScalar(u8, s, '_', '-');
-            break :blk s;
-        }
-    };
+    const file_key = try option_info.fileKey(arena, key);
+    // const file_key: []const u8 = blk: {
+    //     if (option_info.config_file_name) |s| {
+    //         break :blk s;
+    //     } else {
+    //         const s = try arena.dupe(u8, key);
+    //         mem.replaceScalar(u8, s, '_', '-');
+    //         break :blk s;
+    //     }
+    // };
     if (file_data.?.table.get(file_key)) |value| {
         return blk: switch (T) {
             bool => switch (value) {
@@ -782,7 +864,7 @@ fn parseFileValue(
                     return error.InvalidConfig;
                 },
             },
-            else => @compileError("Config field with invalid type: " ++ @typeName(T)),
+            else => @compileError("config field with invalid type: " ++ @typeName(T)),
         };
     }
 
@@ -841,7 +923,7 @@ fn parseEnvValue(
                     break :blk new_value;
                 },
                 std.log.Level => try parseLogLevel(s),
-                else => @compileError("Config field " ++ key ++ " has invalid type"),
+                else => @compileError("config field " ++ key ++ " has invalid type"),
             };
         }
     } else |err| switch (err) {
@@ -892,7 +974,7 @@ fn parseArgValue(
                 break :blk new_value;
             },
             std.log.Level => try parseLogLevel(val.string),
-            else => @compileError("Config field '" ++ key ++ "' has invalid type"),
+            else => @compileError("config field '" ++ key ++ "' has invalid type"),
         };
     }
 
