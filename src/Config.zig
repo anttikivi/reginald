@@ -285,6 +285,32 @@ pub fn init(allocator: Allocator, gpa: Allocator, args: cli.Parsed) !Config {
 
     try parseStruct(arena, &cfg, "", &parsed_keys, toml_value, args, cfg.extend);
 
+    // We know that we cannot search duplicate plugin directories after
+    // expanding the paths so we might as well remove them here.
+    {
+        var found_paths: ArrayListUnmanaged([]const u8) = .empty;
+        defer found_paths.deinit(arena);
+
+        for (cfg.plugin_directories) |dir| {
+            var contains = false;
+            for (found_paths.items) |p| {
+                if (mem.eql(u8, dir, p)) {
+                    contains = true;
+                }
+            }
+
+            if (!contains) {
+                try found_paths.append(arena, dir);
+            }
+        }
+
+        var new_value = try arena.alloc([]const u8, found_paths.items.len);
+        for (found_paths.items, 0..) |p, i| {
+            new_value[i] = try arena.dupe(u8, p);
+        }
+        cfg.plugin_directories = new_value;
+    }
+
     inline for (meta.fields(Config)) |field| {
         switch (field.type) {
             []const u8 => @field(cfg, field.name) = try allocator.dupe(u8, @field(cfg, field.name)),
