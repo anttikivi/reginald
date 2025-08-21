@@ -8,14 +8,10 @@ const testing = std.testing;
 
 const Config = @import("Config.zig");
 const filepath = @import("filepath.zig");
+const OptionType = Config.OptionType;
 
-/// Value of a parsed command-line option.
-const OptionValue = union(Config.OptionType) {
-    bool: bool,
-    int: i64,
-    string: []const u8,
-    paths: []const []const u8,
-};
+var long_option_lookup: StringHashMap([]const u8) = undefined;
+var short_option_lookup: [256]?[]const u8 = undefined;
 
 /// Result of the command-line argument parser.
 pub const Parsed = struct {
@@ -29,7 +25,7 @@ pub const Parsed = struct {
     /// Values of the command-line options that were found and parsed
     /// successfully. The values are stored by the name of the config option
     /// that is read from the metadata.
-    values: std.StringHashMap(OptionValue),
+    values: StringHashMap(OptionValue),
 
     pub fn deinit(self: *@This()) void {
         for (self.args) |s| {
@@ -40,11 +36,12 @@ pub const Parsed = struct {
         var values_iter = self.values.iterator();
         while (values_iter.next()) |entry| {
             switch (entry.value_ptr.*) {
-                .paths => |paths| {
-                    for (paths) |p| {
-                        self.allocator.free(p);
+                .string => |s| self.allocator.free(s),
+                .string_slice => |strs| {
+                    for (strs) |s| {
+                        self.allocator.free(s);
                     }
-                    self.allocator.free(paths);
+                    self.allocator.free(strs);
                 },
                 else => {},
             }
@@ -53,7 +50,54 @@ pub const Parsed = struct {
     }
 };
 
+const OptionValue = union(OptionType) {
+    bool: bool,
+    int: i64,
+    string: []const u8,
+    string_slice: []const []const u8,
+    log_level: std.log.Level,
+};
+
 const OnUnknown = enum { fail, skip };
+
+/// Build the lookup tables for mapping the command-line names to config option
+/// names. The caller owns the memory of the global tables and must call
+/// `deinitTables` to free the memory.
+pub fn initTables(gpa: Allocator) !void {
+    long_option_lookup = .init(gpa);
+    short_option_lookup = .{null} ** 256;
+
+    inline for (@typeInfo(Config).@"struct".decls) |decl| {
+        comptime if (!std.mem.endsWith(u8, decl.name, "_spec")) {
+            continue;
+        };
+
+        const spec = @field(Config, decl.name);
+        const key = decl.name[0 .. decl.name.len - @as([]const u8, "_spec").len];
+        var long_name: []u8 = undefined;
+        if (spec.long) |l| {
+            long_name = try gpa.dupe(u8, l);
+        } else {
+            long_name = try gpa.dupe(u8, key);
+            std.mem.replaceScalar(u8, long_name, '.', '-');
+            std.mem.replaceScalar(u8, long_name, '_', '-');
+        }
+
+        try long_option_lookup.put(long_name, key);
+
+        if (spec.short) |c| {
+            short_option_lookup[c] = key;
+        }
+    }
+}
+
+pub fn deinitTables() void {
+    var key_it = long_option_lookup.keyIterator();
+    while (key_it.next()) |key| {
+        long_option_lookup.allocator.free(key.*);
+    }
+    long_option_lookup.deinit();
+}
 
 /// Parse command-line arguments and fail on unknown arguments. The writer is
 /// used for printing more detailed error messages if the function encounters
@@ -61,8 +105,8 @@ const OnUnknown = enum { fail, skip };
 ///
 /// The arguments passed in to the function must not contain the the name of
 /// the program.
-pub fn parseArgs(allocator: Allocator, args: []const []const u8, writer: anytype) !Parsed {
-    return parseArgsWithOptions(allocator, .fail, args, writer);
+pub fn parseArgs(gpa: Allocator, args: []const []const u8, writer: anytype) !Parsed {
+    return parseArgsWithOptions(gpa, .fail, args, writer);
 }
 
 /// Parse command-line arguments in a lax manner so that unknown arguments are
@@ -75,8 +119,8 @@ pub fn parseArgs(allocator: Allocator, args: []const []const u8, writer: anytype
 ///
 /// The writer is used for printing more detailed error messages if the function
 /// encounters invalid arguments.
-pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: anytype) !Parsed {
-    return parseArgsWithOptions(allocator, .skip, args, writer);
+pub fn parseArgsLaxly(gpa: Allocator, args: []const []const u8, writer: anytype) !Parsed {
+    return parseArgsWithOptions(gpa, .skip, args, writer);
 }
 
 /// Implementation for parsing arguments.
@@ -84,12 +128,7 @@ pub fn parseArgsLaxly(allocator: Allocator, args: []const []const u8, writer: an
 /// TODO: If there are many unknown arguments, there is a lot of duplicating. It
 /// might be worth considering if the parser would benefit from reduced
 /// allocations.
-fn parseArgsWithOptions(
-    allocator: Allocator,
-    comptime on_unknown: OnUnknown,
-    args: []const []const u8,
-    writer: anytype,
-) !Parsed {
+fn parseArgsWithOptions(gpa: Allocator, comptime on_unknown: OnUnknown, args: []const []const u8, writer: anytype) !Parsed {
     // const subcommand: ?[]const u8 = null;
     var unknown: ArrayListUnmanaged([]const u8) = switch (on_unknown) {
         .fail => undefined,
@@ -97,10 +136,10 @@ fn parseArgsWithOptions(
     };
     errdefer switch (on_unknown) {
         .fail => {},
-        .skip => unknown.deinit(allocator),
+        .skip => unknown.deinit(gpa),
     };
 
-    var values: StringHashMap(OptionValue) = .init(allocator);
+    var values: StringHashMap(OptionValue) = .init(gpa);
     errdefer values.deinit();
 
     var i: usize = 0;
@@ -113,139 +152,53 @@ fn parseArgsWithOptions(
                 break;
             }
 
-            const long = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| arg[2..j] else arg[2..];
-            const option_name = (try configNameFromLong(allocator, long)) orelse switch (on_unknown) {
+            const option_end = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| j else arg.len;
+            const long = arg[2..option_end];
+            const option_key = long_option_lookup.get(long) orelse switch (on_unknown) {
                 .fail => {
                     try writer.print("invalid command-line option `--{s}`\n", .{long});
                     return error.InvalidArgs;
                 },
                 .skip => {
-                    try unknown.append(allocator, try allocator.dupe(u8, arg));
+                    try writer.print("invalid command-line option `--{s}`\n", .{long});
+                    try unknown.append(gpa, try gpa.dupe(u8, arg));
                     continue;
                 },
             };
+            const spec = Config.specs.get(option_key).?;
 
-            const option_type = (try Config.optionType(option_name)).?;
-
-            if (option_type != .paths and values.contains(option_name)) {
+            if (spec.type != .string_slice and values.contains(option_key)) {
                 try writer.print("option `--{s}` can be specified only once\n", .{long});
                 return error.InvalidArgs;
             }
 
-            i += blk: switch (option_type) {
-                .bool => {
-                    if (std.mem.eql(u8, arg[2..], long)) {
-                        try values.put(option_name, .{ .bool = true });
-                        break :blk 0;
+            var raw_value: ?[]const u8 = null;
+
+            if (option_end != arg.len) {
+                raw_value = arg[option_end + 1 ..];
+            } else if (spec.type != .bool) {
+                if (i + 1 >= args.len) {
+                    try writer.print("option `--{s}` requires a value\n", .{long});
+                    return error.InvalidArgs;
+                }
+
+                i += 1;
+                raw_value = args[i];
+            }
+
+            const prev = blk: {
+                if (spec.type == .string_slice) {
+                    if (values.get(option_key)) |s| {
+                        break :blk s;
                     }
+                }
 
-                    const b = Config.parseBool(arg[long.len + 3 ..]) catch {
-                        try writer.print("invalid value for option `--{s}`: {s}\n", .{ long, arg[long.len + 3 ..] });
-                        return error.InvalidArgs;
-                    };
-
-                    try values.put(option_name, .{ .bool = b });
-                    break :blk 0;
-                },
-                .int => {
-                    if (!std.mem.eql(u8, arg[2..], long)) {
-                        const n = std.fmt.parseInt(i64, arg[long.len + 3 ..], 0) catch {
-                            try writer.print("value for option `--{s}` is not an integer: {s}\n", .{ long, arg[long.len + 3 ..] });
-                            return error.InvalidArgs;
-                        };
-
-                        try values.put(option_name, .{ .int = n });
-                        break :blk 0;
-                    }
-
-                    if (i + 1 >= args.len) {
-                        try writer.print("option `--{s}` requires a value\n", .{long});
-                        return error.InvalidArgs;
-                    }
-
-                    const n = std.fmt.parseInt(i64, args[i + 1], 0) catch {
-                        try writer.print("value for option `--{s}` is not an integer: {s}\n", .{ long, args[i + 1] });
-                        return error.InvalidArgs;
-                    };
-
-                    try values.put(option_name, .{ .int = n });
-                    break :blk 1;
-                },
-                .string => {
-                    if (!std.mem.eql(u8, arg[2..], long)) {
-                        // TODO: Maybe add more sophisticated string parsing so
-                        // that the user cannot actually include more quotes
-                        // inside the quotes.
-                        if (arg[long.len + 3] == '"' and arg[arg.len - 1] == '"') {
-                            try values.put(option_name, .{ .string = arg[long.len + 4 .. arg.len - 1] });
-                            break :blk 0;
-                        }
-
-                        try values.put(option_name, .{ .string = arg[long.len + 3 ..] });
-                        break :blk 0;
-                    }
-
-                    if (i + 1 >= args.len) {
-                        try writer.print("option `--{s}` requires a value\n", .{long});
-                        return error.InvalidArgs;
-                    }
-
-                    try values.put(option_name, .{ .string = args[i + 1] });
-                    break :blk 1;
-                },
-                .paths => {
-                    var array: ArrayListUnmanaged([]const u8) = .empty;
-                    defer array.deinit(allocator);
-
-                    // TODO: This might be too sloppy.
-                    if (values.get(option_name)) |s| {
-                        try array.appendSlice(allocator, s.paths);
-                    }
-
-                    var value: []const u8 = "";
-                    var used: usize = 0;
-
-                    if (!std.mem.eql(u8, arg[2..], long)) {
-                        // TODO: Right now, we only allow quotes around
-                        // the whole argument even if there is multiple paths in
-                        // the string. Should we allow adding quotes around each
-                        // path (probably not, right)?
-                        if (arg[long.len + 3] == '"' and arg[arg.len - 1] == '"') {
-                            value = arg[long.len + 4 .. arg.len - 1];
-                        } else {
-                            value = arg[long.len + 3 ..];
-                        }
-                    } else if (i + 1 < args.len) {
-                        value = args[i + 1];
-                        used += 1;
-                    } else {
-                        try writer.print("option `--{s}` requires a value\n", .{long});
-                        return error.InvalidArgs;
-                    }
-
-                    var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
-                    while (iter.next()) |s| {
-                        if (s.len > 0) {
-                            try array.append(allocator, s);
-                        }
-                    }
-
-                    const paths = try allocator.alloc([]const u8, array.items.len);
-                    for (array.items, 0..) |path, j| {
-                        paths[j] = try allocator.dupe(u8, path);
-                    }
-
-                    if (values.get(option_name)) |old| {
-                        for (old.paths) |p| {
-                            allocator.free(p);
-                        }
-                        allocator.free(old.paths);
-                    }
-
-                    try values.put(option_name, .{ .paths = paths });
-                    break :blk used;
-                },
+                break :blk null;
             };
+
+            // TODO: Add more meaningful error message.
+            const value = try parseValue(gpa, spec.type, raw_value, prev);
+            try values.put(option_key, value);
 
             continue;
         }
@@ -253,7 +206,7 @@ fn parseArgsWithOptions(
         if (arg[0] == '-' and arg.len > 1) {
             var rest: ?ArrayListUnmanaged(u8) = null;
             defer if (rest) |*list| {
-                list.deinit(allocator);
+                list.deinit(gpa);
             };
 
             var j: usize = 1;
@@ -262,16 +215,13 @@ fn parseArgsWithOptions(
 
                 if (c == '=') {
                     switch (on_unknown) {
-                        // This error message is duplicated in order to have
-                        // the compiler to inline the switch and skip the if in
-                        // `skip` when the `fail` mode is selected.
                         .fail => {
                             try writer.print("unexpected value separator in `{s}`\n", .{arg});
                             return error.InvalidArgs;
                         },
                         .skip => {
                             if (rest) |*list| {
-                                try list.appendSlice(allocator, arg[j..]);
+                                try list.appendSlice(gpa, arg[j..]);
                             } else {
                                 try writer.print("unexpected value separator in `{s}`\n", .{arg});
                                 return error.InvalidArgs;
@@ -282,181 +232,68 @@ fn parseArgsWithOptions(
                     break;
                 }
 
-                const option_name = configNameFromShort(c) orelse switch (on_unknown) {
+                const option_key = short_option_lookup[c] orelse switch (on_unknown) {
                     .fail => {
                         try writer.print("unknown command-line option `-{c}` in `{s}`\n", .{ c, arg });
                         return error.InvalidArgs;
                     },
                     .skip => {
                         if (rest) |*list| {
-                            try list.append(allocator, c);
+                            try list.append(gpa, c);
                         } else {
                             rest = .empty;
-                            try rest.?.appendSlice(allocator, &[_]u8{ '-', c });
+                            try rest.?.appendSlice(gpa, &[_]u8{ '-', c });
                         }
 
                         continue;
                     },
                 };
+                const spec = Config.specs.get(option_key).?;
 
-                const option_type = (try Config.optionType(option_name)).?;
-
-                if (option_type != .paths and values.contains(option_name)) {
+                if (spec.type != .string_slice and values.contains(option_key)) {
                     try writer.print("option `-{c}` can be specified only once\n", .{c});
                     return error.InvalidArgs;
                 }
 
-                switch (option_type) {
-                    .bool => {
-                        if (arg.len > j + 1 and arg[j + 1] == '=') {
-                            const b = Config.parseBool(arg[j + 2 ..]) catch {
-                                try writer.print("invalid value for option `-{c}` in `{s}`: {s}\n", .{ c, arg, arg[j + 2 ..] });
-                                return error.InvalidArgs;
-                            };
+                var raw_value: ?[]const u8 = null;
 
-                            try values.put(option_name, .{ .bool = b });
-                            continue :outer;
-                        }
-
-                        try values.put(option_name, .{ .bool = true });
-                    },
-                    .int => {
-                        if (arg.len > j + 1 and arg[j + 1] == '=') {
-                            const n = std.fmt.parseInt(i64, arg[j + 2 ..], 0) catch {
-                                try writer.print("value for option `-{c}` is not an integer: {s}\n", .{ c, arg[j + 2 ..] });
-                                return error.InvalidArgs;
-                            };
-
-                            try values.put(option_name, .{ .int = n });
-                            continue :outer;
-                        }
-
-                        if (arg.len > j + 1) {
-                            const n = std.fmt.parseInt(i64, arg[j + 1 ..], 0) catch {
-                                try writer.print("value for option `-{c}` is not an integer: {s}\n", .{ c, arg[j + 1 ..] });
-                                return error.InvalidArgs;
-                            };
-
-                            try values.put(option_name, .{ .int = n });
-
-                            continue :outer;
-                        }
-
-                        if (args.len <= i + 1) {
-                            try writer.print("option `-{c}` requires a value\n", .{c});
-                            return error.InvalidArgs;
-                        }
-
+                if (arg.len > j + 1 and arg[j + 1] == '=') {
+                    raw_value = arg[j + 2 ..];
+                } else if (spec.type != .bool) {
+                    if (arg.len > j + 1) {
+                        raw_value = arg[j + 1 ..];
+                    } else if (i + 1 >= args.len) {
+                        try writer.print("option `-{c}` requires a value\n", .{c});
+                        return error.InvalidArgs;
+                    } else {
                         i += 1;
+                        raw_value = args[i];
+                    }
+                }
 
-                        const n = std.fmt.parseInt(i64, args[i], 0) catch {
-                            try writer.print("value for option `-{c}` is not an integer: {s}\n", .{ c, args[i] });
-                            return error.InvalidArgs;
-                        };
-
-                        try values.put(option_name, .{ .int = n });
-                        continue :outer;
-                    },
-                    .string => {
-                        if (arg.len > j + 1 and arg[j + 1] == '=') {
-                            // TODO: Maybe add more sophisticated string parsing
-                            // so that the user cannot actually include more
-                            // quotes inside the quotes.
-                            if (arg[j + 2] == '"' and arg[arg.len - 1] == '"') {
-                                try values.put(option_name, .{ .string = arg[j + 3 .. arg.len - 1] });
-                                continue :outer;
-                            }
-
-                            try values.put(option_name, .{ .string = arg[j + 2 ..] });
-                            continue :outer;
+                const prev = blk: {
+                    if (spec.type == .string_slice) {
+                        if (values.get(option_key)) |s| {
+                            break :blk s;
                         }
+                    }
 
-                        if (arg.len > j + 1) {
-                            // TODO: Maybe add more sophisticated string parsing
-                            // so that the user cannot actually include more
-                            // quotes inside the quotes.
-                            if (arg[j + 1] == '"' and arg[arg.len - 1] == '"') {
-                                try values.put(option_name, .{ .string = arg[j + 2 .. arg.len - 1] });
-                                continue :outer;
-                            }
+                    break :blk null;
+                };
 
-                            // TODO: This has good potential for bugs or simply
-                            // confusion as we check the next characters for
-                            // the string value for the option.
-                            try values.put(option_name, .{ .string = arg[j + 1 ..] });
-                            continue :outer;
-                        }
+                // TODO: Add more meaningful error message.
+                const value = try parseValue(gpa, spec.type, raw_value, prev);
+                try values.put(option_key, value);
 
-                        if (args.len <= i + 1) {
-                            try writer.print("option `-{c}` requires a value\n", .{c});
-                            return error.InvalidArgs;
-                        }
-
-                        i += 1;
-
-                        try values.put(option_name, .{ .string = args[i] });
-                        continue :outer;
-                    },
-                    .paths => {
-                        var array: ArrayListUnmanaged([]const u8) = .empty;
-                        defer array.deinit(allocator);
-
-                        // TODO: This might be too sloppy.
-                        if (values.get(option_name)) |s| {
-                            try array.appendSlice(allocator, s.paths);
-                        }
-
-                        var value: []const u8 = "";
-
-                        if (arg.len > j + 1 and arg[j + 1] == '=') {
-                            if (arg[j + 2] == '"' and arg[arg.len - 1] == '"') {
-                                value = arg[j + 3 .. arg.len - 1];
-                            } else {
-                                value = arg[j + 2 ..];
-                            }
-                        } else if (arg.len > j + 1) {
-                            if (arg[j + 1] == '"' and arg[arg.len - 1] == '"') {
-                                value = arg[j + 2 .. arg.len - 1];
-                            } else {
-                                value = arg[j + 1 ..];
-                            }
-                        } else if (i + 1 < args.len) {
-                            i += 1;
-                            value = args[i];
-                        } else {
-                            try writer.print("option `-{c}` requires a value\n", .{c});
-                            return error.InvalidArgs;
-                        }
-
-                        var iter = std.mem.splitScalar(u8, value, std.fs.path.delimiter);
-                        while (iter.next()) |s| {
-                            if (s.len > 0) {
-                                try array.append(allocator, s);
-                            }
-                        }
-
-                        const paths = try allocator.alloc([]const u8, array.items.len);
-                        for (array.items, 0..) |path, k| {
-                            paths[k] = try allocator.dupe(u8, path);
-                        }
-
-                        if (values.get(option_name)) |old| {
-                            for (old.paths) |p| {
-                                allocator.free(p);
-                            }
-                            allocator.free(old.paths);
-                        }
-
-                        try values.put(option_name, .{ .paths = paths });
-                        continue :outer;
-                    },
+                if (raw_value != null) {
+                    continue :outer;
                 }
             }
 
             switch (on_unknown) {
                 .fail => {},
                 .skip => if (rest) |list| {
-                    try unknown.append(allocator, try allocator.dupe(u8, list.items));
+                    try unknown.append(gpa, try gpa.dupe(u8, list.items));
                 },
             }
 
@@ -468,7 +305,7 @@ fn parseArgsWithOptions(
                 try writer.print("unknown argument: {s}\n", .{arg});
                 return error.InvalidArgs;
             },
-            .skip => try unknown.append(allocator, try allocator.dupe(u8, arg)),
+            .skip => try unknown.append(gpa, try gpa.dupe(u8, arg)),
         }
 
         // if (std.meta.stringToEnum(Subcommand, arg)) |tag| {
@@ -491,122 +328,75 @@ fn parseArgsWithOptions(
     }
 
     return .{
-        .allocator = allocator,
+        .allocator = gpa,
         .args = switch (on_unknown) {
-            .fail => try allocator.alloc([]const u8, 0), // TODO: Stupid?
-            .skip => try unknown.toOwnedSlice(allocator),
+            .fail => try gpa.alloc([]const u8, 0), // TODO: Stupid?
+            .skip => try unknown.toOwnedSlice(gpa),
         },
         // .subcommand = subcommand,
         .values = values,
     };
 }
 
-/// Look up the config name for the given long command-line option name.
-fn configNameFromLong(allocator: Allocator, name: []const u8) !?[]const u8 {
-    const fields: []const StructField = std.meta.fields(@TypeOf(Config.global_option_info));
-    inline for (fields) |field| {
-        switch (field.type) {
-            Config.OptionInfo => {
-                const info: Config.OptionInfo = @field(Config.global_option_info, field.name);
+/// Given a the type of the command-line option and the raw value as a string,
+/// this function parses the option and returns the correct `OptionValue`. If
+/// the type of the option is a slice, the potential previous slice value should
+/// be passed in as `prev` so the function extends that value instead of
+/// replacing it.
+fn parseValue(gpa: Allocator, option_type: OptionType, raw: ?[]const u8, prev: ?OptionValue) !OptionValue {
+    return switch (option_type) {
+        .bool => .{ .bool = if (raw) |s| Config.parseBool(s) catch {
+            return error.InvalidArgs;
+        } else true },
+        .int => .{ .int = std.fmt.parseInt(i64, raw.?, 0) catch return error.InvalidArgs },
+        .string => .{ .string = try gpa.dupe(u8, raw.?) },
+        .string_slice => blk: {
+            if (prev != null) {
+                assert(@as(OptionType, prev.?) == option_type);
+            }
 
-                if (info.disable_cli_option) {
-                    continue;
+            var list: ArrayListUnmanaged([]const u8) = .empty;
+            defer list.deinit(gpa);
+            defer if (prev) |prev_val| switch (prev_val) {
+                .string_slice => |strs| {
+                    for (strs) |s| {
+                        gpa.free(s);
+                    }
+                    gpa.free(strs);
+                },
+                else => unreachable,
+            };
+
+            if (prev) |s| {
+                try list.appendSlice(gpa, s.string_slice);
+            }
+
+            // TODO: Allow using more sensible delimiter than the path delimiter
+            // if this needs to support non-path string slices.
+            var iter = std.mem.splitScalar(u8, raw.?, std.fs.path.delimiter);
+            while (iter.next()) |s| {
+                if (s.len > 0) {
+                    try list.append(gpa, s);
                 }
+            }
 
-                if (info.long) |long| {
-                    if (std.mem.eql(u8, name, long)) {
-                        return field.name;
-                    }
-                } else {
-                    const field_name: []u8 = try allocator.dupe(u8, field.name);
-                    defer allocator.free(field_name);
-                    std.mem.replaceScalar(u8, field_name, '_', '-');
+            const slice = try gpa.alloc([]const u8, list.items.len);
+            for (list.items, 0..) |s, i| {
+                slice[i] = try gpa.dupe(u8, s);
+            }
 
-                    if (std.mem.eql(u8, name, field_name)) {
-                        return field.name;
-                    }
-                }
-            },
-
-            // We can have custom handling for all of the "custom" info types
-            // (i.e. tables in config file) as we know all of the global options
-            // ahead of time. There is no need to try and generalize.
-            Config.LoggingInfo => {
-                const logging_info: Config.LoggingInfo = @field(
-                    Config.global_option_info,
-                    field.name,
-                );
-                const logging_fields: []const StructField = std.meta.fields(@TypeOf(logging_info));
-                inline for (logging_fields) |info_field| {
-                    assert(info_field.type == Config.OptionInfo);
-
-                    const info: Config.OptionInfo = @field(logging_info, info_field.name);
-                    if (info.disable_cli_option) {
-                        continue;
-                    }
-
-                    if (info.long) |long| {
-                        if (std.mem.eql(u8, name, long)) {
-                            return field.name ++ "." ++ info_field.name;
-                        }
-                    } else {
-                        // TODO: Is there a need for allocation?
-                        const field_name: []u8 = try allocator.dupe(u8, field.name ++ "-" ++ info_field.name);
-                        defer allocator.free(field_name);
-                        std.mem.replaceScalar(u8, field_name, '_', '-');
-
-                        if (std.mem.eql(u8, name, field_name)) {
-                            return field.name ++ "." ++ info_field.name;
-                        }
-                    }
-                }
-            },
-            else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
-        }
-    }
-
-    return null;
-}
-
-/// Look up the config name for the given one-character short command-line
-/// option.
-fn configNameFromShort(c: u8) ?[]const u8 {
-    const fields: []const StructField = std.meta.fields(@TypeOf(Config.global_option_info));
-    inline for (fields) |field| {
-        switch (field.type) {
-            Config.OptionInfo => {
-                const info: Config.OptionInfo = @field(Config.global_option_info, field.name);
-                if (info.short) |b| {
-                    if (b == c) {
-                        return field.name;
-                    }
-                }
-            },
-            Config.LoggingInfo => {
-                const logging_info: Config.LoggingInfo = @field(
-                    Config.global_option_info,
-                    field.name,
-                );
-                const info_fields: []const StructField = std.meta.fields(@TypeOf(logging_info));
-                inline for (info_fields) |info_field| {
-                    assert(info_field.type == Config.OptionInfo);
-
-                    const info: Config.OptionInfo = @field(logging_info, info_field.name);
-                    if (info.short) |b| {
-                        if (b == c) {
-                            return field.name ++ "." ++ info_field.name;
-                        }
-                    }
-                }
-            },
-            else => @compileError("Expected OptionInfo or LoggingInfo, found '" ++ @typeName(field.type) ++ "'"),
-        }
-    }
-
-    return null;
+            break :blk .{ .string_slice = slice };
+        },
+        .log_level => .{ .log_level = Config.parseLogLevel(raw.?) catch return error.InvalidArgs },
+    };
 }
 
 test "no options" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{"reginald"};
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -624,6 +414,11 @@ test "no options" {
 }
 
 test "stop parsing at `--`" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose", "--", "--quiet" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -641,6 +436,11 @@ test "stop parsing at `--`" {
 }
 
 test "bool option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -661,6 +461,11 @@ test "bool option" {
 }
 
 test "bool option value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose=false", "--quiet=true" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -684,6 +489,11 @@ test "bool option value" {
 }
 
 test "bool option in nested config" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--log" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -704,6 +514,11 @@ test "bool option in nested config" {
 }
 
 test "bool option value in nested config" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--log=false" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -725,24 +540,44 @@ test "bool option value in nested config" {
 }
 
 test "bool option invalid value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose=false", "--quiet=something" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "bool option empty value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose=" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "duplicate bool" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--quiet", "--quiet" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "string option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--config", "/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -763,6 +598,11 @@ test "string option" {
 }
 
 test "string option in nested config" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--log-level", "debug" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -777,12 +617,17 @@ test "string option in nested config" {
     try testing.expect(!parsed.values.contains("working_directory"));
 
     try testing.expect(parsed.values.get("logging.level") != null);
-    try testing.expectEqualStrings("debug", parsed.values.get("logging.level").?.string);
+    try testing.expectEqual(std.log.Level.debug, parsed.values.get("logging.level").?.log_level);
 
     try testing.expectEqual(0, parsed.args.len);
 }
 
 test "string option equal sign in nested config" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--log-level=info" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -797,12 +642,17 @@ test "string option equal sign in nested config" {
     try testing.expect(!parsed.values.contains("working_directory"));
 
     try testing.expect(parsed.values.get("logging.level") != null);
-    try testing.expectEqualStrings("info", parsed.values.get("logging.level").?.string);
+    try testing.expectEqual(std.log.Level.info, parsed.values.get("logging.level").?.log_level);
 
     try testing.expectEqual(0, parsed.args.len);
 }
 
 test "multiple string options" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{
         "reginald",
         "--config",
@@ -831,6 +681,11 @@ test "multiple string options" {
 }
 
 test "string option equals sign" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--config=/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -850,33 +705,23 @@ test "string option equals sign" {
     try testing.expectEqual(0, parsed.args.len);
 }
 
-test "string option equals sign quoted" {
-    const args = [_][:0]const u8{ "reginald", "--config=\"/tmp/config.toml\"" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("logging.enabled"));
-    try testing.expect(!parsed.values.contains("logging.level"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("config_file") != null);
-    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
-
-    try testing.expectEqual(0, parsed.args.len);
-}
-
 test "string option no value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--config" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "bool and string option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--config", "/tmp/config.toml", "--verbose" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -899,6 +744,11 @@ test "bool and string option" {
 }
 
 test "string option mixed" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--chdir=/tmp", "--config", "/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -921,6 +771,11 @@ test "string option mixed" {
 }
 
 test "invalid string order" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--config", "--verbose" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -941,18 +796,33 @@ test "invalid string order" {
 }
 
 test "invalid long option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--cfg" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "invalid long option 2" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--config_file" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "short bool option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-v" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -973,6 +843,11 @@ test "short bool option" {
 }
 
 test "short bool option value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-v=false", "-q=true" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -996,6 +871,11 @@ test "short bool option value" {
 }
 
 test "short bool option combined" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-qv" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1019,6 +899,11 @@ test "short bool option combined" {
 }
 
 test "short bool option combined last value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-qv=false" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1042,18 +927,33 @@ test "short bool option combined last value" {
 }
 
 test "short bool option invalid value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-v=false", "-q=something" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "short bool option empty value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-v=" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "short string option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-c", "/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1074,6 +974,11 @@ test "short string option" {
 }
 
 test "short string option value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-c=/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1094,6 +999,11 @@ test "short string option value" {
 }
 
 test "short string option value merged" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-c/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1113,27 +1023,12 @@ test "short string option value merged" {
     try testing.expectEqual(0, parsed.args.len);
 }
 
-test "short string option empty quoted value" {
-    const args = [_][:0]const u8{ "reginald", "-c=\"\"" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("config_file"));
-    try testing.expect(!parsed.values.contains("logging.enabled"));
-    try testing.expect(!parsed.values.contains("logging.level"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("config_file") != null);
-    try testing.expectEqualStrings("", parsed.values.get("config_file").?.string);
-
-    try testing.expectEqual(0, parsed.args.len);
-}
-
 test "short option combined" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-vc", "/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1156,6 +1051,11 @@ test "short option combined" {
 }
 
 test "short option combined value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-vc=/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1178,6 +1078,11 @@ test "short option combined value" {
 }
 
 test "short option combined value merged" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-vc/tmp/config.toml" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1199,68 +1104,39 @@ test "short option combined value merged" {
     try testing.expectEqual(0, parsed.args.len);
 }
 
-test "short option combined value merged quoted" {
-    const args = [_][:0]const u8{ "reginald", "-vc\"/tmp/config.toml\"" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("config_file"));
-    try testing.expect(parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("logging.enabled"));
-    try testing.expect(!parsed.values.contains("logging.level"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("config_file") != null);
-    try testing.expect(parsed.values.get("verbose") != null);
-    try testing.expectEqualStrings("/tmp/config.toml", parsed.values.get("config_file").?.string);
-    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
-
-    try testing.expectEqual(0, parsed.args.len);
-}
-
-test "short option combined value merged empty quoted" {
-    const args = [_][:0]const u8{ "reginald", "-vc\"\"" };
-    var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
-    defer parsed.deinit();
-
-    try testing.expect(parsed.values.contains("config_file"));
-    try testing.expect(parsed.values.contains("verbose"));
-    try testing.expect(!parsed.values.contains("logging.enabled"));
-    try testing.expect(!parsed.values.contains("logging.level"));
-    try testing.expect(!parsed.values.contains("print_version"));
-    try testing.expect(!parsed.values.contains("print_help"));
-    try testing.expect(!parsed.values.contains("quiet"));
-    try testing.expect(!parsed.values.contains("working_directory"));
-
-    try testing.expect(parsed.values.get("config_file") != null);
-    try testing.expect(parsed.values.get("verbose") != null);
-    try testing.expectEqualStrings("", parsed.values.get("config_file").?.string);
-    try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
-
-    try testing.expectEqual(0, parsed.args.len);
-}
-
 test "short option combined no value" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-vc" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "invalid empty short" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-" };
     const parsed = parseArgs(testing.allocator, args[1..], std.io.null_writer);
     try testing.expectError(error.InvalidArgs, parsed);
 }
 
 test "string slice option one value" {
-    const args = [_][:0]const u8{ "reginald", "--plugin-dirs", "/tmp/plugins" };
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
+    const args = [_][:0]const u8{ "reginald", "--plugin-paths", "/tmp/plugins" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1270,10 +1146,10 @@ test "string slice option one value" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{"/tmp/plugins"};
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1300,11 +1176,16 @@ test "string slice option one value" {
 }
 
 test "string slice equal sign option one value" {
-    const args = [_][:0]const u8{ "reginald", "--plugin-dirs=/tmp/plugins" };
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
+    const args = [_][:0]const u8{ "reginald", "--plugin-paths=/tmp/plugins" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1314,10 +1195,10 @@ test "string slice equal sign option one value" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{"/tmp/plugins"};
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1344,15 +1225,20 @@ test "string slice equal sign option one value" {
 }
 
 test "string slice option multiple value single arg" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{
         "reginald",
-        "--plugin-dirs",
+        "--plugin-paths",
         "/tmp/plugins" ++ filepath.delimiter_str ++ "/private/plugins" ++ filepath.delimiter_str ++ "~/reginald/plugins",
     };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1362,10 +1248,10 @@ test "string slice option multiple value single arg" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{ "/tmp/plugins", "/private/plugins", "~/reginald/plugins" };
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1392,14 +1278,19 @@ test "string slice option multiple value single arg" {
 }
 
 test "string slice equal sign option multiple value single arg" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{
         "reginald",
-        "--plugin-dirs=/tmp/plugins" ++ filepath.delimiter_str ++ "/private/plugins" ++ filepath.delimiter_str ++ "~/reginald/plugins",
+        "--plugin-paths=/tmp/plugins" ++ filepath.delimiter_str ++ "/private/plugins" ++ filepath.delimiter_str ++ "~/reginald/plugins",
     };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1409,10 +1300,10 @@ test "string slice equal sign option multiple value single arg" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{ "/tmp/plugins", "/private/plugins", "~/reginald/plugins" };
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1439,19 +1330,25 @@ test "string slice equal sign option multiple value single arg" {
 }
 
 test "string slice option multiple value multiple arg" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{
         "reginald",
-        "--plugin-dirs",
+        "--plugin-paths",
         "/tmp/plugins",
         "-P",
         "/private/plugins",
-        "--plugin-dirs",
+        "--plugin-paths",
         "~/reginald/plugins",
     };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
+    // var parsed = try parseArgs(testing.allocator, args[1..], std.io.getStdErr().writer());
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1461,10 +1358,10 @@ test "string slice option multiple value multiple arg" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{ "/tmp/plugins", "/private/plugins", "~/reginald/plugins" };
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1491,11 +1388,16 @@ test "string slice option multiple value multiple arg" {
 }
 
 test "string slice option single value short" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-P", "/tmp/plugins" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1505,10 +1407,10 @@ test "string slice option single value short" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{"/tmp/plugins"};
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1535,11 +1437,16 @@ test "string slice option single value short" {
 }
 
 test "string slice equal sign option single value short" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-P=/tmp/plugins" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1549,10 +1456,10 @@ test "string slice equal sign option single value short" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{"/tmp/plugins"};
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1579,11 +1486,16 @@ test "string slice equal sign option single value short" {
 }
 
 test "string slice option single value short concat" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-P/tmp/plugins" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
     try testing.expect(!parsed.values.contains("logging.enabled"));
@@ -1593,10 +1505,10 @@ test "string slice option single value short concat" {
     try testing.expect(!parsed.values.contains("quiet"));
     try testing.expect(!parsed.values.contains("verbose"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
 
     const expect = [_][]const u8{"/tmp/plugins"};
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1623,11 +1535,16 @@ test "string slice option single value short concat" {
 }
 
 test "string slice option single value short concat multiple short" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "-vP/tmp/plugins" };
     var parsed = try parseArgs(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
 
-    try testing.expect(parsed.values.contains("plugin_directories"));
+    try testing.expect(parsed.values.contains("plugin_paths"));
     try testing.expect(parsed.values.contains("verbose"));
     try testing.expect(!parsed.values.contains("config_file"));
     try testing.expect(!parsed.values.contains("directory"));
@@ -1637,13 +1554,13 @@ test "string slice option single value short concat multiple short" {
     try testing.expect(!parsed.values.contains("print_help"));
     try testing.expect(!parsed.values.contains("quiet"));
 
-    try testing.expect(parsed.values.get("plugin_directories") != null);
+    try testing.expect(parsed.values.get("plugin_paths") != null);
     try testing.expect(parsed.values.get("verbose") != null);
 
     try testing.expectEqual(true, parsed.values.get("verbose").?.bool);
 
     const expect = [_][]const u8{"/tmp/plugins"};
-    const actual = parsed.values.get("plugin_directories").?.paths;
+    const actual = parsed.values.get("plugin_paths").?.string_slice;
 
     try testing.expectEqual(expect.len, actual.len);
 
@@ -1808,6 +1725,11 @@ test "string slice option single value short concat multiple short" {
 // }
 
 test "unknown long option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose" };
     var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1829,6 +1751,11 @@ test "unknown long option" {
 }
 
 test "unknown short option" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose", "-ah" };
     var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1852,6 +1779,11 @@ test "unknown short option" {
 }
 
 test "unknown arg" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose", "-h", "not-real" };
     var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1875,6 +1807,11 @@ test "unknown arg" {
 }
 
 test "unknown arg and options after" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--verbose", "-C", "/tmp", "not-real", "-c", "test", "-z", "-h" };
     var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();
@@ -1903,6 +1840,11 @@ test "unknown arg and options after" {
 }
 
 test "multiple unknown" {
+    try Config.initTable(testing.allocator);
+    defer Config.deinitTable();
+    try initTables(testing.allocator);
+    defer deinitTables();
+
     const args = [_][:0]const u8{ "reginald", "--not-real", "--verbose", "-ah", "unreal", "-b" };
     var parsed = try parseArgsLaxly(testing.allocator, args[1..], std.io.null_writer);
     defer parsed.deinit();

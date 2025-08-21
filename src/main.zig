@@ -19,10 +19,6 @@ pub const std_options: std.Options = .{
 };
 
 pub fn main() !void {
-    comptime {
-        Config.checkInfo();
-    }
-
     var gpa, const is_debug = gpa: {
         if (native_os == .wasi) {
             break :gpa .{ std.heap.wasm_allocator, false };
@@ -48,6 +44,12 @@ pub fn main() !void {
         total_counter.?.deinit();
     };
 
+    try cli.initTables(gpa);
+    defer cli.deinitTables();
+
+    try Config.initTable(gpa);
+    defer Config.deinitTable();
+
     const args = try std.process.argsAlloc(gpa);
     const args_freed = false;
     defer if (!args_freed) {
@@ -58,10 +60,7 @@ pub fn main() !void {
 
     const stderr_writer = std.io.getStdErr().writer();
     var parsed_args = try cli.parseArgsLaxly(gpa, args[1..], stderr_writer);
-    var parsed_args_freed = false;
-    defer if (!parsed_args_freed) {
-        parsed_args.deinit();
-    };
+    defer parsed_args.deinit();
 
     var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
     const stdout_writer = stdout_buffer.writer();
@@ -91,33 +90,12 @@ pub fn main() !void {
         }
     }
 
-    var config_counter: ?CountingAllocator = null;
-    if (is_debug) {
-        config_counter = CountingAllocator.init(gpa);
-    }
-    defer if (is_debug) {
-        std.debug.print("Currently allocated in config: {d}\n", .{config_counter.?.liveSize()});
-        std.debug.print("Total allocated in config: {d}\n", .{config_counter.?.alloc_size});
-        config_counter.?.deinit();
-    };
-    var config_allocator_instance: ?StaticAllocator = null;
-    if (is_debug) {
-        config_allocator_instance = StaticAllocator.init(config_counter.?.allocator());
-    }
-    defer if (is_debug) {
-        config_allocator_instance.?.deinit();
-    };
-    const config_allocator = if (is_debug) config_allocator_instance.?.allocator() else gpa;
-
-    var cfg = try Config.init(config_allocator, gpa, parsed_args);
+    var cfg = try Config.init(gpa, parsed_args);
     defer cfg.deinit();
 
-    std.debug.print("wd: {s}\n", .{cfg.working_directory});
-    std.debug.print("config: {s}\n", .{cfg.config_file});
-    std.debug.print("plugin dirs: {s}\n", .{cfg.plugin_directories});
-
-    parsed_args.deinit();
-    parsed_args_freed = true;
+    std.debug.print("wd: {s}\n", .{cfg.get([]const u8, "working_directory").?});
+    std.debug.print("config: {s}\n", .{cfg.get([]const u8, "config_file").?});
+    std.debug.print("plugin dirs: {s}\n", .{cfg.get([]const []const u8, "plugin_paths").?});
 }
 
 // if (args.len <= 1) {
