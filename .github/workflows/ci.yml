@@ -113,13 +113,17 @@ jobs:
       - name: Check size
         shell: bash
         run: |
-          exe="zig-out/bin/reginald"
-          size=$(stat -c%s "${exe}" 2>/dev/null || stat -f%z "${exe}")
-          echo "Executable size: ${size} bytes"
           max_size=1474560
+          exe="zig-out/bin/reginald"
+          size="$(stat -c%s "${exe}" 2>/dev/null || stat -f%z "${exe}")"
+          percent=$(( size * 100 / max_size ))
+
+          echo "Executable size: ${size} bytes"
+          echo "Maximum size: ${max_size} bytes"
+
           if [ "${size}" -gt "${max_size}" ]; then
               echo "Executable too large: ${size} bytes (limit ${max_size})"
               exit 1
           else
-              echo "Executable size within limit"
+              echo "Executable size within limit (${percent}% used)"
           fi
