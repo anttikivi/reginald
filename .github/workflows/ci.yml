@@ -148,3 +148,24 @@ jobs:
           else
               echo "Executable size within limit (${percent}% used)"
           fi
+
+      - name: Build `ReleaseFast -fstrip`
+        run: zig build -Doptimize=ReleaseFast -fstrip
+
+      - name: Check `ReleaseFast -fstrip` size
+        shell: bash
+        run: |
+          max_size=1474560
+          exe="zig-out/bin/reginald"
+          size="$(stat -c%s "${exe}" 2>/dev/null || stat -f%z "${exe}")"
+          percent=$(( size * 100 / max_size ))
+
+          echo "Executable size: ${size} bytes"
+          echo "Maximum size: ${max_size} bytes"
+
+          if [ "${size}" -gt "${max_size}" ]; then
+              echo "Executable too large: ${size} bytes (limit ${max_size})"
+              exit 1
+          else
+              echo "Executable size within limit (${percent}% used)"
+          fi
