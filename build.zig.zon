@@ -1,6 +1,7 @@
 .{
     .name = .reginald,
-    .version = "0.15.1",
+    .version = "0.0.0",
+    .minimum_zig_version = "0.15.1",
     .dependencies = .{
         .toml = .{
             .url = "git+https://github.com/anttikivi/toml-zig#08cef7a619e0b5578b0ff556a9147e1bc69d437c",
