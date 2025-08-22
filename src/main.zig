@@ -7,9 +7,6 @@ const assert = std.debug.assert;
 const cli = @import("cli.zig");
 const Config = @import("Config.zig");
 const CountingAllocator = @import("CountingAllocator.zig");
-const filepath = @import("filepath.zig");
-const StaticAllocator = @import("StaticAllocator.zig");
-const toml = @import("toml.zig");
 
 const native_os = builtin.target.os.tag;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;

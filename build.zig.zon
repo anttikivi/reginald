@@ -1,0 +1,12 @@
+.{
+    .name = .reginald,
+    .version = "0.15.1",
+    .dependencies = .{
+        .toml = .{
+            .url = "git+https://github.com/anttikivi/toml-zig#08cef7a619e0b5578b0ff556a9147e1bc69d437c",
+            .hash = "toml-0.2.0-dev-QHJHv6dHAQDjDUjOaNF8O9U9LNeKRJj6-2TRV0fthMqO",
+        },
+    },
+    .paths = .{""},
+    .fingerprint = 0xc271a0d5c2c490f4,
+}

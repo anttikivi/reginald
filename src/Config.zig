@@ -15,10 +15,11 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const assert = std.debug.assert;
 const StringHashMap = std.StringHashMap;
 
+const toml = @import("toml");
+
 const cli = @import("cli.zig");
 const CountingAllocator = @import("CountingAllocator.zig");
 const filepath = @import("filepath.zig");
-const toml = @import("toml.zig");
 
 allocator: Allocator,
 values: StringHashMap(Value),
