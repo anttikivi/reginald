@@ -17,24 +17,24 @@ pub const Value = union(enum) {
     table: Table,
 
     /// Recursively free memory for this value and all nested values.
-    /// The `allocator` must be the same one that was passed to parsing function
+    /// The allocator must be the same one that was passed to parsing function
     /// that produced this value.
-    pub fn deinit(self: *@This(), allocator: Allocator) void {
+    pub fn deinit(self: *@This(), gpa: Allocator) void {
         switch (self.*) {
-            .string => |s| allocator.free(s),
+            .string => |s| gpa.free(s),
             .array => |*arr| {
                 var i: usize = 0;
                 while (i < arr.items.len) : (i += 1) {
                     var item = &arr.items[i];
-                    item.deinit(allocator);
+                    item.deinit(gpa);
                 }
-                arr.deinit();
+                arr.deinit(gpa);
             },
             .table => |*t| {
                 var it = t.iterator();
                 while (it.next()) |entry| {
-                    allocator.free(entry.key_ptr.*);
-                    entry.value_ptr.deinit(allocator);
+                    gpa.free(entry.key_ptr.*);
+                    entry.value_ptr.deinit(gpa);
                 }
                 t.deinit();
             },

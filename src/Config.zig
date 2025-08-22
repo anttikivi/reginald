@@ -128,6 +128,8 @@ const unix_config_lookup = [_][]const u8{
 /// The default name for the plugins directory inside the lookup paths.
 const plugin_dir_name = "plugins";
 
+var stderr_buffer: [4096]u8 = undefined;
+
 pub const OptionType = enum {
     bool,
     int,
@@ -319,8 +321,7 @@ pub fn get(self: *Config, comptime T: type, key: []const u8) ?T {
 pub fn parseLogLevel(s: []const u8) !std.log.Level {
     var buf: [8]u8 = undefined;
     if (s.len > buf.len) {
-        try std.io.getStdErr().writer().print("invalid value for log level: {s}\n", .{s});
-        return error.InvalidConfig;
+        return fail("invalid value for log level: {s}\n", .{s});
     }
 
     const l = std.ascii.lowerString(&buf, s);
@@ -337,8 +338,7 @@ pub fn parseLogLevel(s: []const u8) !std.log.Level {
         return .debug;
     }
 
-    try std.io.getStdErr().writer().print("invalid value for log level: {s}\n", .{s});
-    return error.InvalidConfig;
+    return fail("invalid value for log level: {s}\n", .{s});
 }
 
 fn parseStatic(self: *Config, arena: Allocator, toml_value: ?toml.Value, args: cli.Parsed, comptime early: bool) !void {
@@ -694,17 +694,14 @@ fn loadOne(arena: Allocator, f: []const u8, dir: *std.fs.Dir) ![]const u8 {
     const max_size = 1 << 20;
 
     if (size > max_size) {
-        const w = std.io.getStdErr().writer();
-        try w.print(
-            "config files over 1MB are not currently allowed, current size is {d} bytes\n",
+        const err = fail(
+            "config files over 1MB are not currently allowed, current size is {d} bytes\nthis is only temporary safeguard during development and will be removed in the future\n",
             .{size},
         );
-        try w.print(
-            "this is only temporary safeguard during development and will be removed in the future\n",
-            .{},
-        );
-
-        return error.FileTooBig;
+        switch (err) {
+            error.InvalidConfig => return error.FileTooBig,
+            else => return err,
+        }
     }
 
     // TODO: Is one MB enough?
@@ -750,4 +747,15 @@ fn defaultPluginDirs() []const []const u8 {
             };
         }
     };
+}
+
+// TODO: Correct errors.
+fn fail(comptime format: []const u8, args: anytype) error{ InvalidConfig, WriteFailed } {
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    const stderr = &stderr_writer.interface;
+
+    try stderr.print(format, args);
+    try stderr.flush();
+
+    return error.InvalidConfig;
 }

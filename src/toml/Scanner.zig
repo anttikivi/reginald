@@ -4,6 +4,8 @@
 //! with smaller memory footprint.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
 const ascii = std.ascii;
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -12,6 +14,7 @@ const Date = @import("value.zig").Date;
 const Datetime = @import("value.zig").Datetime;
 const Time = @import("value.zig").Time;
 
+allocator: Allocator,
 input: []const u8 = "",
 cursor: usize = 0,
 end: usize = 0,
@@ -60,8 +63,9 @@ pub const Token = union(enum) {
 
 /// Initialize a `Scanner` with the complete TOML document input as a single
 /// slice.
-pub fn initCompleteInput(input: []const u8) @This() {
+pub fn initCompleteInput(arena: Allocator, input: []const u8) @This() {
     return .{
+        .allocator = arena,
         .input = input,
         .end = input.len,
     };
@@ -825,14 +829,14 @@ fn scanNumber(self: *@This()) !Token {
                 }
             }
 
-            var buf = std.ArrayList(u8).init(std.heap.page_allocator);
-            defer buf.deinit();
+            var buf: ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
 
             i = start;
             while (i < end_idx) : (i += 1) {
                 const c = self.input[i];
                 if (c != '_') {
-                    try buf.append(c);
+                    try buf.append(self.allocator, c);
                 }
             }
 
@@ -908,14 +912,14 @@ fn scanNumber(self: *@This()) !Token {
         }
     }
 
-    var buf = std.ArrayList(u8).init(std.heap.page_allocator);
-    defer buf.deinit();
+    var buf: ArrayList(u8) = .empty;
+    defer buf.deinit(self.allocator);
 
     j = 0;
     while (j < slice.len) : (j += 1) {
         const c = slice[j];
         if (c != '_') {
-            try buf.append(c);
+            try buf.append(self.allocator, c);
         }
     }
 
@@ -972,14 +976,14 @@ fn scanFloat(self: *@This()) !Token {
         prev_char = c;
     }
 
-    var buf = std.ArrayList(u8).init(std.heap.page_allocator);
-    defer buf.deinit();
+    var buf: ArrayList(u8) = .empty;
+    defer buf.deinit(self.allocator);
 
     i = 0;
     while (i < slice.len) : (i += 1) {
         const c = slice[i];
         if (c != '_') {
-            try buf.append(c);
+            try buf.append(self.allocator, c);
         }
     }
 

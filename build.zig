@@ -200,7 +200,7 @@ fn resolveVersion(b: *std.Build, version_opt: ?[]const u8) ![:0]const u8 {
 
                 const ancestor_ver = try std.SemanticVersion.parse(tagged_ancestor);
                 if (reginald_version.order(ancestor_ver) != .gt) {
-                    std.debug.print("Reginald version '{}' must be greater than tagged ancestor '{}'\n", .{ reginald_version, ancestor_ver });
+                    std.debug.print("Reginald version '{f}' must be greater than tagged ancestor '{f}'\n", .{ reginald_version, ancestor_ver });
                     std.process.exit(1);
                 }
 

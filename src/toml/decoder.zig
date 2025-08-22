@@ -25,6 +25,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
 const ascii = std.ascii;
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -116,7 +117,7 @@ const Parser = struct {
         explicit: bool,
     };
 
-    const ParsingArray = std.ArrayList(ParsingValue);
+    const ParsingArray = ArrayList(ParsingValue);
     const ParsingTable = std.StringArrayHashMap(ParsingValue);
     const ParsingValue = struct {
         flag: ValueFlag = .{ .inlined = false, .standard = false, .explicit = false },
@@ -134,9 +135,9 @@ const Parser = struct {
         },
     };
 
-    fn init(allocator: Allocator, scanner: *Scanner, root: *ParsingValue) @This() {
+    fn init(arena: Allocator, scanner: *Scanner, root: *ParsingValue) @This() {
         return .{
-            .allocator = allocator,
+            .allocator = arena,
             .scanner = scanner,
             .root_table = root,
             .current_table = root,
@@ -152,7 +153,7 @@ const Parser = struct {
 
         try table.put(
             try self.allocator.dupe(u8, key),
-            .{ .value = .{ .array = .init(self.allocator) } },
+            .{ .value = .{ .array = .empty } },
         );
 
         return table.getPtr(key).?;
@@ -253,25 +254,25 @@ const Parser = struct {
             return orig;
         }
 
-        var dst: std.ArrayList(u8) = .init(self.allocator);
-        errdefer dst.deinit();
+        var dst: ArrayList(u8) = .empty;
+        errdefer dst.deinit(self.allocator);
 
         var i: usize = 0;
         while (i < orig.len) : (i += 1) {
             if (orig[i] != '\\') {
-                try dst.append(orig[i]);
+                try dst.append(self.allocator, orig[i]);
                 continue;
             }
 
             i += 1;
             const c = orig[i];
             switch (c) {
-                '"', '\\' => try dst.append(c),
-                'b' => try dst.append(8), // \b
-                'f' => try dst.append(12), // \f
-                't' => try dst.append('\t'),
-                'r' => try dst.append('\r'),
-                'n' => try dst.append('\n'),
+                '"', '\\' => try dst.append(self.allocator, c),
+                'b' => try dst.append(self.allocator, 8), // \b
+                'f' => try dst.append(self.allocator, 12), // \f
+                't' => try dst.append(self.allocator, '\t'),
+                'r' => try dst.append(self.allocator, '\r'),
+                'n' => try dst.append(self.allocator, '\n'),
                 'u', 'U' => {
                     const len: usize = if (c == 'u') 4 else 8;
                     const start = i + 1;
@@ -283,7 +284,7 @@ const Parser = struct {
                     const codepoint = try std.fmt.parseInt(u21, s, 16);
                     var buf: [4]u8 = undefined;
                     const n = try std.unicode.utf8Encode(codepoint, &buf);
-                    try dst.appendSlice(buf[0..n]);
+                    try dst.appendSlice(self.allocator, buf[0..n]);
                     i += 1 + len - 1; // -1 because loop will i+=1
                 },
                 ' ', '\t', '\r', '\n' => {
@@ -303,11 +304,11 @@ const Parser = struct {
 
                     i = idx - 1; // continue after the whitespace block
                 },
-                else => try dst.append(c),
+                else => try dst.append(self.allocator, c),
             }
         }
 
-        return dst.toOwnedSlice();
+        return dst.toOwnedSlice(self.allocator);
     }
 
     /// Parse a multipart key.
@@ -318,10 +319,10 @@ const Parser = struct {
             else => return error.UnexpectedToken,
         }
 
-        var key_parts: std.ArrayList([]const u8) = .init(self.allocator);
-        errdefer key_parts.deinit();
+        var key_parts: ArrayList([]const u8) = .empty;
+        errdefer key_parts.deinit(self.allocator);
 
-        try key_parts.append(try self.normalizeString(key_token));
+        try key_parts.append(self.allocator, try self.normalizeString(key_token));
 
         while (true) {
             const old_cursor = self.scanner.cursor;
@@ -342,10 +343,10 @@ const Parser = struct {
                 else => return error.UnexpectedToken,
             }
 
-            try key_parts.append(try self.normalizeString(next_token));
+            try key_parts.append(self.allocator, try self.normalizeString(next_token));
         }
 
-        return key_parts.toOwnedSlice();
+        return key_parts.toOwnedSlice(self.allocator);
     }
 
     /// Parse a multipart key when the first token has already been read by the caller.
@@ -355,10 +356,10 @@ const Parser = struct {
             else => return error.UnexpectedToken,
         }
 
-        var key_parts: std.ArrayList([]const u8) = .init(self.allocator);
-        errdefer key_parts.deinit();
+        var key_parts: ArrayList([]const u8) = .empty;
+        errdefer key_parts.deinit(self.allocator);
 
-        try key_parts.append(try self.normalizeString(first));
+        try key_parts.append(self.allocator, try self.normalizeString(first));
 
         while (true) {
             const old_cursor = self.scanner.cursor;
@@ -377,10 +378,10 @@ const Parser = struct {
                 else => return error.UnexpectedToken,
             }
 
-            try key_parts.append(try self.normalizeString(next_token));
+            try key_parts.append(self.allocator, try self.normalizeString(next_token));
         }
 
-        return key_parts.toOwnedSlice();
+        return key_parts.toOwnedSlice(self.allocator);
     }
 
     fn parseValue(self: *@This(), token: Token) ParseError!ParsingValue {
@@ -403,8 +404,8 @@ const Parser = struct {
     }
 
     fn parseInlineArray(self: *@This()) !ParsingValue {
-        var arr: ParsingArray = .init(self.allocator);
-        errdefer arr.deinit();
+        var arr: ParsingArray = .empty;
+        errdefer arr.deinit(self.allocator);
 
         var need_comma = false;
 
@@ -431,7 +432,7 @@ const Parser = struct {
                 return error.SyntaxError;
             }
 
-            try arr.append(try self.parseValue(token));
+            try arr.append(self.allocator, try self.parseValue(token));
             need_comma = true;
         }
 
@@ -664,7 +665,7 @@ const Parser = struct {
             return error.UnexpectedToken;
         }
 
-        try current_value.value.array.append(.{ .value = .{ .table = .init(self.allocator) } });
+        try current_value.value.array.append(self.allocator, .{ .value = .{ .table = .init(self.allocator) } });
         self.current_table = &current_value.value.array.items[current_value.value.array.items.len - 1];
     }
 
@@ -809,13 +810,13 @@ pub fn parse(allocator: Allocator, input: []const u8) !Value {
     }
 
     // Use a temporary arena for all intermediate parsing allocations.
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const scratch = arena.allocator();
+    var arena_instance: std.heap.ArenaAllocator = .init(allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
 
-    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
-    var scanner = Scanner.initCompleteInput(input);
-    var parser = Parser.init(scratch, &scanner, &parsing_root);
+    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(arena) } };
+    var scanner = Scanner.initCompleteInput(arena, input);
+    var parser = Parser.init(arena, &scanner, &parsing_root);
 
     // Set an upper limit for the loop for safety. There cannot be more tokens
     // than there are characters in the input. If the input is streamed, this
@@ -877,14 +878,14 @@ pub fn parseWithDiagnostics(allocator: Allocator, input: []const u8, diag: ?*Dia
         return error.InvalidUtf8;
     }
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const scratch = arena.allocator();
+    var arena_instance: std.heap.ArenaAllocator = .init(allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
 
-    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(scratch) } };
-    var scanner = Scanner.initCompleteInput(input);
+    var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(arena) } };
+    var scanner = Scanner.initCompleteInput(arena, input);
     scanner.last_error_message = null;
-    var parser = Parser.init(scratch, &scanner, &parsing_root);
+    var parser = Parser.init(arena, &scanner, &parsing_root);
 
     // TODO: See about setting the limit back.
     while (true) {
@@ -1021,9 +1022,9 @@ fn parseResult(allocator: Allocator, parsed_value: Parser.ParsingValue) !Value {
         .local_date => |d| return .{ .local_date = d },
         .local_time => |t| return .{ .local_time = t },
         .array => |arr| {
-            var val: Value = .{ .array = .init(allocator) };
+            var val: Value = .{ .array = .empty };
             for (arr.items) |item| {
-                try val.array.append(try parseResult(allocator, item));
+                try val.array.append(allocator, try parseResult(allocator, item));
             }
             return val;
         },
