@@ -445,6 +445,35 @@ fn parseValue(self: *const Config, arena: Allocator, key: []const u8, spec: Opti
         }
     }
 
+    switch (value) {
+        .string => |s| value = .{
+            .string = blk: {
+                if (spec.is_path) {
+                    break :blk try filepath.expand(arena, s);
+                } else {
+                    break :blk try filepath.expandEnv(arena, s);
+                }
+            },
+        },
+        .string_slice => |slice| value = .{
+            .string_slice = blk: {
+                var new = try arena.alloc([]const u8, slice.len);
+                if (spec.is_path) {
+                    for (slice, 0..) |s, i| {
+                        new[i] = try filepath.expand(arena, s);
+                    }
+                } else {
+                    for (slice, 0..) |s, i| {
+                        new[i] = try filepath.expandEnv(arena, s);
+                    }
+                }
+
+                break :blk new;
+            },
+        },
+        else => {},
+    }
+
     return value;
 }
 
