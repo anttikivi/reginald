@@ -22,8 +22,9 @@ const CountingAllocator = @import("CountingAllocator.zig");
 const filepath = @import("filepath.zig");
 
 allocator: Allocator,
-values: StringHashMap(Value),
 counting_allocator: ?CountingAllocator = null,
+file_directory: []const u8 = working_directory_spec.default.?.string,
+values: StringHashMap(Value),
 
 /// Lookup table for option specs by the config key. Apart from handling
 /// the static config fields, this map is used in order to include
@@ -220,13 +221,29 @@ pub fn init(gpa: Allocator, args: cli.Parsed) !Config {
     const arena = arena_instance.allocator();
 
     try cfg.parseStatic(arena, null, args, true);
-    try cfg.parseStatic(arena, null, args, false);
+
+    const handle = try cfg.findFile(arena);
+    defer handle.close();
+
+    var file_buffer: [4096]u8 = undefined;
+    var file_reader = handle.reader(&file_buffer);
+    const file = &file_reader.interface;
+
+    const file_data = try file.allocRemaining(arena, .unlimited);
+    defer arena.free(file_data);
+
+    var toml_value = try toml.parse(arena, file_data);
+    defer toml_value.deinit(arena);
+
+    try cfg.parseStatic(arena, toml_value, args, false);
 
     return cfg;
 }
 
 /// Free the memory allocated by the `Config`.
 pub fn deinit(self: *Config) void {
+    self.allocator.free(self.file_directory);
+
     var val_it = self.values.valueIterator();
     while (val_it.next()) |v| {
         switch (v.*) {
@@ -291,7 +308,7 @@ pub fn parseBool(a: []const u8) !bool {
     return error.InvalidValue;
 }
 
-pub fn get(self: *Config, comptime T: type, key: []const u8) ?T {
+pub fn get(self: *const Config, comptime T: type, key: []const u8) ?T {
     const val = self.values.get(key) orelse return null;
 
     return switch (T) {
@@ -319,10 +336,10 @@ pub fn get(self: *Config, comptime T: type, key: []const u8) ?T {
     };
 }
 
-pub fn parseLogLevel(s: []const u8) !std.log.Level {
+pub fn parseLogLevel(s: []const u8) error{InvalidLevel}!std.log.Level {
     var buf: [8]u8 = undefined;
     if (s.len > buf.len) {
-        return fail("invalid value for log level: {s}\n", .{s});
+        return error.InvalidLevel;
     }
 
     const l = std.ascii.lowerString(&buf, s);
@@ -339,7 +356,7 @@ pub fn parseLogLevel(s: []const u8) !std.log.Level {
         return .debug;
     }
 
-    return fail("invalid value for log level: {s}\n", .{s});
+    return error.InvalidLevel;
 }
 
 fn parseStatic(self: *Config, arena: Allocator, toml_value: ?toml.Value, args: cli.Parsed, comptime early: bool) !void {
@@ -355,9 +372,8 @@ fn parseStatic(self: *Config, arena: Allocator, toml_value: ?toml.Value, args: c
         };
 
         const key = decl.name[0 .. decl.name.len - @as([]const u8, "_spec").len];
-        std.debug.print("parsing {s}\n", .{key});
 
-        if (parseValue(arena, key, spec, toml_value, args)) |val| {
+        if (self.parseValue(arena, key, spec, toml_value, args)) |val| {
             assert(@as(OptionType, val) == spec.type);
 
             switch (val) {
@@ -375,7 +391,7 @@ fn parseStatic(self: *Config, arena: Allocator, toml_value: ?toml.Value, args: c
     }
 }
 
-fn parseValue(arena: Allocator, key: []const u8, spec: OptionSpec, toml_value: ?toml.Value, args: cli.Parsed) !Value {
+fn parseValue(self: *const Config, arena: Allocator, key: []const u8, spec: OptionSpec, toml_value: ?toml.Value, args: cli.Parsed) !Value {
     var value: Value = if (spec.default) |def| def else switch (spec.type) {
         .bool => .{ .bool = false },
         .int => .{ .int = 0 },
@@ -387,9 +403,9 @@ fn parseValue(arena: Allocator, key: []const u8, spec: OptionSpec, toml_value: ?
     if (!spec.disable_config_file_option) {
         if (toml_value) |root| {
             assert(root == .table);
-            if (getTomlValue(spec.config_file_key orelse key, root)) |val| {
+            if (try getTomlValue(arena, key, spec, root)) |val| {
                 const new = try parseTomlValue(arena, spec.type, val);
-                value = try mergeValue(arena, value, new, false);
+                value = try mergeValue(arena, value, new, self.get(bool, "extend") orelse false);
             }
         }
     }
@@ -397,7 +413,7 @@ fn parseValue(arena: Allocator, key: []const u8, spec: OptionSpec, toml_value: ?
     if (!spec.disable_environment_variable) {
         if (try getEnvVarValue(arena, key, spec)) |val| {
             const new = try parseFromString(arena, spec.type, val);
-            value = try mergeValue(arena, value, new, false);
+            value = try mergeValue(arena, value, new, self.get(bool, "extend") orelse false);
         }
     }
 
@@ -425,7 +441,7 @@ fn parseValue(arena: Allocator, key: []const u8, spec: OptionSpec, toml_value: ?
                     else => unreachable,
                 },
             };
-            value = try mergeValue(arena, value, new, false);
+            value = try mergeValue(arena, value, new, self.get(bool, "extend") orelse false);
         }
     }
 
@@ -509,12 +525,18 @@ fn parseFromString(arena: Allocator, option_type: OptionType, val: []const u8) !
     };
 }
 
-fn getTomlValue(key: []const u8, root: toml.Value) ?toml.Value {
+fn getTomlValue(arena: Allocator, key: []const u8, spec: OptionSpec, root: toml.Value) !?toml.Value {
     assert(root == .table);
+
+    const toml_key = spec.config_file_key orelse blk: {
+        const tmp = try arena.dupe(u8, key);
+        std.mem.replaceScalar(u8, tmp, '_', '-');
+        break :blk tmp;
+    };
 
     var result = root;
 
-    var iter = std.mem.splitScalar(u8, key, '.');
+    var iter = std.mem.splitScalar(u8, toml_key, '.');
     while (iter.next()) |s| {
         if (result != .table) {
             return null;
@@ -554,19 +576,36 @@ fn getEnvVarValue(arena: Allocator, key: []const u8, spec: OptionSpec) !?[]u8 {
     }
 }
 
-/// Find the first matching config file and load its contents. The caller owns
-/// the returned contents and should call `free` on them.
-fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
-    var wd = try std.fs.cwd().openDir(self.working_directory, .{});
+/// Find the first matching config file and open it. If the config option for
+/// the config file is set, this function only looks up that location and fails
+/// if the path doesn't contain a file. If the config option for the config file
+/// is not set, this function tries platform-dependent default locations and set
+/// the config option for the file path to the successful location.
+///
+/// The caller owns the returned `File` and must call `close` on it.
+fn findFile(self: *Config, arena: Allocator) !std.fs.File {
+    const wd_path = self.get([]const u8, "working_directory").?;
+    var wd = try std.fs.cwd().openDir(wd_path, .{});
     defer wd.close();
 
-    if (!std.mem.eql(u8, self.config_file, "")) {
-        return try loadOne(arena, self.config_file, &wd);
+    const config_file = self.get([]const u8, "config_file").?;
+    if (!std.mem.eql(u8, config_file, "")) {
+        self.file_directory = try self.allocator.dupe(u8, wd_path);
+
+        return wd.openFile(config_file, .{ .mode = .read_only }) catch |err| {
+            return switch (err) {
+                error.AccessDenied => fail("access denied: {s}\n", .{config_file}, err),
+                error.FileNotFound => fail("config file at '{s}' does not exist\n", .{config_file}, err),
+                error.IsDir => fail("file at '{s}' is a directory\n", .{config_file}, err),
+                else => fail("failed to open config file at '{s}'\n", .{config_file}, err),
+            };
+        };
     }
 
     // Current working directory first as that's the most natural place.
     inline for (default_extensions) |e| {
-        if (loadOne(arena, default_filename ++ e, &wd)) |result| {
+        if (self.openFile(default_filename ++ e, wd)) |result| {
+            self.file_directory = try self.allocator.dupe(u8, wd_path);
             return result;
         } else |err| {
             switch (err) {
@@ -583,7 +622,8 @@ fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
         var dir = try wd.openDir(xdg, .{});
         defer dir.close();
 
-        if (tryPaths(arena, unix_config_lookup, &dir)) |result| {
+        if (self.tryPaths(unix_config_lookup, dir)) |result| {
+            self.file_directory = try self.allocator.dupe(u8, xdg);
             return result;
         } else |err| {
             switch (err) {
@@ -607,7 +647,8 @@ fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
         var dir = try wd.openDir(dirname, .{});
         defer dir.close();
 
-        if (tryPaths(arena, [_][]const u8{ default_filename, "config" }, &dir)) |result| {
+        if (self.tryPaths([_][]const u8{ default_filename, "config" }, dir)) |result| {
+            self.file_directory = try self.allocator.dupe(u8, dirname);
             return result;
         } else |err| {
             switch (err) {
@@ -616,10 +657,12 @@ fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
             }
         }
     } else if (native_os.isDarwin()) {
-        const app_support_joined = try std.fs.path.join(
-            arena,
-            &[_][]const u8{ "~", "Library", "Application Support", default_filename },
-        );
+        const app_support_joined = try std.fs.path.join(arena, &[_][]const u8{
+            "~",
+            "Library",
+            "Application Support",
+            default_filename,
+        });
         defer arena.free(app_support_joined);
 
         const app_support_expanded = try filepath.expand(arena, app_support_joined);
@@ -628,11 +671,8 @@ fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
         var app_support_dir = try wd.openDir(app_support_expanded, .{});
         defer app_support_dir.close();
 
-        if (tryPaths(
-            arena,
-            [_][]const u8{ default_filename, "config" },
-            &app_support_dir,
-        )) |result| {
+        if (self.tryPaths([_][]const u8{ default_filename, "config" }, app_support_dir)) |result| {
+            self.file_directory = try self.allocator.dupe(u8, app_support_expanded);
             return result;
         } else |err| {
             switch (err) {
@@ -652,7 +692,8 @@ fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
         var home_config_dir = try wd.openDir(home_config_expanded, .{});
         defer home_config_dir.close();
 
-        if (tryPaths(arena, unix_config_lookup, &home_config_dir)) |result| {
+        if (self.tryPaths(unix_config_lookup, home_config_dir)) |result| {
+            self.file_directory = try self.allocator.dupe(u8, home_config_expanded);
             return result;
         } else |err| {
             switch (err) {
@@ -670,11 +711,8 @@ fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
         var home_dir = try wd.openDir(home_name_expanded, .{});
         defer home_dir.close();
 
-        if (tryPaths(
-            arena,
-            [_][]const u8{ default_filename, "." ++ default_filename },
-            &home_dir,
-        )) |result| {
+        if (self.tryPaths([_][]const u8{ default_filename, "." ++ default_filename }, home_dir)) |result| {
+            self.file_directory = try self.allocator.dupe(u8, home_name_expanded);
             return result;
         } else |err| {
             switch (err) {
@@ -684,39 +722,31 @@ fn loadFile(self: *Config, arena: Allocator) ![]const u8 {
         }
     }
 
-    return error.FileNotFound;
+    return fail("could not find a config file\n", .{}, error.FileNotFound);
 }
 
-/// Try to load a config file. Caller owns the result and should call `free` on
-/// it.
-fn loadOne(arena: Allocator, f: []const u8, dir: *std.fs.Dir) ![]const u8 {
-    const stat = try dir.statFile(f);
-    const size = stat.size;
-    const max_size = 1 << 20;
-
-    if (size > max_size) {
-        const err = fail(
-            "config files over 1MB are not currently allowed, current size is {d} bytes\nthis is only temporary safeguard during development and will be removed in the future\n",
-            .{size},
-        );
+/// Try to open a file from the given path and print the correct error message
+/// on error.
+fn openFile(self: *Config, path: []const u8, wd: std.fs.Dir) !std.fs.File {
+    const file = wd.openFile(path, .{ .mode = .read_only }) catch |err| {
         switch (err) {
-            error.InvalidConfig => return error.FileTooBig,
-            else => return err,
+            error.AccessDenied, error.FileNotFound, error.IsDir => {},
+            else => return fail("failed to open config file at '{s}'\n", .{path}, err),
         }
-    }
-
-    // TODO: Is one MB enough?
-    return try dir.readFileAlloc(arena, f, 1 << 20);
+        return err;
+    };
+    try self.values.put("config_file", .{ .string = try self.allocator.dupe(u8, path) });
+    return file;
 }
 
-fn tryPaths(arena: Allocator, comptime paths: anytype, dir: *std.fs.Dir) ![]const u8 {
+fn tryPaths(self: *Config, comptime paths: anytype, dir: std.fs.Dir) !std.fs.File {
     inline for (paths) |f| {
         inline for (default_extensions) |e| {
-            if (loadOne(arena, f ++ e, dir)) |result| {
+            if (self.openFile(f ++ e, dir)) |result| {
                 return result;
             } else |err| {
                 switch (err) {
-                    error.FileNotFound, error.IsDir => {},
+                    error.AccessDenied, error.FileNotFound, error.IsDir => {},
                     else => return err,
                 }
             }
@@ -750,13 +780,12 @@ fn defaultPluginDirs() []const []const u8 {
     };
 }
 
-// TODO: Correct errors.
-fn fail(comptime format: []const u8, args: anytype) error{ InvalidConfig, WriteFailed } {
+fn fail(comptime format: []const u8, args: anytype, err: anyerror) anyerror {
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
     const stderr = &stderr_writer.interface;
 
     try stderr.print(format, args);
     try stderr.flush();
 
-    return error.InvalidConfig;
+    return err;
 }
