@@ -259,10 +259,10 @@ fn parseValue(
     }
 
     if (!spec.disable_environment_variable) {
-        const env_var = try getEnvVarName(arena, key, spec);
+        const env_var = try spec.getEnvVarName(arena, key);
         const val = std.process.getEnvVarOwned(arena, env_var) catch |err| switch (err) {
             error.EnvironmentVariableNotFound => return fail(
-                "could not found environment variable: {s}",
+                "could not find environment variable: {s}",
                 .{env_var},
             ),
 
@@ -276,14 +276,17 @@ fn parseValue(
                 "environment variable '{s}' has invalid value: {s}",
                 .{ env_var, val },
             ),
-            error.Overflow => return fail("value in environment variable '{s}' would overflow '{s}': {s}", .{
-                env_var,
-                switch (spec.type) {
-                    .int => "i64",
-                    else => unreachable,
+            error.Overflow => return fail(
+                "value in environment variable '{s}' would overflow '{s}': {s}",
+                .{
+                    env_var,
+                    switch (spec.type) {
+                        .int => "i64",
+                        else => unreachable,
+                    },
+                    val,
                 },
-                val,
-            }),
+            ),
             error.OutOfMemory => return error.OutOfMemory,
         };
         value = try mergeValue(arena, value, new, extend);
@@ -460,35 +463,6 @@ fn getTomlValue(key: []const u8, root: toml.Value) ?toml.Value {
     }
 
     return result;
-}
-
-fn getEnvVarName(
-    arena: Allocator,
-    key: []const u8,
-    spec: *const OptionSpec,
-) Allocator.Error![]const u8 {
-    assert(!spec.disable_environment_variable);
-    assert(key.len > 0);
-    assert(key.len <= 1024);
-
-    const base_variable = spec.environment_variable orelse key;
-    const prefixed = try std.mem.concat(arena, u8, &[_][]const u8{
-        build_options.env_prefix,
-        "_",
-        base_variable,
-    });
-
-    std.mem.replaceScalar(u8, prefixed, '-', '_');
-    std.mem.replaceScalar(u8, prefixed, '.', '_');
-
-    var buf: [1024]u8 = undefined;
-    assert(prefixed.len <= 1024);
-    const variable = std.ascii.upperString(&buf, prefixed);
-
-    assert(variable.len > 0);
-    assert(std.mem.indexOfAny(u8, variable, "abcdefghijklmnopqrstuvwxyz") == null);
-
-    return variable;
 }
 
 fn getEnvVarValue(arena: Allocator, key: []const u8) error{OutOfMemory}!?[]const u8 {

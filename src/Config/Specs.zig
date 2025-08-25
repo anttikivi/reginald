@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const StringHashMap = std.StringHashMap;
@@ -158,6 +159,37 @@ pub const OptionSpec = struct {
         assert(@as(OptionType, value) == self.type);
 
         return value;
+    }
+
+    /// Return or construct the name of the environment variable for this spec.
+    /// The caller owns the result and must free it.
+    pub fn getEnvVarName(
+        self: *const @This(),
+        gpa: Allocator,
+        key: []const u8,
+    ) Allocator.Error![]const u8 {
+        assert(!self.disable_environment_variable);
+        assert(key.len > 0);
+        assert(key.len <= 1024);
+
+        const base = self.environment_variable orelse key;
+        const prefixed = try std.mem.concat(gpa, u8, &[_][]const u8{
+            build_options.env_prefix,
+            base,
+        });
+        defer gpa.free(prefixed);
+
+        std.mem.replaceScalar(u8, prefixed, '-', '_');
+        std.mem.replaceScalar(u8, prefixed, '.', '_');
+
+        var buf: [1024]u8 = undefined;
+        assert(prefixed.len <= 1024);
+        const variable = std.ascii.upperString(&buf, prefixed);
+
+        assert(variable.len > 0);
+        assert(std.mem.indexOfAny(u8, variable, "abcdefghijklmnopqrstuvwxyz") == null);
+
+        return try gpa.dupe(u8, variable);
     }
 };
 
