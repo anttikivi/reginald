@@ -4,8 +4,8 @@
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
         .toml = .{
-            .url = "git+https://github.com/anttikivi/toml-zig#08cef7a619e0b5578b0ff556a9147e1bc69d437c",
-            .hash = "toml-0.2.0-dev-QHJHv6dHAQDjDUjOaNF8O9U9LNeKRJj6-2TRV0fthMqO",
+            .url = "git+https://github.com/anttikivi/toml-zig#805a8934a289b4f08c6646b058cc74bad67b50b1",
+            .hash = "toml-0.2.0-dev-QHJHvwFNAQCmlJbapm62jHaZLSZnS-HHMDivh3qfLQJf",
         },
     },
     .paths = .{""},

@@ -17,98 +17,16 @@ const StringHashMap = std.StringHashMap;
 
 const toml = @import("toml");
 
-const cli = @import("cli.zig");
-const CountingAllocator = @import("CountingAllocator.zig");
+const Args = @import("Args.zig");
 const filepath = @import("filepath.zig");
 
+pub const Specs = @import("Config/Specs.zig");
+pub const OptionSpec = @import("Config/Specs.zig").OptionSpec;
+pub const OptionType = @import("Config/Specs.zig").OptionType;
+
 allocator: Allocator,
-counting_allocator: ?CountingAllocator = null,
-file_directory: []const u8 = working_directory_spec.default.?.string,
+file_directory: []const u8,
 values: StringHashMap(Value),
-
-/// Lookup table for option specs by the config key. Apart from handling
-/// the static config fields, this map is used in order to include
-/// the plugin-defined options in the lookup.
-pub var specs: StringHashMap(OptionSpec) = undefined;
-
-pub const config_file_spec: OptionSpec = .{
-    .early = true,
-    .type = .string,
-    .long = "config",
-    .short = 'c',
-    .environment_variable = "CONFIG",
-    .description = "use config file from `<path>`",
-    .disable_config_file_option = true,
-    .is_path = true,
-};
-pub const directory_spec: OptionSpec = .{
-    .type = .string,
-    .default = .{ .string = "." },
-    .short = 'd',
-    .description = "run Reginald as if it was started from `<path>`",
-    .disable_config_file_option = true,
-    .is_path = true,
-};
-pub const extend_spec: OptionSpec = .{
-    .early = true,
-    .type = .bool,
-    .short = 'e',
-    .description = "extend the slices in the config with values from each sources instead of overriding",
-    .disable_config_file_option = true,
-};
-pub const @"logging.enabled_spec": OptionSpec = .{
-    .type = .bool,
-    .default = .{ .bool = true },
-    .long = "log",
-    .description = "enable logging",
-};
-pub const @"logging.level_spec": OptionSpec = .{
-    .type = .log_level,
-    .default = .{ .log_level = .info },
-    .long = "log-level",
-    .description = "set logging level so that only log messages with level greater than of equal to `<level>` are enabled",
-};
-pub const plugin_paths_spec: OptionSpec = .{
-    .type = .string_slice,
-    .short = 'P',
-    .description = "search for plugins from `<paths>`",
-    .is_path = true,
-};
-pub const print_help_spec: OptionSpec = .{
-    .type = .bool,
-    .long = "help",
-    .short = 'h',
-    .description = "show the help message and exit",
-    .disable_environment_variable = true,
-    .disable_config_file_option = true,
-};
-pub const print_version_spec: OptionSpec = .{
-    .type = .bool,
-    .long = "version",
-    .description = "print the version information and exit",
-    .disable_environment_variable = true,
-    .disable_config_file_option = true,
-};
-pub const quiet_spec: OptionSpec = .{
-    .type = .bool,
-    .short = 'q',
-    .description = "silence all output expect errors",
-};
-pub const verbose_spec: OptionSpec = .{
-    .type = .bool,
-    .short = 'v',
-    .description = "print more verbose output",
-};
-pub const working_directory_spec: OptionSpec = .{
-    .early = true,
-    .type = .string,
-    .default = .{ .string = "." },
-    .long = "chdir",
-    .short = 'C',
-    .description = "run Reginald as if it was started from `<path>`",
-    .disable_config_file_option = true,
-    .is_path = true,
-};
 
 const is_debug = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 const native_os = builtin.target.os.tag;
@@ -132,61 +50,7 @@ const plugin_dir_name = "plugins";
 
 var stderr_buffer: [4096]u8 = undefined;
 
-pub const OptionType = enum {
-    bool,
-    int,
-    string,
-    string_slice,
-    log_level,
-};
-
-/// Represents the data for creating command-line options and config file
-/// entries and checking environment variables for a config option.
-const OptionSpec = struct {
-    /// If true, this option is parsed during the first pass when parsing
-    /// the static config options. An option should be marked as `early` only if
-    /// it is strictly required for parsing the rest of the static config
-    /// options.
-    early: bool = false,
-
-    type: OptionType,
-    default: ?Value = null,
-
-    /// Name of the long command-line option. If not set but the command-line
-    /// option is not disabled, the name of the field will be used.
-    long: ?[]const u8 = null,
-
-    /// The one-letter command-line option.
-    short: ?u8 = null,
-
-    /// The name of the environment variable that is checked for the value of
-    /// this option. The prefix for the environment variables is prepended to
-    /// this value. The default is the name of option. The name of the variable
-    /// is always converted to uppercase.
-    environment_variable: ?[]const u8 = null,
-
-    /// The name of the variable in the config file that is checked for
-    /// the value of this option. The default is the name of option where all
-    /// underscores are replaced by hyphens.
-    config_file_key: ?[]const u8 = null,
-
-    /// Short description of the option on the command-line help output.
-    description: ?[]const u8 = null,
-
-    disable_cli_option: bool = false,
-    disable_environment_variable: bool = false,
-    disable_config_file_option: bool = false,
-
-    /// If this config option is a string and it should represent a path, this
-    /// should be `true` so that it is parsed as a path. Paths are expanded,
-    /// i.e. user home directories are expanded. Environment variables are
-    /// expanded in all strings.
-    ///
-    /// TODO: Is there need to expand environment variables in all strings.
-    is_path: bool = false,
-};
-
-const Value = union(OptionType) {
+pub const Value = union(OptionType) {
     bool: bool,
     int: i64,
     string: []const u8,
@@ -199,30 +63,20 @@ const Value = union(OptionType) {
 /// the static config option values from the file, from the environment
 /// variables, and from the CLI options. The caller owns the created `Config`
 /// and must call `deinit` on it.
-pub fn init(gpa: Allocator, args: cli.Parsed) !Config {
-    // var cfg: Config = .{ .allocator = undefined,  .values = undefined };
-    //
-    // // Let's include the counting allocator for now.
-    // const cfg_gpa = blk: {
-    //     if (is_debug) {
-    //         cfg.counting_allocator = .init(gpa);
-    //         break :blk cfg.counting_allocator.?.allocator();
-    //     } else {
-    //         break :blk gpa;
-    //     }
-    // };
-    //
-    // cfg.allocator = cfg_gpa;
-    // cfg.values = .init(cfg_gpa);
-    var cfg: Config = .{ .allocator = gpa, .values = .init(gpa) };
+pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Args) !void {
+    self.* = .{
+        .allocator = gpa,
+        .file_directory = specs.get("working_directory").?.defaultValue().string,
+        .values = .init(gpa),
+    };
 
     var arena_instance = ArenaAllocator.init(gpa);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    try cfg.parseStatic(arena, null, args, true);
+    try self.parseStatic(arena, specs, null, args, true);
 
-    const handle = try cfg.findFile(arena);
+    const handle = try self.findFile(arena);
     defer handle.close();
 
     var file_buffer: [4096]u8 = undefined;
@@ -235,9 +89,7 @@ pub fn init(gpa: Allocator, args: cli.Parsed) !Config {
     var toml_value = try toml.parse(arena, file_data);
     defer toml_value.deinit(arena);
 
-    try cfg.parseStatic(arena, toml_value, args, false);
-
-    return cfg;
+    try self.parseStatic(arena, specs, toml_value, args, false);
 }
 
 /// Free the memory allocated by the `Config`.
@@ -260,35 +112,13 @@ pub fn deinit(self: *Config) void {
     self.values.deinit();
 }
 
-/// Build the lookup table for the config option specs. The caller owns
-/// the memory of the global table and must call `deinitTable` to free
-/// the memory.
-pub fn initTable(gpa: Allocator) !void {
-    specs = .init(gpa);
-
-    inline for (@typeInfo(Config).@"struct".decls) |decl| {
-        comptime if (!std.mem.endsWith(u8, decl.name, "_spec")) {
-            continue;
-        };
-
-        const spec = @field(Config, decl.name);
-        const key = decl.name[0 .. decl.name.len - @as([]const u8, "_spec").len];
-
-        try specs.put(key, spec);
-    }
-}
-
-/// TODO: Is this necessary?
-pub fn deinitTable() void {
-    specs.deinit();
-}
-
-pub fn parseBool(a: []const u8) !bool {
+pub fn parseBool(a: []const u8) error{InvalidValue}!bool {
     if (a.len > 5) {
         return error.InvalidValue;
     }
 
     var buf: [5]u8 = undefined;
+    assert(a.len <= 5);
     const v = std.ascii.lowerString(&buf, a);
 
     if (std.mem.eql(u8, v, "true")) {
@@ -336,10 +166,10 @@ pub fn get(self: *const Config, comptime T: type, key: []const u8) ?T {
     };
 }
 
-pub fn parseLogLevel(s: []const u8) error{InvalidLevel}!std.log.Level {
+pub fn parseLogLevel(s: []const u8) error{InvalidValue}!std.log.Level {
     var buf: [8]u8 = undefined;
     if (s.len > buf.len) {
-        return error.InvalidLevel;
+        return error.InvalidValue;
     }
 
     const l = std.ascii.lowerString(&buf, s);
@@ -356,128 +186,129 @@ pub fn parseLogLevel(s: []const u8) error{InvalidLevel}!std.log.Level {
         return .debug;
     }
 
-    return error.InvalidLevel;
+    return error.InvalidValue;
 }
 
-fn parseStatic(self: *Config, arena: Allocator, toml_value: ?toml.Value, args: cli.Parsed, comptime early: bool) !void {
-    inline for (@typeInfo(Config).@"struct".decls) |decl| {
-        comptime if (!std.mem.endsWith(u8, decl.name, "_spec")) {
+fn parseStatic(
+    self: *Config,
+    arena: Allocator,
+    specs: *const Specs,
+    toml_value: ?toml.Value,
+    args: *const Args,
+    early: bool,
+) !void {
+    const extend = self.get(bool, "extend") orelse false;
+
+    var spec_it = specs.specs.iterator();
+    while (spec_it.next()) |entry| {
+        const spec = entry.value_ptr;
+        if (early != spec.early) {
             continue;
-        };
+        }
 
-        const spec: OptionSpec = @field(Config, decl.name);
+        const key = entry.key_ptr.*;
+        assert(key.len > 0);
 
-        comptime if (early != spec.early) {
-            continue;
-        };
-
-        const key = decl.name[0 .. decl.name.len - @as([]const u8, "_spec").len];
-
-        if (self.parseValue(arena, key, spec, toml_value, args)) |val| {
-            assert(@as(OptionType, val) == spec.type);
-
-            switch (val) {
-                .string => |s| try self.values.put(key, .{ .string = try self.allocator.dupe(u8, s) }),
-                .string_slice => |s| {
-                    var new = try self.allocator.alloc([]const u8, s.len);
-                    for (s, 0..) |v, i| {
-                        new[i] = try self.allocator.dupe(u8, v);
-                    }
-                    try self.values.put(key, .{ .string_slice = new });
-                },
-                else => try self.values.put(key, val),
-            }
-        } else |err| return err;
+        const val = try parseValue(arena, key, spec, toml_value, args, extend);
+        assert(@as(OptionType, val) == spec.type);
+        switch (val) {
+            .string => |s| try self.values.put(key, .{ .string = try self.allocator.dupe(u8, s) }),
+            .string_slice => |s| {
+                var new = try self.allocator.alloc([]const u8, s.len);
+                for (s, 0..) |v, i| {
+                    new[i] = try self.allocator.dupe(u8, v);
+                }
+                try self.values.put(key, .{ .string_slice = new });
+            },
+            else => try self.values.put(key, val),
+        }
     }
 }
 
-fn parseValue(self: *const Config, arena: Allocator, key: []const u8, spec: OptionSpec, toml_value: ?toml.Value, args: cli.Parsed) !Value {
-    var value: Value = if (spec.default) |def| def else switch (spec.type) {
-        .bool => .{ .bool = false },
-        .int => .{ .int = 0 },
-        .string => .{ .string = "" },
-        .string_slice => .{ .string_slice = &[_][]const u8{} },
-        .log_level => .{ .log_level = .info },
-    };
+fn parseValue(
+    arena: Allocator,
+    key: []const u8,
+    spec: *const OptionSpec,
+    toml_value: ?toml.Value,
+    args: *const Args,
+    extend: bool,
+) !Value {
+    var value = spec.defaultValue();
+    assert(@as(OptionType, value) == spec.type);
+    assert(key.len > 0);
 
     if (!spec.disable_config_file_option) {
         if (toml_value) |root| {
             assert(root == .table);
-            if (try getTomlValue(arena, key, spec, root)) |val| {
-                const new = try parseTomlValue(arena, spec.type, val);
-                value = try mergeValue(arena, value, new, self.get(bool, "extend") orelse false);
+            const toml_key = try getTomlKey(arena, key, spec);
+            if (getTomlValue(toml_key, root)) |val| {
+                const new = parseTomlValue(arena, spec.type, val) catch |err| switch (err) {
+                    error.InvalidValue => return fail(
+                        "config field '{s}' has invalid value: {f}",
+                        .{ toml_key, val },
+                    ),
+                    error.InvalidType => return fail(
+                        "config field '{s}' expected {t}, found {t}",
+                        .{ toml_key, spec.type, val },
+                    ),
+                    error.OutOfMemory => return err,
+                };
+                value = try mergeValue(arena, value, new, extend);
             }
         }
     }
 
     if (!spec.disable_environment_variable) {
-        if (try getEnvVarValue(arena, key, spec)) |val| {
-            const new = try parseFromString(arena, spec.type, val);
-            value = try mergeValue(arena, value, new, self.get(bool, "extend") orelse false);
-        }
+        const env_var = try getEnvVarName(arena, key, spec);
+        const val = std.process.getEnvVarOwned(arena, env_var) catch |err| switch (err) {
+            error.EnvironmentVariableNotFound => return fail(
+                "could not found environment variable: {s}",
+                .{env_var},
+            ),
+
+            // Rather than surface the error upstream, let's panic as it can safely
+            // be assumed that all of the environment variable names are valid.
+            error.InvalidWtf8 => std.debug.panic("invalid wtf-8: {s}", .{key}),
+            error.OutOfMemory => return err,
+        };
+        const new = parseFromString(arena, spec.type, val) catch |err| switch (err) {
+            error.InvalidValue, error.InvalidCharacter => return fail(
+                "environment variable '{s}' has invalid value: {s}",
+                .{ env_var, val },
+            ),
+            error.Overflow => return fail("value in environment variable '{s}' would overflow '{s}': {s}", .{
+                env_var,
+                switch (spec.type) {
+                    .int => "i64",
+                    else => unreachable,
+                },
+                val,
+            }),
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        value = try mergeValue(arena, value, new, extend);
     }
 
     if (!spec.disable_cli_option) {
         if (args.values.get(key)) |val| {
-            const new: Value = switch (spec.type) {
-                .bool => switch (val) {
-                    .bool => |b| .{ .bool = b },
-                    else => unreachable,
-                },
-                .int => switch (val) {
-                    .int => |i| .{ .int = i },
-                    else => unreachable,
-                },
-                .string => switch (val) {
-                    .string => |s| .{ .string = s },
-                    else => unreachable,
-                },
-                .string_slice => switch (val) {
-                    .string_slice => |s| .{ .string_slice = s },
-                    else => unreachable,
-                },
-                .log_level => switch (val) {
-                    .log_level => |l| .{ .log_level = l },
-                    else => unreachable,
-                },
-            };
-            value = try mergeValue(arena, value, new, self.get(bool, "extend") orelse false);
+            assert(@as(OptionType, val) == spec.type);
+            value = try mergeValue(arena, value, val, extend);
         }
     }
 
-    switch (value) {
-        .string => |s| value = .{
-            .string = blk: {
-                if (spec.is_path) {
-                    break :blk try filepath.expand(arena, s);
-                } else {
-                    break :blk try filepath.expandEnv(arena, s);
-                }
-            },
-        },
-        .string_slice => |slice| value = .{
-            .string_slice = blk: {
-                var new = try arena.alloc([]const u8, slice.len);
-                if (spec.is_path) {
-                    for (slice, 0..) |s, i| {
-                        new[i] = try filepath.expand(arena, s);
-                    }
-                } else {
-                    for (slice, 0..) |s, i| {
-                        new[i] = try filepath.expandEnv(arena, s);
-                    }
-                }
+    assert(@as(OptionType, value) == spec.type);
 
-                break :blk new;
-            },
-        },
+    switch (value) {
+        .string, .string_slice => value = try expandValue(arena, value, spec.is_path),
         else => {},
     }
+
+    assert(@as(OptionType, value) == spec.type);
 
     return value;
 }
 
-fn mergeValue(arena: Allocator, old: Value, new: Value, extend: bool) !Value {
+fn mergeValue(arena: Allocator, old: Value, new: Value, extend: bool) Allocator.Error!Value {
     assert(@as(OptionType, old) == @as(OptionType, new));
 
     return switch (old) {
@@ -496,19 +327,56 @@ fn mergeValue(arena: Allocator, old: Value, new: Value, extend: bool) !Value {
     };
 }
 
+fn expandValue(arena: Allocator, value: Value, is_path: bool) filepath.ExpandError!Value {
+    assert(@as(OptionType, value) == .string or @as(OptionType, value) == .string_slice);
+
+    const new: Value = switch (value) {
+        .string => |s| .{
+            .string = blk: {
+                if (is_path) {
+                    break :blk try filepath.expand(arena, s);
+                } else {
+                    break :blk try filepath.expandEnv(arena, s);
+                }
+            },
+        },
+        .string_slice => |slice| .{
+            .string_slice = blk: {
+                var new = try arena.alloc([]const u8, slice.len);
+                if (is_path) {
+                    for (slice, 0..) |s, i| {
+                        new[i] = try filepath.expand(arena, s);
+                    }
+                } else {
+                    for (slice, 0..) |s, i| {
+                        new[i] = try filepath.expandEnv(arena, s);
+                    }
+                }
+
+                break :blk new;
+            },
+        },
+        else => unreachable,
+    };
+
+    assert(@as(OptionType, new) == @as(OptionType, value));
+
+    return new;
+}
+
 fn parseTomlValue(arena: Allocator, option_type: OptionType, val: toml.Value) !Value {
     return switch (option_type) {
         .bool => switch (val) {
             .bool => |b| .{ .bool = b },
-            else => return error.WrongType,
+            else => return error.InvalidType,
         },
         .int => switch (val) {
             .int => |i| .{ .int = i },
-            else => return error.WrongType,
+            else => return error.InvalidType,
         },
         .string => switch (val) {
             .string => |s| .{ .string = s },
-            else => return error.WrongType,
+            else => return error.InvalidType,
         },
         .string_slice => switch (val) {
             .array => |arr| blk: {
@@ -517,17 +385,17 @@ fn parseTomlValue(arena: Allocator, option_type: OptionType, val: toml.Value) !V
                     if (item == .string) {
                         try list.append(arena, item.string);
                     } else {
-                        return error.WrongType;
+                        return error.InvalidType;
                     }
                 }
 
                 break :blk .{ .string_slice = try list.toOwnedSlice(arena) };
             },
-            else => return error.WrongType,
+            else => return error.InvalidType,
         },
         .log_level => switch (val) {
             .string => |s| .{ .log_level = try parseLogLevel(s) },
-            else => return error.WrongType,
+            else => return error.InvalidType,
         },
     };
 }
@@ -554,8 +422,12 @@ fn parseFromString(arena: Allocator, option_type: OptionType, val: []const u8) !
     };
 }
 
-fn getTomlValue(arena: Allocator, key: []const u8, spec: OptionSpec, root: toml.Value) !?toml.Value {
-    assert(root == .table);
+fn getTomlKey(
+    arena: Allocator,
+    key: []const u8,
+    spec: *const OptionSpec,
+) Allocator.Error![]const u8 {
+    assert(key.len > 0);
 
     const toml_key = spec.config_file_key orelse blk: {
         const tmp = try arena.dupe(u8, key);
@@ -563,9 +435,18 @@ fn getTomlValue(arena: Allocator, key: []const u8, spec: OptionSpec, root: toml.
         break :blk tmp;
     };
 
+    assert(toml_key.len > 0);
+
+    return toml_key;
+}
+
+fn getTomlValue(key: []const u8, root: toml.Value) ?toml.Value {
+    assert(root == .table);
+    assert(key.len > 0);
+
     var result = root;
 
-    var iter = std.mem.splitScalar(u8, toml_key, '.');
+    var iter = std.mem.splitScalar(u8, key, '.');
     while (iter.next()) |s| {
         if (result != .table) {
             return null;
@@ -581,8 +462,14 @@ fn getTomlValue(arena: Allocator, key: []const u8, spec: OptionSpec, root: toml.
     return result;
 }
 
-fn getEnvVarValue(arena: Allocator, key: []const u8, spec: OptionSpec) !?[]u8 {
+fn getEnvVarName(
+    arena: Allocator,
+    key: []const u8,
+    spec: *const OptionSpec,
+) Allocator.Error![]const u8 {
     assert(!spec.disable_environment_variable);
+    assert(key.len > 0);
+    assert(key.len <= 1024);
 
     const base_variable = spec.environment_variable orelse key;
     const prefixed = try std.mem.concat(arena, u8, &[_][]const u8{
@@ -595,12 +482,24 @@ fn getEnvVarValue(arena: Allocator, key: []const u8, spec: OptionSpec) !?[]u8 {
     std.mem.replaceScalar(u8, prefixed, '.', '_');
 
     var buf: [1024]u8 = undefined;
+    assert(prefixed.len <= 1024);
     const variable = std.ascii.upperString(&buf, prefixed);
 
-    if (std.process.getEnvVarOwned(arena, variable)) |val| {
+    assert(variable.len > 0);
+    assert(std.mem.indexOfAny(u8, variable, "abcdefghijklmnopqrstuvwxyz") == null);
+
+    return variable;
+}
+
+fn getEnvVarValue(arena: Allocator, key: []const u8) error{OutOfMemory}!?[]const u8 {
+    if (std.process.getEnvVarOwned(arena, key)) |val| {
         return val;
     } else |err| switch (err) {
         error.EnvironmentVariableNotFound => return null,
+
+        // Rather than surface the error upstream, let's panic as it can safely
+        // be assumed that all of the environment variable names are valid.
+        error.InvalidWtf8 => std.debug.panic("invalid wtf-8: {s}", .{key}),
         else => return err,
     }
 }
@@ -623,10 +522,13 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
 
         return wd.openFile(config_file, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.AccessDenied => fail("access denied: {s}\n", .{config_file}, err),
-                error.FileNotFound => fail("config file at '{s}' does not exist\n", .{config_file}, err),
-                error.IsDir => fail("file at '{s}' is a directory\n", .{config_file}, err),
-                else => fail("failed to open config file at '{s}'\n", .{config_file}, err),
+                error.AccessDenied => fail("access denied: {s}", .{config_file}),
+                error.FileNotFound => fail(
+                    "config file at '{s}' does not exist",
+                    .{config_file},
+                ),
+                error.IsDir => fail("file at '{s}' is a directory", .{config_file}),
+                else => fail("failed to open config file at '{s}'", .{config_file}),
             };
         };
     }
@@ -751,7 +653,7 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
         }
     }
 
-    return fail("could not find a config file\n", .{}, error.FileNotFound);
+    return fail("could not find a config file", .{});
 }
 
 /// Try to open a file from the given path and print the correct error message
@@ -760,10 +662,11 @@ fn openFile(self: *Config, path: []const u8, wd: std.fs.Dir) !std.fs.File {
     const file = wd.openFile(path, .{ .mode = .read_only }) catch |err| {
         switch (err) {
             error.AccessDenied, error.FileNotFound, error.IsDir => {},
-            else => return fail("failed to open config file at '{s}'\n", .{path}, err),
+            else => return fail("failed to open config file at '{s}'", .{path}),
         }
         return err;
     };
+
     try self.values.put("config_file", .{ .string = try self.allocator.dupe(u8, path) });
     return file;
 }
@@ -786,35 +689,37 @@ fn tryPaths(self: *Config, comptime paths: anytype, dir: std.fs.Dir) !std.fs.Fil
 }
 
 fn defaultPluginDirs() []const []const u8 {
+    const sep_str = std.fs.path.sep_str;
     const xdg_plugin_dir: []const u8 =
-        "$XDG_DATA_HOME" ++ std.fs.path.sep_str ++ default_filename ++ std.fs.path.sep_str ++ plugin_dir_name;
+        "$XDG_DATA_HOME" ++ sep_str ++ default_filename ++ sep_str ++ plugin_dir_name;
     return blk: {
         if (native_os == .windows or native_os == .uefi) {
             break :blk &.{
                 xdg_plugin_dir,
-                "%LOCALAPPDATA%" ++ std.fs.path.sep_str ++ default_filename ++ std.fs.path.sep_str ++ plugin_dir_name,
+                "%LOCALAPPDATA%" ++ sep_str ++ default_filename ++ sep_str ++ plugin_dir_name,
             };
         } else if (native_os.isDarwin()) {
             break :blk &.{
                 xdg_plugin_dir,
-                "~" ++ std.fs.path.sep_str ++ "Library" ++ std.fs.path.sep_str ++ "Application Support" ++ std.fs.path.sep_str ++ default_filename ++ std.fs.path.sep_str ++ plugin_dir_name,
-                "~" ++ std.fs.path.sep_str ++ ".local" ++ std.fs.path.sep_str ++ "share" ++ std.fs.path.sep_str ++ default_filename ++ std.fs.path.sep_str ++ plugin_dir_name,
+                "~" ++ sep_str ++ "Library" ++ sep_str ++ "Application Support" ++ sep_str ++ default_filename ++ sep_str ++ plugin_dir_name,
+                "~" ++ sep_str ++ ".local" ++ sep_str ++ "share" ++ sep_str ++ default_filename ++ sep_str ++ plugin_dir_name,
             };
         } else {
             break :blk &.{
                 xdg_plugin_dir,
-                "~" ++ std.fs.path.sep_str ++ ".local" ++ std.fs.path.sep_str ++ "share" ++ std.fs.path.sep_str ++ default_filename ++ std.fs.path.sep_str ++ plugin_dir_name,
+                "~" ++ sep_str ++ ".local" ++ sep_str ++ "share" ++ sep_str ++ default_filename ++ sep_str ++ plugin_dir_name,
             };
         }
     };
 }
 
-fn fail(comptime format: []const u8, args: anytype, err: anyerror) anyerror {
+fn fail(comptime format: []const u8, args: anytype) error{ Reported, WriteFailed } {
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
     const stderr = &stderr_writer.interface;
 
     try stderr.print(format, args);
+    try stderr.writeByte('\n');
     try stderr.flush();
 
-    return err;
+    return error.Reported;
 }

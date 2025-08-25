@@ -4,9 +4,8 @@ const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-const cli = @import("cli.zig");
+const Args = @import("Args.zig");
 const Config = @import("Config.zig");
-const CountingAllocator = @import("CountingAllocator.zig");
 
 const native_os = builtin.target.os.tag;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -18,7 +17,7 @@ pub const std_options: std.Options = .{
 };
 
 pub fn main() !void {
-    var gpa, const is_debug = gpa: {
+    const gpa, const is_debug = gpa: {
         if (native_os == .wasi) {
             break :gpa .{ std.heap.wasm_allocator, false };
         }
@@ -32,32 +31,20 @@ pub fn main() !void {
         _ = debug_allocator.deinit();
     };
 
-    var total_counter: ?CountingAllocator = null;
-    if (is_debug) {
-        total_counter = CountingAllocator.init(gpa);
-        gpa = total_counter.?.allocator();
-    }
-    defer if (is_debug) {
-        std.debug.print("Currently allocated: {d}\n", .{total_counter.?.liveSize()});
-        std.debug.print("Total allocated: {d}\n", .{total_counter.?.alloc_size});
-        total_counter.?.deinit();
+    const raw_args = try std.process.argsAlloc(gpa);
+    const raw_args_freed = false;
+    defer if (!raw_args_freed) {
+        std.process.argsFree(gpa, raw_args);
     };
 
-    try cli.initTables(gpa);
-    defer cli.deinitTables();
+    assert(raw_args.len > 0);
 
-    try Config.initTable(gpa);
-    defer Config.deinitTable();
+    var specs: Config.Specs = undefined;
+    try specs.init(gpa);
+    defer specs.deinit();
 
-    const args = try std.process.argsAlloc(gpa);
-    const args_freed = false;
-    defer if (!args_freed) {
-        std.process.argsFree(gpa, args);
-    };
-
-    assert(args.len > 0);
-
-    var parsed_args = try cli.parseArgsLaxly(gpa, args[1..]);
+    var parsed_args: Args = undefined;
+    try parsed_args.parseLaxly(gpa, raw_args[1..], &specs);
     defer parsed_args.deinit();
 
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
@@ -88,12 +75,9 @@ pub fn main() !void {
         }
     }
 
-    var cfg = try Config.init(gpa, parsed_args);
+    var cfg: Config = undefined;
+    try cfg.init(gpa, &specs, &parsed_args);
     defer cfg.deinit();
-
-    std.debug.print("wd: {s}\n", .{cfg.get([]const u8, "working_directory").?});
-    std.debug.print("config: {s}\n", .{cfg.get([]const u8, "config_file").?});
-    std.debug.print("plugin dirs: {any}\n", .{cfg.get([]const []const u8, "plugin_paths").?});
 }
 
 // if (args.len <= 1) {

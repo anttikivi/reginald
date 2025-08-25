@@ -11,15 +11,15 @@ const testing = std.testing;
 
 pub const delimiter_str = std.fmt.comptimePrint("{c}", .{std.fs.path.delimiter});
 
-const ExpandError = Allocator.Error || process.GetEnvVarOwnedError;
+pub const ExpandError = Allocator.Error || process.GetEnvVarOwnedError;
 
 /// Expand environment variables and user home directory in the string in that
 /// order. Caller owns the result and should call `free` on it.
-pub fn expand(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
-    const tmp = try expandEnv(allocator, s);
-    defer allocator.free(tmp);
+pub fn expand(gpa: Allocator, s: []const u8) ExpandError![]const u8 {
+    const tmp = try expandEnv(gpa, s);
+    defer gpa.free(tmp);
 
-    return try expandUser(allocator, tmp);
+    return try expandUser(gpa, tmp);
 }
 
 /// Expand environment variables in the given string. On Windows, Windows-style
@@ -28,7 +28,7 @@ pub fn expand(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
 /// Unix-style variables are supported.
 ///
 /// Caller owns the result and should call `free` on it.
-pub fn expandEnv(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
+pub fn expandEnv(gpa: Allocator, s: []const u8) ExpandError![]const u8 {
     var out: []const u8 = s;
     var buf: [4096]u8 = undefined; // TODO: Is this enough?
 
@@ -45,14 +45,14 @@ pub fn expandEnv(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
             const unix = try expandEnvUnix(buf_allocator, out);
             out = unix;
 
-            return try allocator.dupe(u8, out);
+            return try gpa.dupe(u8, out);
         }
     }
 
     const unix = try expandEnvUnix(buf_allocator, out);
     out = unix;
 
-    return try allocator.dupe(u8, out);
+    return try gpa.dupe(u8, out);
 }
 
 /// Naively expand user's home directory, given as '~', in the given string.
@@ -63,26 +63,29 @@ pub fn expandEnv(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
 /// resolved from environment variables.
 ///
 /// Caller owns the result and should call `free` on it.
-pub fn expandUser(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
-    var buf: [1024]u8 = undefined; // TODO: Is this enough?
+pub fn expandUser(gpa: Allocator, s: []const u8) ExpandError![]const u8 {
+    var buf: [1024]u8 = undefined;
 
     // The buffer goes out of scope, so no need to free the temporary
     // allocations.
     var fba = std.heap.FixedBufferAllocator.init(buf[0..]);
     const buf_allocator = fba.allocator();
 
-    const home = if (comptime builtin.target.os.tag == .windows)
-        try process.getEnvVarOwned(buf_allocator, "USERPROFILE")
-    else
-        try process.getEnvVarOwned(buf_allocator, "HOME");
+    const home = blk: {
+        if (comptime builtin.target.os.tag == .windows) {
+            break :blk try process.getEnvVarOwned(buf_allocator, "USERPROFILE");
+        } else {
+            break :blk try process.getEnvVarOwned(buf_allocator, "HOME");
+        }
+    };
 
     if (mem.eql(u8, s, "~")) {
-        return try allocator.dupe(u8, home);
+        return try gpa.dupe(u8, home);
     }
 
     if (mem.startsWith(u8, s, "~")) {
         if (fs.path.isSep(s[1])) {
-            return try fs.path.join(allocator, &[_][]const u8{ home, s[2..] });
+            return try fs.path.join(gpa, &[_][]const u8{ home, s[2..] });
         } else {
             // We naively assume that all of the user home directories follow
             // the same pattern, which is almost always correct.
@@ -100,18 +103,18 @@ pub fn expandUser(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
             const users = fs.path.dirname(home).?;
 
             if (i) |j| {
-                return try fs.path.join(allocator, &[_][]const u8{ users, user, s[j + 1 ..] });
+                return try fs.path.join(gpa, &[_][]const u8{ users, user, s[j + 1 ..] });
             } else {
-                return try fs.path.join(allocator, &[_][]const u8{ users, user });
+                return try fs.path.join(gpa, &[_][]const u8{ users, user });
             }
         }
     }
 
-    return try allocator.dupe(u8, s);
+    return try gpa.dupe(u8, s);
 }
 
-fn expandEnvUnix(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
-    var buf: [512]u8 = undefined; // TODO: Is this enough?
+fn expandEnvUnix(gpa: Allocator, s: []const u8) ExpandError![]const u8 {
+    var buf: [512]u8 = undefined;
 
     var l: usize = 0;
     var i: usize = 0;
@@ -162,8 +165,8 @@ fn expandEnvUnix(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
                 buf[l] = s[j];
                 l += 1;
             } else {
-                const val = process.getEnvVarOwned(allocator, name) catch "";
-                defer allocator.free(val);
+                const val = try process.getEnvVarOwned(gpa, name);
+                defer gpa.free(val);
                 for (val) |c| {
                     buf[l] = c;
                     l += 1;
@@ -179,7 +182,7 @@ fn expandEnvUnix(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
         return s;
     }
 
-    return try mem.concat(allocator, u8, &[_][]const u8{ buf[0..l], s[i..] });
+    return try mem.concat(gpa, u8, &[_][]const u8{ buf[0..l], s[i..] });
 }
 
 fn expandWindowsEnv(allocator: Allocator, s: []const u8) ExpandError![]const u8 {
@@ -214,7 +217,7 @@ fn expandWindowsEnv(allocator: Allocator, s: []const u8) ExpandError![]const u8 
                     // a variable name, the slice should now contain a valid
                     // variable name.
                     const key = s[j + 1 .. k];
-                    const val = process.getEnvVarOwned(allocator, key) catch "";
+                    const val = try process.getEnvVarOwned(allocator, key);
                     defer allocator.free(val);
                     for (val) |c| {
                         buf[l] = c;
@@ -381,10 +384,7 @@ test expandEnv {
         try setenv(testing.allocator, "SOMETHING", "hello");
 
         const path = "/tmp/$SOMETHIN/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp//something_else", actual);
+        try testing.expectError(error.EnvironmentVariableNotFound, expandEnv(testing.allocator, path));
     }
 
     {
