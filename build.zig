@@ -7,18 +7,11 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const toml = b.dependency("toml", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const toml_mod = toml.module("toml");
-
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe_mod.addImport("toml", toml_mod);
 
     const exe = b.addExecutable(.{
         .name = reginald_exe_name,
@@ -70,6 +63,29 @@ pub fn build(b: *std.Build) !void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    const toml_lib_mod = b.createModule(.{
+        .root_source_file = b.path("src/toml.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const toml_mod = b.createModule(.{
+        .root_source_file = b.path("test/toml.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    toml_mod.addImport("toml", toml_lib_mod);
+
+    const toml = b.addExecutable(.{
+        .name = "reginald-toml-test",
+        .root_module = toml_mod,
+    });
+
+    const run_toml_test = b.addSystemCommand(&[_][]const u8{"toml-test"});
+    run_toml_test.addFileArg(toml.getEmittedBin());
+
+    const toml_test_step = b.step("toml-test", "Run toml-test for the TOML parser in Reginald");
+    toml_test_step.dependOn(&run_toml_test.step);
 }
 
 fn resolveVersion(b: *std.Build, version_opt: ?[]const u8) ![:0]const u8 {

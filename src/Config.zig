@@ -15,10 +15,9 @@ const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const assert = std.debug.assert;
 const StringHashMap = std.StringHashMap;
 
-const toml = @import("toml");
-
 const Args = @import("Args.zig");
 const filepath = @import("filepath.zig");
+const toml = @import("toml.zig");
 
 pub const Specs = @import("Config/Specs.zig");
 pub const OptionSpec = @import("Config/Specs.zig").OptionSpec;
