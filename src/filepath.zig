@@ -330,148 +330,6 @@ test expand {
 }
 
 test expandEnv {
-    {
-        try setenv(testing.allocator, "SOMETHING", "hello");
-
-        const path = "/tmp";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "SOMETHING", "hello");
-
-        const path = "/tmp/$SOMETHING";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/hello", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "SOMETHING", "hello");
-
-        const path = "/tmp/$SOMETHING/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/hello/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "SOMETHING", "hello");
-
-        const path = "/tmp/${SOMETHING}";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/hello", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "SOMETHING", "hello");
-
-        const path = "/tmp/${SOMETHING}/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/hello/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "SOMETHING", "hello");
-
-        const path = "/tmp/$SOMETHIN/something_else";
-        try testing.expectError(error.EnvironmentVariableNotFound, expandEnv(testing.allocator, path));
-    }
-
-    {
-        try setenv(testing.allocator, "$", "PID");
-
-        const path = "/tmp/$$/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/PID/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "1", "ARG1");
-
-        const path = "/tmp/$1/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/ARG1/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "1", "ARG1");
-
-        const path = "/tmp/${1}/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/ARG1/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "*", "all args");
-
-        const path = "/tmp/$*/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/all args/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "*", "all args");
-
-        const path = "/tmp/${*}/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/tmp/all args/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "HOME", "/usr/reginald");
-        try setenv(testing.allocator, "H", "(here is H)");
-
-        const path = "${HOME}/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/usr/reginald/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "H", "(here is H)");
-        try setenv(testing.allocator, "HOME", "/usr/reginald");
-
-        const path = "${H}OME/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("(here is H)OME/something_else", actual);
-    }
-
-    {
-        try setenv(testing.allocator, "HOME", "/usr/reginald");
-        try setenv(testing.allocator, "H", "(here is H)");
-
-        const path = "$HOME/something_else";
-        const actual = try expandEnv(testing.allocator, path);
-        defer testing.allocator.free(actual);
-
-        try testing.expectEqualStrings("/usr/reginald/something_else", actual);
-    }
-}
-
-test "expandEnv Windows" {
     if (builtin.target.os.tag == .windows) {
         {
             try setenv(testing.allocator, "SOMETHING", "hello");
@@ -517,10 +375,10 @@ test "expandEnv Windows" {
             try setenv(testing.allocator, "SOMETHING", "hello");
 
             const path = "/tmp/%SOMETHIN%/something_else";
-            const actual = try expandEnv(testing.allocator, path);
-            defer testing.allocator.free(actual);
-
-            try testing.expectEqualStrings("/tmp//something_else", actual);
+            try testing.expectError(
+                error.EnvironmentVariableNotFound,
+                expandEnv(testing.allocator, path),
+            );
         }
 
         {
@@ -605,6 +463,149 @@ test "expandEnv Windows" {
             defer testing.allocator.free(actual);
 
             try testing.expectEqualStrings("/tmp/%hello&/something_else", actual);
+        }
+    } else {
+        {
+            try setenv(testing.allocator, "SOMETHING", "hello");
+
+            const path = "/tmp";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "SOMETHING", "hello");
+
+            const path = "/tmp/$SOMETHING";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/hello", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "SOMETHING", "hello");
+
+            const path = "/tmp/$SOMETHING/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/hello/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "SOMETHING", "hello");
+
+            const path = "/tmp/${SOMETHING}";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/hello", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "SOMETHING", "hello");
+
+            const path = "/tmp/${SOMETHING}/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/hello/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "SOMETHING", "hello");
+
+            const path = "/tmp/$SOMETHIN/something_else";
+            try testing.expectError(
+                error.EnvironmentVariableNotFound,
+                expandEnv(testing.allocator, path),
+            );
+        }
+
+        {
+            try setenv(testing.allocator, "$", "PID");
+
+            const path = "/tmp/$$/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/PID/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "1", "ARG1");
+
+            const path = "/tmp/$1/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/ARG1/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "1", "ARG1");
+
+            const path = "/tmp/${1}/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/ARG1/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "*", "all args");
+
+            const path = "/tmp/$*/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/all args/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "*", "all args");
+
+            const path = "/tmp/${*}/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/tmp/all args/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "HOME", "/usr/reginald");
+            try setenv(testing.allocator, "H", "(here is H)");
+
+            const path = "${HOME}/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/usr/reginald/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "H", "(here is H)");
+            try setenv(testing.allocator, "HOME", "/usr/reginald");
+
+            const path = "${H}OME/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("(here is H)OME/something_else", actual);
+        }
+
+        {
+            try setenv(testing.allocator, "HOME", "/usr/reginald");
+            try setenv(testing.allocator, "H", "(here is H)");
+
+            const path = "$HOME/something_else";
+            const actual = try expandEnv(testing.allocator, path);
+            defer testing.allocator.free(actual);
+
+            try testing.expectEqualStrings("/usr/reginald/something_else", actual);
         }
     }
 }
