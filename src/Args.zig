@@ -21,7 +21,8 @@ allocator: Allocator,
 
 /// The arguments remaining after parsing when unknown arguments don't make
 /// the parser return an error.
-args: [][]const u8,
+args: []const []const u8,
+
 // subcommand: Subcommand,
 
 /// Values of the command-line options that were found and parsed
@@ -37,7 +38,8 @@ const Parser = struct {
     args: []const []const u8,
     on_unknown: OnUnknown,
     pos: usize,
-    unknown: ArrayList([]const u8) = undefined,
+    arg_pos: usize,
+    remaining: ArrayList([]u8),
     specs: *const Specs,
     values: StringHashMap(Value),
 
@@ -48,20 +50,7 @@ const Parser = struct {
     };
 
     /// Implementation for parsing arguments.
-    ///
-    /// TODO: If there are many unknown arguments, there is a lot of
-    /// duplicating. It might be worth considering if the parser would benefit
-    /// from reduced allocations.
     fn parse(self: *@This(), target: *Args, gpa: Allocator) !void {
-        if (self.on_unknown == .skip) {
-            self.unknown = .empty;
-        }
-        defer if (self.on_unknown == .skip) {
-            self.unknown.deinit(gpa);
-        };
-
-        // const subcommand: ?[]const u8 = null;
-
         while (self.pos < self.args.len) : (self.pos += 1) {
             const arg = self.args[self.pos];
             assert(arg.len > 0);
@@ -77,6 +66,7 @@ const Parser = struct {
             }
 
             if (arg[0] == '-' and arg.len > 1) {
+                self.arg_pos = 1;
                 try self.parseShortCluster(gpa);
                 continue;
             }
@@ -85,7 +75,7 @@ const Parser = struct {
                 .fail => {
                     return fail("unknown argument: \"{s}\"", .{arg});
                 },
-                .skip => try self.unknown.append(gpa, try gpa.dupe(u8, arg)),
+                .skip => try self.remaining.append(gpa, try gpa.dupe(u8, arg)),
             }
 
             // if (std.meta.stringToEnum(Subcommand, arg)) |tag| {
@@ -110,8 +100,8 @@ const Parser = struct {
         target.* = .{
             .allocator = gpa,
             .args = switch (self.on_unknown) {
-                .fail => try gpa.alloc([]const u8, 0), // TODO: Stupid?
-                .skip => try self.unknown.toOwnedSlice(gpa),
+                .fail => try gpa.alloc([]u8, 0),
+                .skip => try self.remaining.toOwnedSlice(gpa),
             },
             // .subcommand = subcommand,
             .values = self.values,
@@ -127,11 +117,9 @@ const Parser = struct {
         const end = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| j else arg.len;
         const long = arg[2..end];
         const key = self.specs.long_options.get(long) orelse switch (self.on_unknown) {
-            .fail => {
-                return fail("invalid command-line option \"--{s}\"", .{long});
-            },
+            .fail => return fail("invalid command-line option \"--{s}\"", .{long}),
             .skip => {
-                try self.unknown.append(gpa, try gpa.dupe(u8, arg));
+                try self.remaining.append(gpa, try gpa.dupe(u8, arg));
                 return;
             },
         };
@@ -188,14 +176,16 @@ const Parser = struct {
     /// The `args` passed in should contain the command-line arguments remaining
     /// after `arg`.
     fn parseShortCluster(self: *@This(), gpa: Allocator) !void {
-        var rest: ArrayList(u8) = .empty;
-        defer rest.deinit(gpa);
+        assert(self.arg_pos == 1);
+        assert(self.args[self.pos][0] == '-');
+
+        var leftover: ArrayList(u8) = .empty;
+        defer leftover.deinit(gpa);
 
         const arg = self.args[self.pos];
 
-        var i: usize = 1;
-        cluster: while (i < arg.len) : (i += 1) {
-            switch (try self.parseShort(gpa, i, &rest)) {
+        cluster: while (self.arg_pos < arg.len) : (self.arg_pos += 1) {
+            switch (try self.parseShort(gpa, &leftover)) {
                 .break_cluster => break :cluster,
                 .continue_cluster => continue :cluster,
                 .continue_outer => return,
@@ -204,23 +194,26 @@ const Parser = struct {
 
         switch (self.on_unknown) {
             .fail => {},
-            .skip => if (rest.items.len > 0) {
-                try self.unknown.append(gpa, try gpa.dupe(u8, rest.items));
+            .skip => if (leftover.items.len > 0) {
+                try self.remaining.append(gpa, try leftover.toOwnedSlice(gpa));
             },
         }
     }
 
-    fn parseShort(self: *@This(), gpa: Allocator, i: usize, rest: *ArrayList(u8)) !ShortAction {
+    fn parseShort(self: *@This(), gpa: Allocator, leftover: *ArrayList(u8)) !ShortAction {
         const arg = self.args[self.pos];
-        const c = arg[i];
 
+        assert(arg[0] == '-');
+
+        const c = arg[self.arg_pos];
+
+        // Equal sign is always handled by the value parser and should not come
+        // through the loop for known arguments.
         if (c == '=') {
             switch (self.on_unknown) {
-                .fail => {
-                    return fail("unexpected value separator in \"{s}\"", .{arg});
-                },
-                .skip => if (rest.items.len > 0) {
-                    try rest.appendSlice(gpa, arg[i..]);
+                .fail => return fail("unexpected value separator in \"{s}\"", .{arg}),
+                .skip => if (leftover.items.len > 0) {
+                    try leftover.appendSlice(gpa, arg[self.arg_pos..]);
                 } else {
                     return fail("unexpected value separator in \"{s}\"", .{arg});
                 },
@@ -234,10 +227,10 @@ const Parser = struct {
                 return fail("unknown command-line option \"-{c}\" in \"{s}\"", .{ c, arg });
             },
             .skip => {
-                if (rest.items.len > 0) {
-                    try rest.append(gpa, c);
+                if (leftover.items.len > 0) {
+                    try leftover.append(gpa, c);
                 } else {
-                    try rest.appendSlice(gpa, &[_]u8{ '-', c });
+                    try leftover.appendSlice(gpa, &[_]u8{ '-', c });
                 }
 
                 return .continue_cluster;
@@ -251,18 +244,19 @@ const Parser = struct {
 
         var raw_value: ?[]const u8 = null;
 
-        if (arg.len > i + 1 and arg[i + 1] == '=') {
-            raw_value = arg[i + 2 ..];
+        if (arg.len > self.arg_pos + 1 and arg[self.arg_pos + 1] == '=') {
+            raw_value = arg[self.arg_pos + 2 ..];
         } else if (spec.type != .bool) {
-            if (arg.len > i + 1) {
-                raw_value = arg[i + 1 ..];
+            if (arg.len > self.arg_pos + 1) {
+                raw_value = arg[self.arg_pos + 1 ..];
             } else {
                 self.pos += 1;
+
                 if (self.args.len <= self.pos) {
                     return fail("option \"-{c}\" requires a value", .{c});
-                } else {
-                    raw_value = self.args[self.pos];
                 }
+
+                raw_value = self.args[self.pos];
             }
         }
 
@@ -308,9 +302,12 @@ pub fn parse(self: *Args, gpa: Allocator, args: []const []const u8, specs: *cons
         .args = args,
         .on_unknown = .fail,
         .pos = 0,
+        .arg_pos = 0,
+        .remaining = .empty,
         .specs = specs,
         .values = .init(gpa),
     };
+    defer parser.remaining.deinit(gpa);
     errdefer parser.values.deinit();
     return try parser.parse(self, gpa);
 }
@@ -332,9 +329,12 @@ pub fn parseLaxly(
         .args = args,
         .on_unknown = .skip,
         .pos = 0,
+        .arg_pos = 0,
+        .remaining = .empty,
         .specs = specs,
         .values = .init(gpa),
     };
+    defer parser.remaining.deinit(gpa);
     errdefer parser.values.deinit();
     return try parser.parse(self, gpa);
 }
