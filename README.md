@@ -9,7 +9,7 @@
 </div>
 
 <!-- prettier-ignore-start -->
-> [!NOTE]
+> [!IMPORTANT]
 > This project is still in early development. More info on the project will be
 > added later and the current features don’t just yet match this README.
 <!-- prettier-ignore-end -->
