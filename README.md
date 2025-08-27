@@ -8,12 +8,6 @@
 
 </div>
 
-<!-- prettier-ignore-start -->
-> [!IMPORTANT]
-> This project is still in early development. More info on the project will be
-> added later and the current features don’t just yet match this README.
-<!-- prettier-ignore-end -->
-
 Setting up a new machine and managing dotfiles should be simple. However, most
 existing tools are either too heavy requiring runtimes like Python, quite
 complicated forcing you into rigid workflows, or too fragile like Bash scripts
@@ -29,6 +23,12 @@ idempotently according to your config file. It comes with built-in plugins for
 essential tasks like linking dotfiles and installing packages. Official plugins
 are provided for common developer needs. If you need more, you can extend
 Reginald with any tasks you like with your own plugins.
+
+<!-- prettier-ignore-start -->
+> [!IMPORTANT]
+> This project is still in early development. More info on the project will be
+> added later and the current features don’t just yet match this README.
+<!-- prettier-ignore-end -->
 
 ## Getting started
 
