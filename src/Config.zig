@@ -259,36 +259,36 @@ fn parseValue(
 
     if (!spec.disable_environment_variable) {
         const env_var = try spec.getEnvVarName(arena, key);
-        const val = std.process.getEnvVarOwned(arena, env_var) catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => return fail(
-                "could not find environment variable: {s}",
-                .{env_var},
-            ),
-
-            // Rather than surface the error upstream, let's panic as it can safely
-            // be assumed that all of the environment variable names are valid.
-            error.InvalidWtf8 => std.debug.panic("invalid wtf-8: {s}", .{key}),
-            error.OutOfMemory => return err,
-        };
-        const new = parseFromString(arena, spec.type, val) catch |err| switch (err) {
-            error.InvalidValue, error.InvalidCharacter => return fail(
-                "environment variable '{s}' has invalid value: {s}",
-                .{ env_var, val },
-            ),
-            error.Overflow => return fail(
-                "value in environment variable '{s}' would overflow '{s}': {s}",
-                .{
-                    env_var,
-                    switch (spec.type) {
-                        .int => "i64",
-                        else => unreachable,
+        if (std.process.getEnvVarOwned(arena, env_var)) |val| {
+            const new = parseFromString(arena, spec.type, val) catch |err| switch (err) {
+                error.InvalidValue, error.InvalidCharacter => return fail(
+                    "environment variable '{s}' has invalid value: {s}",
+                    .{ env_var, val },
+                ),
+                error.Overflow => return fail(
+                    "value in environment variable '{s}' would overflow '{s}': {s}",
+                    .{
+                        env_var,
+                        switch (spec.type) {
+                            .int => "i64",
+                            else => unreachable,
+                        },
+                        val,
                     },
-                    val,
-                },
-            ),
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-        value = try mergeValue(arena, value, new, extend);
+                ),
+                error.OutOfMemory => return error.OutOfMemory,
+            };
+            value = try mergeValue(arena, value, new, extend);
+        } else |err| {
+            switch (err) {
+                error.EnvironmentVariableNotFound => {}, // continue
+
+                // Rather than surface the error upstream, let's panic as it can safely
+                // be assumed that all of the environment variable names are valid.
+                error.InvalidWtf8 => std.debug.panic("invalid wtf-8: {s}", .{key}),
+                error.OutOfMemory => return err,
+            }
+        }
     }
 
     if (!spec.disable_cli_option) {
