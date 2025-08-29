@@ -44,12 +44,7 @@ pub const Position = struct {
     }
 };
 
-/// Parse a TOML document. On success, returns the root `Value` (always
-/// a `.table`). The returned `Value` tree is allocated from `gpa` and must be
-/// freed by calling `Value.deinit(gpa)`.
 pub fn parse(gpa: Allocator, input: []const u8) !Value {
-    // TODO: Maybe add an option to skip the UTF-8 validation for faster
-    // parsing.
     try utf8Validate(input);
 
     var arena_instance: ArenaAllocator = .init(gpa);
@@ -57,14 +52,13 @@ pub fn parse(gpa: Allocator, input: []const u8) !Value {
     const arena = arena_instance.allocator();
 
     var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(arena) } };
-
     var scanner: Scanner = undefined;
     scanner.initCompleteInput(arena, input);
 
     var parser: Parser = undefined;
     parser.init(arena, &scanner, &parsing_root);
 
-    while (true) {
+    while (scanner.cursor < input.len) {
         var token = try scanner.nextKey();
         if (token == .end_of_file) {
             break;
@@ -85,7 +79,7 @@ pub fn parse(gpa: Allocator, input: []const u8) !Value {
             .string,
             .literal_string,
             => try parser.parseKeyValueExpressionStartingWith(token),
-            else => return error.UnexpectedToken,
+            else => return fail("unexpected token", &scanner),
         }
 
         token = try scanner.nextKey();
@@ -93,7 +87,7 @@ pub fn parse(gpa: Allocator, input: []const u8) !Value {
             continue;
         }
 
-        return error.UnexpectedToken;
+        return fail("unexpected token", &scanner);
     }
 
     return parseResult(gpa, parsing_root);
@@ -103,30 +97,42 @@ pub fn parse(gpa: Allocator, input: []const u8) !Value {
 fn parseResult(allocator: Allocator, parsed_value: Parser.ParsingValue) !Value {
     switch (parsed_value.value) {
         .string => |s| return .{ .string = try allocator.dupe(u8, s) },
-        .int => |n| return .{ .int = n },
+        .int => |i| return .{ .int = i },
         .float => |f| return .{ .float = f },
         .bool => |b| return .{ .bool = b },
-        .datetime => |dt| return .{ .datetime = dt },
-        .local_datetime => |dt| return .{ .local_datetime = dt },
-        .local_date => |d| return .{ .local_date = d },
-        .local_time => |t| return .{ .local_time = t },
-        .array => |arr| {
-            var val: Value = .{ .array = .empty };
-            for (arr.items) |item| {
-                try val.array.append(allocator, try parseResult(allocator, item));
-            }
-            return val;
+        .datetime => |dt| {
+            assert(dt.isValid());
+            return .{ .datetime = dt };
         },
-        .table => |t| {
-            var val: Value = .{ .table = .init(allocator) };
-            var it = t.iterator();
-            while (it.next()) |entry| {
-                try val.table.put(
+        .local_datetime => |dt| {
+            assert(dt.isValid());
+            return .{ .local_datetime = dt };
+        },
+        .local_date => |d| {
+            assert(d.isValid());
+            return .{ .local_date = d };
+        },
+        .local_time => |t| {
+            assert(t.isValid());
+            return .{ .local_time = t };
+        },
+        .array => |array| {
+            var result: Value = .{ .array = .empty };
+            for (array.items) |item| {
+                try result.array.append(allocator, try parseResult(allocator, item));
+            }
+            return result;
+        },
+        .table => |table| {
+            var result: Value = .{ .table = .init(allocator) };
+            var iterator = table.iterator();
+            while (iterator.next()) |entry| {
+                try result.table.put(
                     try allocator.dupe(u8, entry.key_ptr.*),
                     try parseResult(allocator, entry.value_ptr.*),
                 );
             }
-            return val;
+            return result;
         },
     }
 }
@@ -140,6 +146,7 @@ fn utf8Validate(input: []const u8) !void {
     const Utf8State = enum { start, a, b, c, d, e, f, g };
     var state: Utf8State = .start;
     var i: usize = 0;
+
     while (i < input.len) : (i += 1) {
         const c = input[i];
         switch (state) {
@@ -184,6 +191,19 @@ fn utf8Validate(input: []const u8) !void {
             },
         }
     }
+}
+
+fn fail(msg: []const u8, scanner: *const Scanner) error{ Reported, WriteFailed } {
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    const stderr = &stderr_writer.interface;
+
+    try stderr.print("{f}", .{Position.findLineKnown(scanner.input, scanner.cursor, scanner.line)});
+    try stderr.writeByte(' ');
+    try stderr.writeAll(msg);
+    try stderr.writeByte('\n');
+    try stderr.flush();
+
+    return error.Reported;
 }
 
 fn failUtf8(input: []const u8, cursor: usize) error{ Reported, WriteFailed } {

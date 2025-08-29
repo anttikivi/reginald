@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 pub const Value = union(enum) {
     string: []const u8,
@@ -16,13 +17,13 @@ pub const Value = union(enum) {
     pub fn deinit(self: *@This(), gpa: Allocator) void {
         switch (self.*) {
             .string => |s| gpa.free(s),
-            .array => |*arr| {
+            .array => |*array| {
                 var i: usize = 0;
-                while (i < arr.items.len) : (i += 1) {
-                    var item = &arr.items[i];
+                while (i < array.items.len) : (i += 1) {
+                    var item = &array.items[i];
                     item.deinit(gpa);
                 }
-                arr.deinit(gpa);
+                array.deinit(gpa);
             },
             .table => |*t| {
                 var it = t.iterator();
@@ -42,16 +43,25 @@ pub const Value = union(enum) {
             .int => |i| try writer.print("{d}", .{i}),
             .float => |f| try writer.print("{d}", .{f}),
             .bool => |b| try writer.writeAll(if (b) "true" else "false"),
-            .datetime, .local_datetime => |dt| try writer.print("{f}", .{dt}),
-            .local_date => |d| try writer.print("{f}", .{d}),
-            .local_time => |t| try writer.print("{f}", .{t}),
+            .datetime, .local_datetime => |dt| {
+                assert(dt.isValid());
+                try writer.print("{f}", .{dt});
+            },
+            .local_date => |d| {
+                assert(d.isValid());
+                try writer.print("{f}", .{d});
+            },
+            .local_time => |t| {
+                assert(t.isValid());
+                try writer.print("{f}", .{t});
+            },
             .array => |array| {
                 try writer.writeByte('[');
-                for (array.items, 0..) |a, i| {
+                for (array.items, 0..) |item, i| {
                     if (i > 0) {
                         try writer.writeAll(", ");
                     }
-                    try writer.print("{f}", .{a});
+                    try writer.print("{f}", .{item});
                 }
                 try writer.writeByte(']');
             },
@@ -59,11 +69,11 @@ pub const Value = union(enum) {
                 try writer.writeByte('{');
                 var it = t.iterator();
                 var i: usize = 0;
-                while (it.next()) |e| : (i += 1) {
+                while (it.next()) |entry| : (i += 1) {
                     if (i > 0) {
                         try writer.writeAll(", ");
                     }
-                    try writer.print("{s} = {f}", .{ e.key_ptr.*, e.value_ptr.* });
+                    try writer.print("{s} = {f}", .{ entry.key_ptr.*, entry.value_ptr.* });
                 }
                 try writer.writeByte('}');
             },
@@ -85,23 +95,32 @@ pub const Datetime = struct {
     tz: ?i16 = null,
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        assert(self.isValid());
+
         try writer.print(
             "{d}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}",
             .{ self.year, self.month, self.day, self.hour, self.minute, self.second },
         );
 
         if (self.nano) |nano| {
+            assert(nano <= 999999999);
             try writer.print(".{d:0>9}", .{nano});
         }
 
         if (self.tz) |tz| {
+            assert(tz >= -1440 and tz <= 1440);
+
             const t: u16 = @intCast(@abs(tz));
             if (t == 0) {
                 try writer.writeAll("Z");
             } else {
                 const h: u16 = t / 60;
                 const m: u16 = t % 60;
+                assert(h <= 23);
+                assert(m <= 59);
+
                 const sign = if (tz < 0) "-" else "+";
+
                 try writer.print("{s}{d:0>2}:{d:0>2}", .{ sign, h, m });
             }
         }
@@ -161,6 +180,7 @@ pub const Date = struct {
     day: u8,
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        assert(self.isValid());
         try writer.print("{d}-{d:0>2}-{d:0>2}", .{ self.year, self.month, self.day });
     }
 
@@ -196,9 +216,11 @@ pub const Time = struct {
     nano: ?u32 = null,
 
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        assert(self.isValid());
         try writer.print("{d:0>2}:{d:0>2}:{d:0>2}", .{ self.hour, self.minute, self.second });
 
         if (self.nano) |nano| {
+            assert(nano <= 999999999);
             try writer.print(".{d:0>9}", .{nano});
         }
     }

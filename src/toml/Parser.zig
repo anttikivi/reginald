@@ -75,6 +75,8 @@ pub fn init(self: *@This(), arena: Allocator, scanner: *Scanner, root: *ParsingV
 pub fn parseTableExpression(self: *@This()) !void {
     const keys = try self.parseKey();
 
+    assert(keys.len > 0);
+
     const next_token = try self.scanner.nextKey();
     if (next_token != .right_bracket) {
         return self.fail("expected closing ']' after table header");
@@ -534,8 +536,8 @@ fn parseInlineArray(self: *@This()) !ParsingValue {
 
     var need_comma = false;
 
-    // TODO: Add a limit.
-    while (true) {
+    var i: usize = 0;
+    while (i < self.scanner.input.len) : (i += 1) { // upper bound
         var token = try self.scanner.nextValue();
         while (token == .line_feed) {
             token = try self.scanner.nextValue();
@@ -571,8 +573,8 @@ fn parseInlineTable(self: *@This()) ParseError!ParsingValue {
     var need_comma = false;
     var was_comma = false;
 
-    // TODO: Add a limit.
-    while (true) {
+    var i: usize = 0;
+    while (i < self.scanner.input.len) : (i += 1) { // upper bound
         var token = try self.scanner.nextKey();
         if (token == .right_brace) {
             if (was_comma) {

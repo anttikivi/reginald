@@ -62,10 +62,14 @@ pub fn initCompleteInput(self: *Scanner, arena: Allocator, input: []const u8) vo
 }
 
 pub fn nextKey(self: *Scanner) !Token {
+    assert(self.cursor <= self.end);
+
     return self.next(true);
 }
 
 pub fn nextValue(self: *Scanner) !Token {
+    assert(self.cursor <= self.end);
+
     return self.next(false);
 }
 
@@ -155,6 +159,8 @@ fn matchNumber(self: *const Scanner) bool {
 /// Get the next character in the input. It returns '\0' when it finds the end
 /// of input regardless of whether the input is null-terminated.
 fn nextChar(self: *Scanner) u8 {
+    assert(self.cursor <= self.end);
+
     var ret: u8 = end_of_input;
 
     if (self.cursor < self.end) {
@@ -175,8 +181,8 @@ fn nextChar(self: *Scanner) u8 {
 }
 
 fn next(self: *Scanner, comptime key_mode: bool) !Token {
-    // Limit the loop to the maximum length of the input even though we
-    // basically loop until we find a return value.
+    assert(self.cursor <= self.end);
+
     while (self.cursor < self.end) {
         var c = self.nextChar();
 
