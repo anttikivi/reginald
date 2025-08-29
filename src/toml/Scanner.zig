@@ -1,3 +1,5 @@
+const Scanner = @This();
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -7,19 +9,19 @@ const mem = std.mem;
 
 const Date = @import("value.zig").Date;
 const Datetime = @import("value.zig").Datetime;
+const Position = @import("decoder.zig").Position;
 const Time = @import("value.zig").Time;
 
-allocator: Allocator,
+arena: Allocator,
 input: []const u8 = "",
 cursor: usize = 0,
 end: usize = 0,
 line: u64 = 0,
-last_error_message: ?[]const u8 = null,
-err_buf: [256]u8 = undefined,
-err_len: usize = 0,
 
 /// Constant that marks the end of input when scanning for the next character.
 const end_of_input: u8 = 0;
+
+var stderr_buffer: [4096]u8 = undefined;
 
 pub const Token = union(enum) {
     dot,
@@ -51,42 +53,27 @@ pub const Token = union(enum) {
     end_of_file,
 };
 
-pub fn initCompleteInput(arena: Allocator, input: []const u8) @This() {
-    return .{
-        .allocator = arena,
+pub fn initCompleteInput(self: *Scanner, arena: Allocator, input: []const u8) void {
+    self.* = .{
+        .arena = arena,
         .input = input,
         .end = input.len,
     };
 }
 
-pub fn nextKey(self: *@This()) !Token {
+pub fn nextKey(self: *Scanner) !Token {
     return self.next(true);
 }
 
-pub fn nextValue(self: *@This()) !Token {
+pub fn nextValue(self: *Scanner) !Token {
     return self.next(false);
-}
-
-pub inline fn setErrorMessage(self: *@This(), msg: []const u8) void {
-    self.last_error_message = msg;
-}
-
-inline fn setErrorMessageFmt(self: *@This(), comptime fmt_str: []const u8, args: anytype) void {
-    const written = std.fmt.bufPrint(&self.err_buf, fmt_str, args) catch {
-        self.last_error_message = fmt_str;
-        return;
-    };
-
-    self.err_len = written.len;
-    self.last_error_message = self.err_buf[0..self.err_len];
 }
 
 fn isValidChar(c: u8) bool {
     return ascii.isPrint(c) or (c & 0x80) != 0;
 }
 
-/// Check if the next character matches c.
-fn match(self: *const @This(), c: u8) bool {
+fn match(self: *const Scanner, c: u8) bool {
     if (self.cursor < self.end and self.input[self.cursor] == c) {
         return true;
     }
@@ -98,8 +85,7 @@ fn match(self: *const @This(), c: u8) bool {
     return false;
 }
 
-/// Check if the next character matches any of the characters in s.
-fn matchAny(self: *const @This(), s: []const u8) bool {
+fn matchAny(self: *const Scanner, s: []const u8) bool {
     for (s) |c| {
         if (self.match(c)) {
             return true;
@@ -109,8 +95,7 @@ fn matchAny(self: *const @This(), s: []const u8) bool {
     return false;
 }
 
-/// Check if the next n characters match c.
-fn matchN(self: *const @This(), c: u8, n: comptime_int) bool {
+fn matchN(self: *const Scanner, c: u8, n: comptime_int) bool {
     if (n < 2) {
         @compileError("calling Scanner.matchN with n < 2");
     }
@@ -131,14 +116,12 @@ fn matchN(self: *const @This(), c: u8, n: comptime_int) bool {
     return true;
 }
 
-/// Check if the next token might be a time.
-fn matchTime(self: *const @This()) bool {
+fn matchTime(self: *const Scanner) bool {
     return self.cursor + 2 < self.end and ascii.isDigit(self.input[self.cursor]) and
         ascii.isDigit(self.input[self.cursor + 1]) and self.input[self.cursor + 2] == ':';
 }
 
-/// Check if the next token might be a date.
-fn matchDate(self: *const @This()) bool {
+fn matchDate(self: *const Scanner) bool {
     return self.cursor + 4 < self.end and ascii.isDigit(self.input[self.cursor]) and
         ascii.isDigit(self.input[self.cursor + 1]) and
         ascii.isDigit(self.input[self.cursor + 2]) and
@@ -146,14 +129,12 @@ fn matchDate(self: *const @This()) bool {
         self.input[self.cursor + 4] == '-';
 }
 
-/// Check if the next token might be a boolean literal.
-fn matchBool(self: *const @This()) bool {
+fn matchBool(self: *const Scanner) bool {
     return self.cursor < self.end and
         (self.input[self.cursor] == 't' or self.input[self.cursor] == 'f');
 }
 
-/// Check if the next token might be some number literal.
-fn matchNumber(self: *const @This()) bool {
+fn matchNumber(self: *const Scanner) bool {
     if (self.cursor < self.end and
         mem.indexOfScalar(u8, "0123456789+-._", self.input[self.cursor]) != null)
     {
@@ -171,9 +152,9 @@ fn matchNumber(self: *const @This()) bool {
     return false;
 }
 
-/// Get the next character in the input. It returns '\0' when it finds
-/// the end of input regardless of whether the input is null-terminated.
-fn nextChar(self: *@This()) u8 {
+/// Get the next character in the input. It returns '\0' when it finds the end
+/// of input regardless of whether the input is null-terminated.
+fn nextChar(self: *Scanner) u8 {
     var ret: u8 = end_of_input;
 
     if (self.cursor < self.end) {
@@ -193,8 +174,7 @@ fn nextChar(self: *@This()) u8 {
     return ret;
 }
 
-/// Get the next token from the input.
-fn next(self: *@This(), comptime key_mode: bool) !Token {
+fn next(self: *Scanner, comptime key_mode: bool) !Token {
     // Limit the loop to the maximum length of the input even though we
     // basically loop until we find a return value.
     while (self.cursor < self.end) {
@@ -214,8 +194,7 @@ fn next(self: *@This(), comptime key_mode: bool) !Token {
 
                     switch (c) {
                         0...8, 0x0a...0x1f, 0x7f => {
-                            self.setErrorMessage("invalid control character in comment");
-                            return error.InvalidCharacter;
+                            return self.fail("invalid control character in comment");
                         },
                         else => {},
                     }
@@ -262,9 +241,9 @@ fn next(self: *@This(), comptime key_mode: bool) !Token {
             else => {
                 // Disallow unprintable control characters outside strings/comments
                 if ((c <= 8) or (c >= 0x0a and c <= 0x1f) or c == 0x7f) {
-                    self.setErrorMessage("invalid control character in document");
-                    return error.InvalidCharacter;
+                    return self.fail("invalid control character in document");
                 }
+
                 self.cursor -= 1;
                 return if (key_mode) self.scanLiteral() else self.scanNonstringLiteral();
             },
@@ -274,9 +253,7 @@ fn next(self: *@This(), comptime key_mode: bool) !Token {
     return .end_of_file;
 }
 
-/// Scan the upcoming multiline string in the TOML document and return
-/// a token matching it.
-fn scanMultilineString(self: *@This()) !Token {
+fn scanMultilineString(self: *Scanner) !Token {
     assert(self.matchN('"', 3));
 
     // Skip the opening quotes.
@@ -295,8 +272,7 @@ fn scanMultilineString(self: *@This()) !Token {
         if (self.matchN('"', 3)) {
             if (self.matchN('"', 4)) {
                 if (self.matchN('"', 6)) {
-                    self.setErrorMessage("invalid triple quote sequence in multiline string");
-                    return error.UnexpectedToken;
+                    return self.fail("invalid triple quote sequence in multiline string");
                 }
             } else {
                 break;
@@ -306,14 +282,12 @@ fn scanMultilineString(self: *@This()) !Token {
         var c = self.nextChar();
 
         if (c == end_of_input) {
-            self.setErrorMessage("unterminated multiline string");
-            return error.UnexpectedEndOfInput;
+            return self.fail("unterminated multiline string");
         }
 
         if (c != '\\') {
             if (!(isValidChar(c) or mem.indexOfScalar(u8, " \t\n", c) != null)) {
-                self.setErrorMessage("invalid character in multiline string");
-                return error.UnexpectedToken;
+                return self.fail("invalid character in multiline string");
             }
 
             continue;
@@ -329,10 +303,10 @@ fn scanMultilineString(self: *@This()) !Token {
             var i: usize = 0;
             while (i < len) : (i += 1) {
                 if (!ascii.isHex(self.nextChar())) {
-                    self.setErrorMessage("invalid unicode escape in string");
-                    return error.UnexpectedToken;
+                    return self.fail("invalid unicode escape in string");
                 }
             }
+
             continue;
         }
 
@@ -342,8 +316,7 @@ fn scanMultilineString(self: *@This()) !Token {
             }
 
             if (c != '\n') {
-                self.setErrorMessage("backslash line continuation must be followed by newline");
-                return error.UnexpectedToken;
+                return self.fail("backslash line continuation must be followed by newline");
             }
         }
 
@@ -351,19 +324,19 @@ fn scanMultilineString(self: *@This()) !Token {
             while (self.matchAny(" \t\n")) {
                 _ = self.nextChar();
             }
+
             continue;
         }
 
-        self.setErrorMessage("invalid escape sequence in multiline string");
-        return error.UnexpectedToken;
+        return self.fail("invalid escape sequence in multiline string");
     }
 
     const result: Token = .{ .multiline_string = self.input[start..self.cursor] };
 
     if (!self.matchN('"', 3)) {
-        self.setErrorMessage("unterminated multiline string");
-        return error.UnexpectedEndOfInput;
+        return self.fail("unterminated multiline string");
     }
+
     _ = self.nextChar();
     _ = self.nextChar();
     _ = self.nextChar();
@@ -371,9 +344,7 @@ fn scanMultilineString(self: *@This()) !Token {
     return result;
 }
 
-/// Scan the upcoming regular string in the TOML document and return a token
-/// matching it.
-fn scanString(self: *@This()) !Token {
+fn scanString(self: *Scanner) !Token {
     assert(self.match('"'));
 
     if (self.matchN('"', 3)) {
@@ -386,13 +357,12 @@ fn scanString(self: *@This()) !Token {
     while (!self.match('"')) {
         var c = self.nextChar();
         if (c == end_of_input) {
-            self.setErrorMessage("unterminated string");
-            return error.UnexpectedEndOfInput;
+            return self.fail("unterminated string");
         }
 
         if (c != '\\') {
             if (!(isValidChar(c) or c == ' ' or c == '\t')) {
-                return error.UnexpectedToken;
+                return self.fail("unexpected token");
             }
 
             continue;
@@ -408,15 +378,14 @@ fn scanString(self: *@This()) !Token {
             var i: usize = 0;
             while (i < len) : (i += 1) {
                 if (!ascii.isHex(self.nextChar())) {
-                    self.setErrorMessage("invalid unicode escape in string");
-                    return error.UnexpectedToken;
+                    return self.fail("invalid Unicode escape sequence in string");
                 }
             }
+
             continue;
         }
 
-        self.setErrorMessage("invalid escape sequence in string");
-        return error.UnexpectedToken; // bad escape character
+        return self.fail("invalid escape sequence in string");
     }
 
     const result: Token = .{ .string = self.input[start..self.cursor] };
@@ -427,9 +396,7 @@ fn scanString(self: *@This()) !Token {
     return result;
 }
 
-/// Scan the upcoming multiline literal string in the TOML document and
-/// return a token matching it.
-fn scanMultilineLiteralString(self: *@This()) !Token {
+fn scanMultilineLiteralString(self: *Scanner) !Token {
     assert(self.matchN('\'', 3));
 
     _ = self.nextChar();
@@ -446,7 +413,7 @@ fn scanMultilineLiteralString(self: *@This()) !Token {
         if (self.matchN('\'', 3)) {
             if (self.matchN('\'', 4)) {
                 if (self.matchN('\'', 6)) {
-                    return error.UnexpectedToken;
+                    return self.fail("unexpected token");
                 }
             } else {
                 break;
@@ -456,22 +423,20 @@ fn scanMultilineLiteralString(self: *@This()) !Token {
         const c = self.nextChar();
 
         if (c == end_of_input) {
-            self.setErrorMessage("unterminated multiline literal string");
-            return error.UnexpectedEndOfInput;
+            return self.fail("unterminated multiline literal string");
         }
 
         if (!(isValidChar(c) or mem.indexOfScalar(u8, " \t\n", c) != null)) {
-            self.setErrorMessage("invalid character in multiline literal string");
-            return error.UnexpectedToken;
+            return self.fail("invalid character in multiline literal string");
         }
     }
 
     const result: Token = .{ .multiline_literal_string = self.input[start..self.cursor] };
 
     if (!self.matchN('\'', 3)) {
-        self.setErrorMessage("unterminated multiline literal string");
-        return error.UnexpectedEndOfInput;
+        return self.fail("unterminated multiline literal string");
     }
+
     _ = self.nextChar();
     _ = self.nextChar();
     _ = self.nextChar();
@@ -479,8 +444,7 @@ fn scanMultilineLiteralString(self: *@This()) !Token {
     return result;
 }
 
-/// Scan the upcoming literal string in the TOML document.
-fn scanLiteralString(self: *@This()) !Token {
+fn scanLiteralString(self: *Scanner) !Token {
     assert(self.match('\''));
 
     if (self.matchN('\'', 3)) {
@@ -493,27 +457,24 @@ fn scanLiteralString(self: *@This()) !Token {
     while (!self.match('\'')) {
         const c = self.nextChar();
         if (c == end_of_input) {
-            self.setErrorMessage("unterminated literal string");
-            return error.UnexpectedEndOfInput;
+            return self.fail("unterminated literal string");
         }
 
         if (!(isValidChar(c) or c == '\t')) {
-            self.setErrorMessage("invalid character in literal string");
-            return error.UnexpectedToken;
+            return self.fail("invalid character in literal string");
         }
     }
 
     const result: Token = .{ .literal_string = self.input[start..self.cursor] };
 
     assert(self.match('\''));
+
     _ = self.nextChar();
 
     return result;
 }
 
-/// Scan an upcoming literal that is not a string, i.e. a value of some
-/// other type.
-fn scanNonstringLiteral(self: *@This()) !Token {
+fn scanNonstringLiteral(self: *Scanner) !Token {
     if (self.matchTime()) {
         return self.scanTime();
     }
@@ -530,12 +491,10 @@ fn scanNonstringLiteral(self: *@This()) !Token {
         return self.scanNumber();
     }
 
-    self.setErrorMessage("expected a value (number, datetime, or boolean)");
-    return error.UnexpectedToken;
+    return self.fail("expected a number, date, time, or datetime, or boolean");
 }
 
-/// Scan an upcoming literal, for example a key.
-fn scanLiteral(self: *@This()) Token {
+fn scanLiteral(self: *Scanner) Token {
     const start = self.cursor;
     while (self.cursor < self.end and (ascii.isAlphanumeric(self.input[self.cursor]) or
         self.input[self.cursor] == '_' or self.input[self.cursor] == '-')) : (self.cursor += 1)
@@ -543,8 +502,7 @@ fn scanLiteral(self: *@This()) Token {
     return .{ .literal = self.input[start..self.cursor] };
 }
 
-/// Read an integer value from the upcoming characters without the sign.
-fn readInt(self: *@This(), comptime T: type) T {
+fn readInt(self: *Scanner, comptime T: type) T {
     var val: T = 0;
     while (ascii.isDigit(self.input[self.cursor])) : (self.cursor += 1) {
         val = val * 10 + @as(T, @intCast(self.input[self.cursor] - '0'));
@@ -552,45 +510,44 @@ fn readInt(self: *@This(), comptime T: type) T {
     return val;
 }
 
-/// Read exactly N digits as an unsigned integer value.
-fn readFixedDigits(self: *@This(), comptime N: usize) !u32 {
-    if (self.cursor + N > self.end) return error.UnexpectedEndOfInput;
+fn readFixedDigits(self: *Scanner, comptime N: usize) !u32 {
+    if (self.cursor + N > self.end) {
+        return self.fail("unexpected end of input");
+    }
+
     var v: u32 = 0;
     var i: usize = 0;
     while (i < N) : (i += 1) {
         const c = self.input[self.cursor + i];
         if (!ascii.isDigit(c)) {
-            self.setErrorMessage("expected digit");
-            return error.UnexpectedToken;
+            return self.fail("expected digit");
         }
+
         v = v * 10 + (c - '0');
     }
+
     self.cursor += N;
+
     return v;
 }
 
-/// Read a time in the HH:MM:SS.fraction format from the upcoming
-/// characters.
-fn readTime(self: *@This()) !Time {
+fn readTime(self: *Scanner) !Time {
     var ret: Time = .{ .hour = undefined, .minute = undefined, .second = undefined };
     ret.hour = @intCast(try self.readFixedDigits(2));
     if (self.cursor >= self.end or self.input[self.cursor] != ':') {
-        self.setErrorMessage("invalid time: expected ':' between hour and minute");
-        return error.InvalidTime;
+        return self.fail("invalid time: expected ':' between hour and minute");
     }
 
     self.cursor += 1;
     ret.minute = @intCast(try self.readFixedDigits(2));
     if (self.cursor >= self.end or self.input[self.cursor] != ':') {
-        self.setErrorMessage("invalid time: expected ':' between minute and second");
-        return error.InvalidTime;
+        return self.fail("invalid time: expected ':' between minute and second");
     }
 
     self.cursor += 1;
     ret.second = @intCast(try self.readFixedDigits(2));
     if (ret.hour > 23 or ret.minute > 59 or ret.second > 59) {
-        self.setErrorMessage("invalid time value");
-        return error.InvalidTime;
+        return self.fail("invalid time value");
     }
 
     if (self.cursor >= self.end or self.input[self.cursor] != '.') {
@@ -614,20 +571,17 @@ fn readTime(self: *@This()) !Time {
     return ret;
 }
 
-/// Read a date in the YYYY-MM-DD format from the upcoming characters.
-fn readDate(self: *@This()) !Date {
+fn readDate(self: *Scanner) !Date {
     var ret: Date = .{ .year = undefined, .month = undefined, .day = undefined };
     ret.year = @intCast(try self.readFixedDigits(4));
     if (self.cursor >= self.end or self.input[self.cursor] != '-') {
-        self.setErrorMessage("invalid date: expected '-' after year");
-        return error.InvalidDate;
+        return self.fail("invalid date: expected '-' after year");
     }
 
     self.cursor += 1;
     ret.month = @intCast(try self.readFixedDigits(2));
     if (self.cursor >= self.end or self.input[self.cursor] != '-') {
-        self.setErrorMessage("invalid date: expected '-' after month");
-        return error.InvalidDate;
+        return self.fail("invalid date: expected '-' after month");
     }
 
     self.cursor += 1;
@@ -636,8 +590,7 @@ fn readDate(self: *@This()) !Date {
     return ret;
 }
 
-/// Read a timezone from the next characters.
-fn readTimezone(self: *@This()) !?i16 {
+fn readTimezone(self: *Scanner) !?i16 {
     const c = self.input[self.cursor];
     if (c == 'Z' or c == 'z') {
         self.cursor += 1;
@@ -654,36 +607,30 @@ fn readTimezone(self: *@This()) !?i16 {
 
     const hour: i16 = @intCast(try self.readFixedDigits(2));
     if (self.cursor >= self.end or self.input[self.cursor] != ':') {
-        self.setErrorMessage("invalid timezone offset: expected ':' between hour and minute");
-        return error.InvalidDatetime;
+        return self.fail("invalid timezone offset: expected ':' between hour and minute");
     }
 
     self.cursor += 1;
     const minute: i16 = @intCast(try self.readFixedDigits(2));
     if (hour > 23 or minute > 59) {
-        self.setErrorMessage("invalid timezone offset value");
-        return error.InvalidDatetime;
+        return self.fail("invalid timezone offset value");
     }
 
     return (hour * 60 + minute) * sign;
 }
 
-/// Scan upcoming local time value.
-fn scanTime(self: *@This()) !Token {
+fn scanTime(self: *Scanner) !Token {
     const t = try self.readTime();
     if (!t.isValid()) {
-        self.setErrorMessage("invalid time literal");
-        return error.InvalidTime;
+        return self.fail("invalid time literal");
     }
 
     return .{ .local_time = t };
 }
 
-/// Scan an upcoming datetime value.
-fn scanDatetime(self: *@This()) !Token {
+fn scanDatetime(self: *Scanner) !Token {
     if (self.cursor + 2 >= self.end) {
-        self.setErrorMessage("unterminated datetime");
-        return error.UnexpectedEndOfInput;
+        return self.fail("unterminated datetime");
     }
 
     if (ascii.isDigit(self.input[self.cursor]) and
@@ -691,8 +638,7 @@ fn scanDatetime(self: *@This()) !Token {
     {
         const t = try self.readTime();
         if (!t.isValid()) {
-            self.setErrorMessage("invalid time literal");
-            return error.InvalidTime;
+            return self.fail("invalid time literal");
         }
 
         return .{ .local_time = t };
@@ -705,8 +651,7 @@ fn scanDatetime(self: *@This()) !Token {
         !ascii.isDigit(self.input[self.cursor + 2]) or self.input[self.cursor + 3] != ':')
     {
         if (!date.isValid()) {
-            self.setErrorMessage("invalid date literal");
-            return error.InvalidDate;
+            return self.fail("invalid date literal");
         }
 
         return .{ .local_date = date };
@@ -727,8 +672,7 @@ fn scanDatetime(self: *@This()) !Token {
     const tz = try self.readTimezone();
     if (tz == null) {
         if (!dt.isValid()) {
-            self.setErrorMessage("invalid datetime value");
-            return error.InvalidDatetime;
+            return self.fail("invalid datetime value");
         }
 
         return .{ .local_datetime = dt };
@@ -736,15 +680,13 @@ fn scanDatetime(self: *@This()) !Token {
 
     dt.tz = tz;
     if (!dt.isValid()) {
-        self.setErrorMessage("invalid datetime value");
-        return error.InvalidDatetime;
+        return self.fail("invalid datetime value");
     }
 
     return .{ .datetime = dt };
 }
 
-/// Scan a possible upcoming boolean value.
-fn scanBool(self: *@This()) !Token {
+fn scanBool(self: *Scanner) !Token {
     var val: bool = undefined;
     if (self.cursor + 3 < self.end and
         mem.eql(u8, "true", self.input[self.cursor .. self.cursor + 4]))
@@ -757,22 +699,19 @@ fn scanBool(self: *@This()) !Token {
         val = false;
         self.cursor += 5;
     } else {
-        return error.UnexpectedToken;
+        return self.fail("unexpected token");
     }
 
     if (self.cursor < self.end and
         null == mem.indexOfScalar(u8, "# \r\n\t,}]", self.input[self.cursor]))
     {
-        self.setErrorMessage("invalid trailing characters after boolean literal");
-        return error.UnexpectedToken;
+        return self.fail("invalid trailing characters after boolean literal");
     }
 
     return .{ .bool = val };
 }
 
-/// Scan a possible upcoming number, i.e. integer or float.
-fn scanNumber(self: *@This()) !Token {
-    // Non-decimal bases
+fn scanNumber(self: *Scanner) !Token {
     if (self.input[self.cursor] == '0' and self.cursor + 1 < self.end) {
         const base: ?u8 = switch (self.input[self.cursor + 1]) {
             'x' => 16,
@@ -791,13 +730,11 @@ fn scanNumber(self: *@This()) !Token {
             };
 
             const end_idx = mem.indexOfNonePos(u8, self.input, start, allowed) orelse {
-                self.setErrorMessage("invalid digits for base-prefixed integer");
-                return error.UnexpectedToken;
+                return self.fail("invalid digits for base-prefixed integer");
             };
 
             if (end_idx == start) {
-                self.setErrorMessage("missing digits after base prefix");
-                return error.InvalidNumber;
+                return self.fail("missing digits after base prefix");
             }
 
             var prev_underscore = false;
@@ -806,9 +743,9 @@ fn scanNumber(self: *@This()) !Token {
                 const c = self.input[i];
                 if (c == '_') {
                     if (prev_underscore or i == start or i + 1 == end_idx) {
-                        self.setErrorMessage("invalid underscore placement in number");
-                        return error.InvalidNumber;
+                        return self.fail("invalid underscore placement in number");
                     }
+
                     prev_underscore = true;
                 } else {
                     prev_underscore = false;
@@ -816,13 +753,13 @@ fn scanNumber(self: *@This()) !Token {
             }
 
             var buf: ArrayList(u8) = .empty;
-            defer buf.deinit(self.allocator);
+            defer buf.deinit(self.arena);
 
             i = start;
             while (i < end_idx) : (i += 1) {
                 const c = self.input[i];
                 if (c != '_') {
-                    try buf.append(self.allocator, c);
+                    try buf.append(self.arena, c);
                 }
             }
 
@@ -841,23 +778,20 @@ fn scanNumber(self: *@This()) !Token {
     }
 
     if (idx >= self.end) {
-        self.setErrorMessage("unexpected end of input while reading number");
-        return error.UnexpectedEndOfInput;
+        return self.fail("unexpected end of input while reading number");
     }
 
     if (self.input[idx] == 'i' or self.input[idx] == 'n') {
         return self.scanFloat();
     }
 
-    // Find token end
+    // Find token end.
     idx = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse {
-        self.setErrorMessage("malformed number literal");
-        return error.UnexpectedToken;
+        return self.fail("malformed number literal");
     };
 
     if (idx == start) {
-        self.setErrorMessage("missing digits in number");
-        return error.InvalidNumber;
+        return self.fail("missing digits in number");
     }
 
     const slice = self.input[start..idx];
@@ -875,8 +809,7 @@ fn scanNumber(self: *@This()) !Token {
     }
 
     if (slice[s_off] == '0' and slice.len > s_off + 1) {
-        self.setErrorMessage("leading zeros are not allowed in integers");
-        return error.InvalidNumber;
+        return self.fail("leading zeros are not allowed in integers");
     }
 
     var prev_underscore = false;
@@ -886,26 +819,25 @@ fn scanNumber(self: *@This()) !Token {
         const c = slice[j];
         if (c == '_') {
             if (prev_underscore or j == s_off or j + 1 == slice.len) {
-                self.setErrorMessage("invalid underscore placement in number");
-                return error.InvalidNumber;
+                return self.fail("invalid underscore placement in number");
             }
+
             prev_underscore = true;
         } else if (!ascii.isDigit(c)) {
-            self.setErrorMessage("invalid character in integer literal");
-            return error.InvalidNumber;
+            return self.fail("invalid character in integer literal");
         } else {
             prev_underscore = false;
         }
     }
 
     var buf: ArrayList(u8) = .empty;
-    defer buf.deinit(self.allocator);
+    defer buf.deinit(self.arena);
 
     j = 0;
     while (j < slice.len) : (j += 1) {
         const c = slice[j];
         if (c != '_') {
-            try buf.append(self.allocator, c);
+            try buf.append(self.arena, c);
         }
     }
 
@@ -915,8 +847,7 @@ fn scanNumber(self: *@This()) !Token {
     return .{ .int = n };
 }
 
-/// Scan a possible upcoming floating-point literal.
-fn scanFloat(self: *@This()) !Token {
+fn scanFloat(self: *Scanner) !Token {
     const start = self.cursor;
     if (self.input[self.cursor] == '+' or self.input[self.cursor] == '-') {
         self.cursor += 1;
@@ -928,21 +859,14 @@ fn scanFloat(self: *@This()) !Token {
     {
         self.cursor += 3;
     } else {
-        self.cursor = mem.indexOfNonePos(
-            u8,
-            self.input,
-            self.cursor,
-            "_0123456789eE.+-",
-        ) orelse {
-            self.setErrorMessage("malformed float literal");
-            return error.UnexpectedToken;
+        self.cursor = mem.indexOfNonePos(u8, self.input, self.cursor, "_0123456789eE.+-") orelse {
+            return self.fail("malformed float literal");
         };
     }
 
     const slice = self.input[start..self.cursor];
 
-    // Validate underscores not at ends or adjacent to dot or exponent
-    // signs.
+    // Validate underscores not at ends or adjacent to dot or exponent signs.
     var prev_char: u8 = 0;
 
     var i: usize = 0;
@@ -950,26 +874,25 @@ fn scanFloat(self: *@This()) !Token {
         const c = slice[i];
         if (c == '_') {
             if (i == 0 or i + 1 == slice.len) {
-                self.setErrorMessage("invalid underscore placement in float literal");
-                return error.InvalidNumber;
+                return self.fail("invalid underscore placement in float literal");
             }
+
             const nxt = slice[i + 1];
             if (!ascii.isDigit(prev_char) or !ascii.isDigit(nxt)) {
-                self.setErrorMessage("invalid underscore placement in float literal");
-                return error.InvalidNumber;
+                return self.fail("invalid underscore placement in float literal");
             }
         }
         prev_char = c;
     }
 
     var buf: ArrayList(u8) = .empty;
-    defer buf.deinit(self.allocator);
+    defer buf.deinit(self.arena);
 
     i = 0;
     while (i < slice.len) : (i += 1) {
         const c = slice[i];
         if (c != '_') {
-            try buf.append(self.allocator, c);
+            try buf.append(self.arena, c);
         }
     }
 
@@ -987,38 +910,32 @@ fn scanFloat(self: *@This()) !Token {
         } else if (buf.items[sign_idx] == '0' and buf.items.len > sign_idx + 1 and
             ascii.isDigit(buf.items[sign_idx + 1]))
         {
-            self.setErrorMessage("leading zeros are not allowed in float literal");
-            return error.InvalidNumber;
+            return self.fail("leading zeros are not allowed in float literal");
         }
     }
 
-    // Disallow floats like 1., .1, or exponents with missing mantissa per
-    // TOML.
+    // Disallow floats like 1., .1, or exponents with missing mantissa per TOML.
     if (mem.indexOfScalar(u8, buf.items, '.') != null) {
         // Must have digits on both sides of '.'.
         const dot_idx = mem.indexOfScalar(u8, buf.items, '.').?;
         if (dot_idx == 0 or dot_idx + 1 >= buf.items.len) {
-            self.setErrorMessage("decimal point must have digits on both sides");
-            return error.InvalidNumber;
+            return self.fail("decimal point must have digits on both sides");
         }
 
         if (!ascii.isDigit(buf.items[dot_idx - 1]) or !ascii.isDigit(buf.items[dot_idx + 1])) {
-            self.setErrorMessage("decimal point must have digits on both sides");
-            return error.InvalidNumber;
+            return self.fail("decimal point must have digits on both sides");
         }
     }
 
-    // Validate exponent placement: must have digits before and after 'e' or
-    // 'E' (with optional sign).
+    // Validate exponent placement: must have digits before and after 'e' or 'E'
+    // (with optional sign).
     if (mem.indexOfAny(u8, buf.items, "eE")) |e_idx| {
         if (e_idx == 0) {
-            self.setErrorMessage("invalid exponent format");
-            return error.InvalidNumber;
+            return self.fail("invalid exponent format");
         }
 
         if (!ascii.isDigit(buf.items[e_idx - 1]) and buf.items[e_idx - 1] != '.') {
-            self.setErrorMessage("invalid exponent format");
-            return error.InvalidNumber;
+            return self.fail("invalid exponent format");
         }
 
         var after = e_idx + 1;
@@ -1027,8 +944,7 @@ fn scanFloat(self: *@This()) !Token {
         }
 
         if (after >= buf.items.len or !ascii.isDigit(buf.items[after])) {
-            self.setErrorMessage("invalid exponent format");
-            return error.InvalidNumber;
+            return self.fail("invalid exponent format");
         }
     }
 
@@ -1037,7 +953,7 @@ fn scanFloat(self: *@This()) !Token {
     return .{ .float = f };
 }
 
-fn checkNumberStr(self: *@This(), len: usize, base: u8) bool {
+fn checkNumberStr(self: *Scanner, len: usize, base: u8) bool {
     const start = self.cursor;
     const underscore = mem.indexOfScalarPos(u8, self.input, self.cursor, '_');
     if (underscore) |u| {
@@ -1098,4 +1014,17 @@ fn checkNumberStr(self: *@This(), len: usize, base: u8) bool {
     }
 
     return true;
+}
+
+fn fail(self: *const Scanner, msg: []const u8) error{ Reported, WriteFailed } {
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    const stderr = &stderr_writer.interface;
+
+    try stderr.print("{f}", .{Position.findLineKnown(self.input, self.cursor, self.line)});
+    try stderr.writeByte(' ');
+    try stderr.writeAll(msg);
+    try stderr.writeByte('\n');
+    try stderr.flush();
+
+    return error.Reported;
 }

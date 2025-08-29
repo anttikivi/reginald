@@ -23,12 +23,7 @@ pub fn main() !void {
     const toml_bytes = try stdin.allocRemaining(allocator, .unlimited);
     defer allocator.free(toml_bytes);
 
-    var parsed = toml.parse(allocator, toml_bytes) catch |e| {
-        var diag: toml.Diagnostics = undefined;
-        _ = toml.parseWithDiagnostics(allocator, toml_bytes, &diag) catch {};
-        std.debug.print("{f}\n", .{diag});
-        return e;
-    };
+    var parsed = try toml.parse(allocator, toml_bytes);
     defer parsed.deinit(allocator);
 
     const json_value = try createJsonValue(allocator, parsed);
