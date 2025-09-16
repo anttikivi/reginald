@@ -183,7 +183,7 @@ jobs:
         uses: mlugg/setup-zig@v2.0.5
 
       - name: Install the Go toolchain
-        uses: actions/setup-go@v5.5.0
+        uses: actions/setup-go@v6.0.0
         with:
           go-version: "1.25"
 
