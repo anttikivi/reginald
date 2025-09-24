@@ -68,6 +68,7 @@ pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Arg
         .file_directory = specs.get("working_directory").?.defaultValue().string,
         .values = .init(gpa),
     };
+    errdefer self.deinit();
 
     var arena_instance = ArenaAllocator.init(gpa);
     defer arena_instance.deinit();
