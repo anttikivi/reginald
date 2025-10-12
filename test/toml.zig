@@ -9,18 +9,12 @@ const toml = @import("toml");
 
 const native_os = builtin.target.os.tag;
 
-extern "c" fn _setmode(fd: std.posix.fd_t, mode: std.posix.mode_t) std.posix.fd_t;
-
 const Error = Allocator.Error || fmt.BufPrintError || error{ InvalidDatetime, InvalidTomlValue };
 
 pub fn main() !void {
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-
-    if (native_os == .windows) {
-        _ = _setmode(std.posix.STDIN_FILENO, 0x8000); // _O_BINARY
-    }
 
     var stdin_buffer: [8192]u8 = undefined;
     var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);

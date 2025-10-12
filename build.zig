@@ -81,10 +81,6 @@ pub fn build(b: *std.Build) !void {
         .root_module = toml_mod,
     });
 
-    if (target.result.os.tag == .windows) {
-        toml.linkLibC();
-    }
-
     const run_toml_test = b.addSystemCommand(&[_][]const u8{"toml-test"});
     run_toml_test.addFileArg(toml.getEmittedBin());
 
