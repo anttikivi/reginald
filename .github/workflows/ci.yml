@@ -168,11 +168,9 @@ jobs:
           - { os: "macos", arch: "x86_64", runner: "macos-13" }
           - { os: "macos", arch: "aarch64", runner: "macos-14" }
           - { os: "macos", arch: "aarch64", runner: "macos-15" }
-          # TODO: Skip toml-test on Windows for now.
-          # Although not sure, it seems like it fails due to Zig stdlib regression in 0.15.
-          # - { os: "windows", arch: "x86_64", runner: "windows-2025" }
-          # - { os: "windows", arch: "x86_64", runner: "windows-2022" }
-          # - { os: "windows", arch: "aarch64", runner: "windows-11-arm" }
+          - { os: "windows", arch: "x86_64", runner: "windows-2025" }
+          - { os: "windows", arch: "x86_64", runner: "windows-2022" }
+          - { os: "windows", arch: "aarch64", runner: "windows-11-arm" }
       fail-fast: false
 
     steps:

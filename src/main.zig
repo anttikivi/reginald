@@ -78,6 +78,8 @@ pub fn main() !void {
     var cfg: Config = undefined;
     try cfg.init(gpa, &specs, &parsed_args);
     defer cfg.deinit();
+
+    // TODO: Add the logging level to some kind of runtime logging function.
 }
 
 // if (args.len <= 1) {
