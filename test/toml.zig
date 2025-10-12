@@ -12,12 +12,19 @@ const native_os = builtin.target.os.tag;
 const Error = Allocator.Error || fmt.BufPrintError || error{ InvalidDatetime, InvalidTomlValue };
 
 pub fn main() !void {
+    run() catch {
+        std.process.exit(1);
+        unreachable;
+    };
+}
+
+fn run() !void {
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var stdin_buffer: [8192]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().readerStreaming(&stdin_buffer);
     const stdin = &stdin_reader.interface;
 
     const toml_bytes = try stdin.allocRemaining(allocator, .unlimited);
@@ -27,9 +34,8 @@ pub fn main() !void {
     defer parsed.deinit(allocator);
 
     const json_value = try createJsonValue(allocator, parsed);
-
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
     var stdout = &stdout_writer.interface;
 
     try json.Stringify.value(json_value, .{}, stdout);
