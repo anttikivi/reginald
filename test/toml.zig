@@ -16,7 +16,7 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_buffer: [8192]u8 = undefined;
     var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
     const stdin = &stdin_reader.interface;
 
