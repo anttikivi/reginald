@@ -53,7 +53,7 @@ pub fn parse(gpa: Allocator, input: []const u8) !Value {
 
     var parsing_root: Parser.ParsingValue = .{ .value = .{ .table = .init(arena) } };
     var scanner: Scanner = undefined;
-    scanner.initCompleteInput(arena, input);
+    try scanner.initCompleteInput(arena, input);
 
     var parser: Parser = undefined;
     parser.init(arena, &scanner, &parsing_root);

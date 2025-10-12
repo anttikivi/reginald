@@ -53,12 +53,34 @@ pub const Token = union(enum) {
     end_of_file,
 };
 
-pub fn initCompleteInput(self: *Scanner, arena: Allocator, input: []const u8) void {
+pub fn initCompleteInput(self: *Scanner, arena: Allocator, input: []const u8) !void {
     self.* = .{
         .arena = arena,
         .input = input,
         .end = input.len,
+        .cursor = 0,
+        .line = 0,
     };
+
+    if (std.mem.indexOfScalar(u8, input, '\r')) |_| {
+        // Normalize CRLF line endings to just LF so downstream slices never
+        // retain stray carriage returns when running on Windows.
+        var buffer = try arena.alloc(u8, input.len);
+        var write_index: usize = 0;
+        var i: usize = 0;
+        while (i < input.len) : (i += 1) {
+            const byte = input[i];
+            if (byte == '\r' and i + 1 < input.len and input[i + 1] == '\n') {
+                continue; // drop the carriage return, the following loop iteration copies '\n'
+            }
+
+            buffer[write_index] = byte;
+            write_index += 1;
+        }
+
+        self.input = buffer[0..write_index];
+        self.end = write_index;
+    }
 }
 
 pub fn nextKey(self: *Scanner) !Token {
