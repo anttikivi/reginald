@@ -12,8 +12,40 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 var stdout_buffer: [4096]u8 = undefined;
 
+/// The runtime log level. It is set according to the config options.
+///
+/// NOTE: This is a global, which is not good, but there is no need to introduce
+/// excessive complexity to get rid of this.
+pub var log_level: std.log.Level = Config.Specs.@"logging.level".default.?.log_level;
+
+/// Custom logging function for Reginald. Instead of restricting the logging
+/// level during compile time, the function checks the runtime logging level
+/// that is set according to the user's config.
+///
+/// TODO: Right now, the logging uses the same logic as the default logging
+/// function of the standard library but only if the level that is used is
+/// enabled. We will implement proper log formatting later.
+pub fn runtimeLog(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (@intFromEnum(message_level) > @intFromEnum(log_level)) {
+        return;
+    }
+
+    const level_txt = comptime message_level.asText();
+    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+    var buffer: [64]u8 = undefined;
+    const stderr = std.debug.lockStderrWriter(&buffer);
+    defer std.debug.unlockStderrWriter();
+    nosuspend stderr.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
+}
+
 pub const std_options: std.Options = .{
     .log_level = .debug,
+    .logFn = runtimeLog,
 };
 
 pub fn main() !void {
@@ -79,7 +111,10 @@ pub fn main() !void {
     try cfg.init(gpa, &specs, &parsed_args);
     defer cfg.deinit();
 
-    // TODO: Add the logging level to some kind of runtime logging function.
+    log_level = cfg.get(std.log.Level, "logging.level").?;
+
+    std.log.debug("logging initialized", .{});
+    std.log.info("running Reginald version {s}", .{build_options.version});
 }
 
 // if (args.len <= 1) {

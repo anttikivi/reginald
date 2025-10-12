@@ -55,4 +55,5 @@ Documentation for `entrypoint`’s object value:
 
 ## Plugin runtime
 
-As plugins are external executables that Reginald runs as child processes
+As plugins are external executables that Reginald runs as child processes, they
+can require an external runtime.
