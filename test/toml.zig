@@ -11,7 +11,7 @@ const native_os = builtin.target.os.tag;
 
 const Error = Allocator.Error || fmt.BufPrintError || error{ InvalidDatetime, InvalidTomlValue };
 
-pub fn main() !void {
+pub fn main() void {
     run() catch {
         std.process.exit(1);
         unreachable;
