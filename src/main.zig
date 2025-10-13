@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 
 const Args = @import("Args.zig");
 const Config = @import("Config.zig");
+const output = @import("output.zig");
 
 const native_os = builtin.target.os.tag;
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -63,6 +64,8 @@ pub fn main() !void {
         _ = debug_allocator.deinit();
     };
 
+    output.init();
+
     const raw_args = try std.process.argsAlloc(gpa);
     const raw_args_freed = false;
     defer if (!raw_args_freed) {
@@ -110,6 +113,8 @@ pub fn main() !void {
     var cfg: Config = undefined;
     try cfg.init(gpa, &specs, &parsed_args);
     defer cfg.deinit();
+
+    output.configure(&cfg);
 
     log_level = cfg.get(std.log.Level, "logging.level").?;
 

@@ -14,6 +14,7 @@ const testing = std.testing;
 const Config = @import("Config.zig");
 const filepath = @import("filepath.zig");
 const OptionType = Config.OptionType;
+const output = @import("output.zig");
 const Specs = Config.Specs;
 const Value = Config.Value;
 
@@ -73,7 +74,7 @@ const Parser = struct {
 
             switch (self.on_unknown) {
                 .fail => {
-                    return fail("unknown argument: \"{s}\"", .{arg});
+                    return output.fail("unknown argument: \"{s}\"", .{arg});
                 },
                 .skip => try self.remaining.append(gpa, try gpa.dupe(u8, arg)),
             }
@@ -117,7 +118,7 @@ const Parser = struct {
         const end = if (std.mem.indexOfScalarPos(u8, arg, 2, '=')) |j| j else arg.len;
         const long = arg[2..end];
         const key = self.specs.long_options.get(long) orelse switch (self.on_unknown) {
-            .fail => return fail("invalid command-line option \"--{s}\"", .{long}),
+            .fail => return output.fail("invalid command-line option \"--{s}\"", .{long}),
             .skip => {
                 try self.remaining.append(gpa, try gpa.dupe(u8, arg));
                 return;
@@ -126,7 +127,7 @@ const Parser = struct {
         const spec = self.specs.get(key).?;
 
         if (spec.type != .string_slice and self.values.contains(key)) {
-            return fail("option \"--{s}\" can be specified only once", .{long});
+            return output.fail("option \"--{s}\" can be specified only once", .{long});
         }
 
         var raw_value: ?[]const u8 = null;
@@ -137,7 +138,7 @@ const Parser = struct {
             self.pos += 1;
 
             if (self.args.len <= self.pos) {
-                return fail("option \"--{s}\" requires a value", .{long});
+                return output.fail("option \"--{s}\" requires a value", .{long});
             }
 
             raw_value = self.args[self.pos];
@@ -158,12 +159,12 @@ const Parser = struct {
         }
 
         const value = parseValue(gpa, spec.type, raw_value, prev) catch |err| switch (err) {
-            error.InvalidCharacter, error.InvalidValue => return fail(
+            error.InvalidCharacter, error.InvalidValue => return output.fail(
                 "invalid value for option \"--{s}\": \"{?s}\"",
                 .{ long, raw_value },
             ),
             error.OutOfMemory => return err,
-            error.Overflow => return fail(
+            error.Overflow => return output.fail(
                 "value given for option \"--{s}\" would overflow: \"{?s}\"",
                 .{ long, raw_value },
             ),
@@ -211,11 +212,11 @@ const Parser = struct {
         // through the loop for known arguments.
         if (c == '=') {
             switch (self.on_unknown) {
-                .fail => return fail("unexpected value separator in \"{s}\"", .{arg}),
+                .fail => return output.fail("unexpected value separator in \"{s}\"", .{arg}),
                 .skip => if (leftover.items.len > 0) {
                     try leftover.appendSlice(gpa, arg[self.arg_pos..]);
                 } else {
-                    return fail("unexpected value separator in \"{s}\"", .{arg});
+                    return output.fail("unexpected value separator in \"{s}\"", .{arg});
                 },
             }
 
@@ -224,7 +225,7 @@ const Parser = struct {
 
         const option_key = self.specs.short_options[c] orelse switch (self.on_unknown) {
             .fail => {
-                return fail("unknown command-line option \"-{c}\" in \"{s}\"", .{ c, arg });
+                return output.fail("unknown command-line option \"-{c}\" in \"{s}\"", .{ c, arg });
             },
             .skip => {
                 if (leftover.items.len > 0) {
@@ -239,7 +240,7 @@ const Parser = struct {
         const spec = self.specs.get(option_key).?;
 
         if (spec.type != .string_slice and self.values.contains(option_key)) {
-            return fail("option \"-{c}\" can be specified only once", .{c});
+            return output.fail("option \"-{c}\" can be specified only once", .{c});
         }
 
         var raw_value: ?[]const u8 = null;
@@ -253,7 +254,7 @@ const Parser = struct {
                 self.pos += 1;
 
                 if (self.args.len <= self.pos) {
-                    return fail("option \"-{c}\" requires a value", .{c});
+                    return output.fail("option \"-{c}\" requires a value", .{c});
                 }
 
                 raw_value = self.args[self.pos];
@@ -275,12 +276,12 @@ const Parser = struct {
         }
 
         const value = parseValue(gpa, spec.type, raw_value, prev) catch |err| switch (err) {
-            error.InvalidCharacter, error.InvalidValue => return fail(
+            error.InvalidCharacter, error.InvalidValue => return output.fail(
                 "invalid value for option \"-{c}\": \"{?s}\"",
                 .{ c, raw_value },
             ),
             error.OutOfMemory => return err,
-            error.Overflow => return fail(
+            error.Overflow => return output.fail(
                 "value given for option \"-{c}\" would overflow: \"{?s}\"",
                 .{ c, raw_value },
             ),
@@ -410,19 +411,6 @@ fn parseValue(gpa: Allocator, option_type: OptionType, raw: ?[]const u8, prev: ?
         },
         .log_level => .{ .log_level = try Config.parseLogLevel(raw.?) },
     };
-}
-
-fn fail(comptime format: []const u8, args: anytype) error{ Reported, WriteFailed } {
-    if (!builtin.is_test) {
-        var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
-        const stderr = &stderr_writer.interface;
-
-        try stderr.print(format, args);
-        try stderr.writeByte('\n');
-        try stderr.flush();
-    }
-
-    return error.Reported;
 }
 
 test parse {

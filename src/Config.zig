@@ -17,6 +17,7 @@ const StringHashMap = std.StringHashMap;
 
 const Args = @import("Args.zig");
 const filepath = @import("filepath.zig");
+const output = @import("output.zig");
 const toml = @import("toml.zig");
 
 pub const Specs = @import("Config/Specs.zig");
@@ -243,11 +244,11 @@ fn parseValue(
             const toml_key = try getTomlKey(arena, key, spec);
             if (getTomlValue(toml_key, root)) |val| {
                 const new = parseTomlValue(arena, spec.type, val) catch |err| switch (err) {
-                    error.InvalidValue => return fail(
+                    error.InvalidValue => return output.fail(
                         "config field '{s}' has invalid value: {f}",
                         .{ toml_key, val },
                     ),
-                    error.InvalidType => return fail(
+                    error.InvalidType => return output.fail(
                         "config field '{s}' expected {t}, found {t}",
                         .{ toml_key, spec.type, val },
                     ),
@@ -262,11 +263,11 @@ fn parseValue(
         const env_var = try spec.getEnvVarName(arena, key);
         if (std.process.getEnvVarOwned(arena, env_var)) |val| {
             const new = parseFromString(arena, spec.type, val) catch |err| switch (err) {
-                error.InvalidValue, error.InvalidCharacter => return fail(
+                error.InvalidValue, error.InvalidCharacter => return output.fail(
                     "environment variable '{s}' has invalid value: {s}",
                     .{ env_var, val },
                 ),
-                error.Overflow => return fail(
+                error.Overflow => return output.fail(
                     "value in environment variable '{s}' would overflow '{s}': {s}",
                     .{
                         env_var,
@@ -496,13 +497,13 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
 
         return wd.openFile(config_file, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.AccessDenied => fail("access denied: {s}", .{config_file}),
-                error.FileNotFound => fail(
+                error.AccessDenied => output.fail("access denied: {s}", .{config_file}),
+                error.FileNotFound => output.fail(
                     "config file at '{s}' does not exist",
                     .{config_file},
                 ),
-                error.IsDir => fail("file at '{s}' is a directory", .{config_file}),
-                else => fail("failed to open config file at '{s}'", .{config_file}),
+                error.IsDir => output.fail("file at '{s}' is a directory", .{config_file}),
+                else => output.fail("failed to open config file at '{s}'", .{config_file}),
             };
         };
     }
@@ -627,7 +628,7 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
         }
     }
 
-    return fail("could not find a config file", .{});
+    return output.fail("could not find a config file", .{});
 }
 
 /// Try to open a file from the given path and print the correct error message
@@ -636,7 +637,7 @@ fn openFile(self: *Config, path: []const u8, wd: std.fs.Dir) !std.fs.File {
     const file = wd.openFile(path, .{ .mode = .read_only }) catch |err| {
         switch (err) {
             error.AccessDenied, error.FileNotFound, error.IsDir => {},
-            else => return fail("failed to open config file at '{s}'", .{path}),
+            else => return output.fail("failed to open config file at '{s}'", .{path}),
         }
         return err;
     };
@@ -685,15 +686,4 @@ fn defaultPluginDirs() []const []const u8 {
             };
         }
     };
-}
-
-fn fail(comptime format: []const u8, args: anytype) error{ Reported, WriteFailed } {
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
-    const stderr = &stderr_writer.interface;
-
-    try stderr.print(format, args);
-    try stderr.writeByte('\n');
-    try stderr.flush();
-
-    return error.Reported;
 }
