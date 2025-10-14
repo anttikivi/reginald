@@ -16,6 +16,16 @@ pub const Output = struct {
     stderr_writer: std.fs.File.Writer,
     stdout_writer: std.fs.File.Writer,
 
+    fn discard(self: *Output, comptime format: []const u8, args: anytype) error{WriteFailed}!void {
+        if (builtin.is_test) {
+            return;
+        }
+
+        try self.stderr.print(format, args);
+        try self.stderr.writeByte('\n');
+        try self.stderr.flush();
+    }
+
     fn fail(self: *Output, comptime format: []const u8, args: anytype) error{ Reported, WriteFailed } {
         if (!builtin.is_test) {
             try self.stderr.print(format, args);
@@ -72,6 +82,14 @@ pub fn configure(cfg: *const Config) void {
     output.configured = true;
 
     assert(output.configured);
+}
+
+/// Prints an error message and a line feed to stderr and flushes. If the write
+/// succeeds, it does not return an error but is used to handle an error that
+/// the user should be notified about but from which we can recover from or
+/// otherwise continue the execution.
+pub fn discard(comptime format: []const u8, args: anytype) error{WriteFailed}!void {
+    try output.discard(format, args);
 }
 
 /// Prints an error message and a line feed to stderr and flushes. It returns

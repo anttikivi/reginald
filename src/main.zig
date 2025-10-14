@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 
 const Args = @import("Args.zig");
 const Config = @import("Config.zig");
+const Plugin = @import("Plugin.zig");
 const output = @import("output.zig");
 
 const native_os = builtin.target.os.tag;
@@ -116,10 +117,24 @@ pub fn main() !void {
 
     output.configure(&cfg);
 
+    var working_dir = try std.fs.cwd().openDir(cfg.get([]const u8, "working_directory").?, .{});
+    defer working_dir.close();
+
+    var dir = try working_dir.openDir(cfg.get([]const u8, "directory").?, .{});
+    defer dir.close();
+
     log_level = cfg.get(std.log.Level, "logging.level").?;
 
     std.log.debug("logging initialized", .{});
     std.log.info("running Reginald version {s}", .{build_options.version});
+    std.log.debug("using directory \"{?s}\"", .{cfg.get([]const u8, "directory")});
+    std.log.debug("using config file \"{?s}\"", .{cfg.get([]const u8, "config_file")});
+
+    const manifests = try Plugin.Manifest.loadAll(gpa, &cfg, dir);
+    defer gpa.free(manifests);
+    defer for (manifests) |*m| {
+        m.deinit(gpa);
+    };
 }
 
 // if (args.len <= 1) {
