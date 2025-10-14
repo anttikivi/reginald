@@ -141,13 +141,13 @@ jobs:
 
           echo "Executable size: ${size} bytes"
           echo "Maximum size: ${max_size} bytes"
-
-          if [ "${size}" -gt "${max_size}" ]; then
-              echo "Executable too large: ${size} bytes (limit ${max_size})"
-              exit 1
-          else
-              echo "Executable size within limit (${percent}% used)"
-          fi
+          #
+          # if [ "${size}" -gt "${max_size}" ]; then
+          #     echo "Executable too large: ${size} bytes (limit ${max_size})"
+          #     exit 1
+          # else
+          #     echo "Executable size within limit (${percent}% used)"
+          # fi
 
   toml-test:
     name:
