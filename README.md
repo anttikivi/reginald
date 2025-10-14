@@ -37,8 +37,8 @@ releases. However, feel free to build Reginald yourself and experiment with it.
 
 ### Building
 
-Make sure you have at [Zig](https://ziglang.org/) 0.15.1 installed. After that,
-building Reginald is as simple as running the build script:
+Make sure you have at least [Zig](https://ziglang.org/) 0.15.2 installed. After
+that, building Reginald is as simple as running the build script:
 
 ```sh
 zig build
