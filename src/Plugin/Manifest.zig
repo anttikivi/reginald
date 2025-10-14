@@ -246,6 +246,11 @@ pub fn loadAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Manifest 
             errdefer gpa.free(manifest.path.?);
 
             try manifests.append(gpa, manifest);
+
+            plugin_log.debug("parsed manifest for \"{s}\": {f}", .{
+                manifest.name,
+                std.json.fmt(manifest, .{}),
+            });
         }
     }
 
