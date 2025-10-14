@@ -634,13 +634,14 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
 /// Try to open a file from the given path and print the correct error message
 /// on error.
 fn openFile(self: *Config, path: []const u8, wd: std.fs.Dir) !std.fs.File {
-    const file = wd.openFile(path, .{ .mode = .read_only }) catch |err| {
+    var file = wd.openFile(path, .{ .mode = .read_only }) catch |err| {
         switch (err) {
             error.AccessDenied, error.FileNotFound, error.IsDir => {},
             else => return output.fail("failed to open config file at '{s}'", .{path}),
         }
         return err;
     };
+    errdefer file.close();
 
     try self.values.put("config_file", .{ .string = try self.allocator.dupe(u8, path) });
     return file;
