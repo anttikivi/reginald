@@ -4,6 +4,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const assert = std.debug.assert;
+const StringHashMap = std.StringHashMap;
 
 const Config = @import("../Config.zig");
 const core = @import("core.zig");
@@ -68,15 +70,25 @@ pub fn deinit(self: *Manifest, gpa: Allocator) void {
 /// Find all of the plugin manifest files in the plugin search paths and load
 /// them.
 pub fn loadAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Manifest {
+    assert(cfg.get([]const []const u8, "plugin_paths") != null);
+
     var manifests: ArrayList(Manifest) = .empty;
     errdefer manifests.deinit(gpa);
     errdefer for (manifests.items) |*m| {
         m.deinit(gpa);
     };
 
+    var seen_names: StringHashMap(void) = .init(gpa);
+    defer seen_names.deinit();
+
+    inline for (core.manifests) |m| {
+        assert(!seen_names.contains(m.name));
+        try seen_names.put(m.name, {});
+    }
+
     try manifests.appendSlice(gpa, &core.manifests);
 
-    const paths = cfg.get([]const []const u8, "plugin_paths") orelse &[_][]u8{};
+    const paths = cfg.get([]const []const u8, "plugin_paths").?;
     for (paths) |search_path| {
         plugin_log.debug("searching for plugins from \"{s}\"", .{search_path});
 
@@ -245,6 +257,11 @@ pub fn loadAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Manifest 
             manifest.path = try gpa.dupe(u8, std.fs.path.dirname(full_path) orelse ".");
             errdefer gpa.free(manifest.path.?);
 
+            if (seen_names.contains(manifest.name)) {
+                return output.fail("duplicate plugin name: {s}", .{manifest.name});
+            }
+
+            try seen_names.put(manifest.name, {});
             try manifests.append(gpa, manifest);
 
             plugin_log.debug("parsed manifest for \"{s}\": {f}", .{
