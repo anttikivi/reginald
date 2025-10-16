@@ -135,15 +135,10 @@ pub fn main() !void {
     defer for (manifests) |*m| {
         m.deinit(gpa);
     };
-}
 
-// if (args.len <= 1) {
-//     var bw = std.io.bufferedWriter(std.io.getStdOut().writer());
-//     const w = bw.writer();
-//     try w.writeAll("usage!\n");
-//     try bw.flush();
-//     return;
-// }
+    var plugin_host = try Plugin.Host.init(gpa, manifests);
+    defer plugin_host.deinit(gpa);
+}
 
 test {
     std.testing.refAllDecls(@This());

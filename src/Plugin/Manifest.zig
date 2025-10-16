@@ -27,7 +27,7 @@ version: u8 = 0,
 name: []const u8,
 
 /// The type of the plugin executable as reported in the manifest.
-type: PluginType = .standalone,
+type: Plugin.Type = .standalone,
 
 /// The name of the executable file in the plugin's directory that is used as
 /// the plugin.
@@ -48,8 +48,6 @@ namespace: []const u8 = "",
 /// the configured base directory. This field is internal and setting it in
 /// the manifest file will result in an error.
 path: ?[]const u8 = null,
-
-pub const PluginType = enum { core, standalone, runtime };
 
 pub fn deinit(self: *Manifest, gpa: Allocator) void {
     if (self.type == .core) {
