@@ -111,6 +111,8 @@ fn buildCi(b: *std.Build, step: *std.Build.Step) void {
 fn buildCiStep(b: *std.Build, step: *std.Build.Step, command: anytype) void {
     const argv = .{ b.graph.zig_exe, "build" } ++ command;
     const system_command = b.addSystemCommand(&argv);
+    const name = std.mem.join(b.allocator, " ", &command) catch @panic("out of memory");
+    system_command.setName(name);
     step.dependOn(&system_command.step);
 }
 

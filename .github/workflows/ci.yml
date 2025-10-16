@@ -16,28 +16,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        include:
-          - { os: "linux", arch: "x86_64", runner: "ubuntu-24.04" }
-          - { os: "linux", arch: "x86_64", runner: "ubuntu-22.04" }
-          - { os: "linux", arch: "aarch64", runner: "ubuntu-24.04-arm" }
-          - { os: "linux", arch: "aarch64", runner: "ubuntu-22.04-arm" }
-          - { os: "macos", arch: "x86_64", runner: "macos-13" }
-          - { os: "macos", arch: "aarch64", runner: "macos-14" }
-          - { os: "macos", arch: "aarch64", runner: "macos-15" }
-          - { os: "windows", arch: "x86_64", runner: "windows-2025" }
-          - { os: "windows", arch: "x86_64", runner: "windows-2022" }
-          - { os: "windows", arch: "aarch64", runner: "windows-11-arm" }
+        runner:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
       fail-fast: false
 
     steps:
-      - name: Clone the source code
-        uses: actions/checkout@v5.0.0
-
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2.0.5
-
-      - name: Build
-        run: zig build ci -- check
+      - uses: actions/checkout@v5.0.0
+      - uses: mlugg/setup-zig@v2.0.5
+      - run: zig build ci -- check
 
   test:
     runs-on: ${{ matrix.runner }}
@@ -57,22 +45,13 @@ jobs:
       fail-fast: false
 
     steps:
-      - name: Clone the source code
-        uses: actions/checkout@v5.0.0
-
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2.0.5
-
-      - name: Install the Go toolchain
-        uses: actions/setup-go@v6.0.0
+      - uses: actions/checkout@v5.0.0
+      - uses: mlugg/setup-zig@v2.0.5
+      - uses: actions/setup-go@v6.0.0
         with:
           go-version: "1.25"
-
-      - name: Set up toml-test
-        run: go install github.com/toml-lang/toml-test/cmd/toml-test@latest
-
-      - name: Run the unit tests
-        run: zig build ci -- test
+      - run: go install github.com/toml-lang/toml-test/cmd/toml-test@latest
+      - run: zig build ci -- test
 
   size:
     runs-on: ${{ matrix.runner }}
@@ -92,14 +71,9 @@ jobs:
       fail-fast: false
 
     steps:
-      - name: Clone the source code
-        uses: actions/checkout@v5.0.0
-
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2.0.5
-
-      - name: Build `ReleaseSmall`
-        run: zig build -Doptimize=ReleaseSmall
+      - uses: actions/checkout@v5.0.0
+      - uses: mlugg/setup-zig@v2.0.5
+      - run: zig build -Doptimize=ReleaseSmall
 
       - name: Check `ReleaseSmall` size
         shell: bash
