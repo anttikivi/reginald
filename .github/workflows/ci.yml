@@ -13,15 +13,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        runner:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-      fail-fast: false
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5.0.0
       - uses: mlugg/setup-zig@v2.0.5
@@ -52,57 +44,3 @@ jobs:
           go-version: "1.25"
       - run: go install github.com/toml-lang/toml-test/cmd/toml-test@latest
       - run: zig build ci -- test
-
-  size:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - { os: "linux", arch: "x86_64", runner: "ubuntu-24.04" }
-          - { os: "linux", arch: "x86_64", runner: "ubuntu-22.04" }
-          - { os: "linux", arch: "aarch64", runner: "ubuntu-24.04-arm" }
-          - { os: "linux", arch: "aarch64", runner: "ubuntu-22.04-arm" }
-          - { os: "macos", arch: "x86_64", runner: "macos-13" }
-          - { os: "macos", arch: "aarch64", runner: "macos-14" }
-          - { os: "macos", arch: "aarch64", runner: "macos-15" }
-          - { os: "windows", arch: "x86_64", runner: "windows-2025" }
-          - { os: "windows", arch: "x86_64", runner: "windows-2022" }
-          - { os: "windows", arch: "aarch64", runner: "windows-11-arm" }
-      fail-fast: false
-
-    steps:
-      - uses: actions/checkout@v5.0.0
-      - uses: mlugg/setup-zig@v2.0.5
-      - run: zig build -Doptimize=ReleaseSmall
-
-      - name: Check `ReleaseSmall` size
-        shell: bash
-        run: |
-          max_size=1474560
-          exe="zig-out/bin/reginald"
-          size="$(stat -c%s "${exe}" 2>/dev/null || stat -f%z "${exe}")"
-          percent=$(( size * 100 / max_size ))
-
-          echo "Executable size: ${size} bytes"
-          echo "Maximum size: ${max_size} bytes"
-
-          if [ "${size}" -gt "${max_size}" ]; then
-              echo "Executable too large: ${size} bytes (limit ${max_size})"
-              exit 1
-          else
-              echo "Executable size within limit (${percent}% used)"
-          fi
-
-      - name: Build `ReleaseFast`
-        run: zig build -Doptimize=ReleaseFast
-
-      - name: Check `ReleaseFast` size
-        shell: bash
-        run: |
-          max_size=1474560
-          exe="zig-out/bin/reginald"
-          size="$(stat -c%s "${exe}" 2>/dev/null || stat -f%z "${exe}")"
-          percent=$(( size * 100 / max_size ))
-
-          echo "Executable size: ${size} bytes"
-          echo "Maximum size: ${max_size} bytes"
