@@ -25,10 +25,12 @@ const Options = struct {
 
 pub fn build(b: *std.Build) !void {
     const build_steps = .{
+        .check = b.step("check", "Check if Reginald compiles"),
         .ci = b.step("ci", "Run the CI test suite"),
         .install = b.getInstallStep(),
         .run = b.step("run", "Run Reginald"),
         .@"test" = b.step("test", "Run tests"),
+        .test_fmt = b.step("test-fmt", "Check formatting"),
         .test_toml = b.step("test-toml", "Run the `toml-test` test suite"),
         .test_unit = b.step("test-unit", "Run unit tests"),
     };
@@ -59,16 +61,74 @@ pub fn build(b: *std.Build) !void {
         },
     };
 
+    buildCheck(b, build_steps.check, options);
+
     buildReginald(b, .{
         .install = build_steps.install,
         .run = build_steps.run,
     }, options);
-    buildTest(b, .{ .test_unit = build_steps.test_unit }, options);
-    buildTestToml(b, .{ .test_toml = build_steps.test_toml }, options);
-    buildCi(b, build_steps.ci);
 
-    build_steps.@"test".dependOn(build_steps.test_toml);
-    build_steps.@"test".dependOn(build_steps.test_unit);
+    buildTest(b, .{
+        .@"test" = build_steps.@"test",
+        .test_fmt = build_steps.test_fmt,
+        .test_toml = build_steps.test_toml,
+        .test_unit = build_steps.test_unit,
+    }, options);
+
+    buildCi(b, build_steps.ci);
+}
+
+fn buildCi(b: *std.Build, step: *std.Build.Step) void {
+    const CiMode = enum { all, check, default, @"test" };
+
+    const mode: CiMode = if (b.args) |args| mode: {
+        if (args.len != 1) {
+            step.dependOn(&b.addFail("invalid CI mode").step);
+            return;
+        }
+
+        if (std.meta.stringToEnum(CiMode, args[0])) |m| {
+            break :mode m;
+        } else {
+            step.dependOn(&b.addFail("invalid CI mode").step);
+            return;
+        }
+    } else .default;
+
+    const all = mode == .all;
+    const default = all or mode == .default;
+
+    if (default or mode == .check) {
+        buildCiStep(b, step, .{"test-fmt"});
+        buildCiStep(b, step, .{"check"});
+    }
+
+    if (default or mode == .@"test") {
+        buildCiStep(b, step, .{"test"});
+    }
+}
+
+fn buildCiStep(b: *std.Build, step: *std.Build.Step, command: anytype) void {
+    const argv = .{ b.graph.zig_exe, "build" } ++ command;
+    const system_command = b.addSystemCommand(&argv);
+    step.dependOn(&system_command.step);
+}
+
+/// Build Reginald without codegen.
+fn buildCheck(b: *std.Build, step: *std.Build.Step, options: Options) void {
+    const root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = options.target,
+        .optimize = options.optimize,
+    });
+    root_module.addOptions("build_options", options.stepOptions(b));
+
+    const reginald = b.addExecutable(.{
+        .name = "reginald",
+        .root_module = root_module,
+    });
+
+    step.dependOn(&reginald.step);
 }
 
 /// Add the steps for building, installing, and running Reginald.
@@ -103,7 +163,12 @@ fn buildReginald(
     steps.run.dependOn(&run_cmd.step);
 }
 
-fn buildTest(b: *std.Build, steps: struct { test_unit: *std.Build.Step }, options: Options) void {
+fn buildTest(b: *std.Build, steps: struct {
+    @"test": *std.Build.Step,
+    test_fmt: *std.Build.Step,
+    test_toml: *std.Build.Step,
+    test_unit: *std.Build.Step,
+}, options: Options) void {
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
@@ -118,8 +183,16 @@ fn buildTest(b: *std.Build, steps: struct { test_unit: *std.Build.Step }, option
     }
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
-
     steps.test_unit.dependOn(&run_unit_tests.step);
+
+    buildTestToml(b, .{ .test_toml = steps.test_toml }, options);
+
+    const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
+    steps.test_fmt.dependOn(&run_fmt.step);
+
+    steps.@"test".dependOn(steps.test_fmt);
+    steps.@"test".dependOn(steps.test_toml);
+    steps.@"test".dependOn(steps.test_unit);
 }
 
 fn buildTestToml(
@@ -147,12 +220,6 @@ fn buildTestToml(
     run_toml_test.addFileArg(decoder.getEmittedBin());
 
     steps.test_toml.dependOn(&run_toml_test.step);
-}
-
-fn buildCi(b: *std.Build, step: *std.Build.Step) void {
-    const argv = .{ b.graph.zig_exe, "build", "test" };
-    const system_command = b.addSystemCommand(&argv);
-    step.dependOn(&system_command.step);
 }
 
 fn resolveVersion(b: *std.Build) ![]const u8 {
