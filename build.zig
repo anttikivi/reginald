@@ -1,5 +1,4 @@
 const std = @import("std");
-const assert = std.debug.assert;
 
 const reginald_name = "reginald";
 const reginald_version: std.SemanticVersion = .{ .major = 0, .minor = 1, .patch = 0 };
