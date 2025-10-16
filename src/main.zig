@@ -101,7 +101,7 @@ pub fn main() !void {
         } else if (parsed_args.values.get("print_version")) |v| {
             switch (v) {
                 .bool => {
-                    try stdout.writeAll(build_options.exe_name ++ " " ++ build_options.version ++ "\n");
+                    try stdout.writeAll(build_options.name ++ " " ++ build_options.version ++ "\n");
                     try stdout.writeAll("Licensed under the Apache License, Version 2.0: <https://www.apache.org/licenses/LICENSE-2.0>\n");
                     try stdout.flush();
                     return;
