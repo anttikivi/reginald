@@ -2,6 +2,7 @@ const std = @import("std");
 
 const reginald_exe_name = "reginald";
 const reginald_version: std.SemanticVersion = .{ .major = 0, .minor = 1, .patch = 0 };
+const reginald_env_prefix = "REGINALD_";
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -143,7 +144,7 @@ fn resolveVersion(b: *std.Build, version_opt: ?[]const u8) ![:0]const u8 {
                     ".git",
                     "show",
                     "-s",
-                    "--date=format:'%Y%m%d%H%M%S'",
+                    "--date=format:%Y%m%d%H%M%S",
                     "--format=%cd",
                     std.mem.trimRight(u8, commit, "-dirty"),
                 }, &code, .Ignore) catch {
