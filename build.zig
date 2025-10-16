@@ -192,11 +192,11 @@ fn buildTest(b: *std.Build, steps: struct {
     const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
     steps.test_fmt.dependOn(&run_fmt.step);
 
-    steps.@"test".dependOn(steps.test_toml);
     steps.@"test".dependOn(steps.test_unit);
 
     if (b.args == null) {
         steps.@"test".dependOn(steps.test_fmt);
+        steps.@"test".dependOn(steps.test_toml);
     }
 }
 
