@@ -25,6 +25,7 @@ const Options = struct {
 
 pub fn build(b: *std.Build) !void {
     const build_steps = .{
+        .ci = b.step("ci", "Run the CI test suite"),
         .install = b.getInstallStep(),
         .run = b.step("run", "Run Reginald"),
         .@"test" = b.step("test", "Run tests"),
@@ -64,6 +65,7 @@ pub fn build(b: *std.Build) !void {
     }, options);
     buildTest(b, .{ .test_unit = build_steps.test_unit }, options);
     buildTestToml(b, .{ .test_toml = build_steps.test_toml }, options);
+    buildCi(b, build_steps.ci);
 
     build_steps.@"test".dependOn(build_steps.test_toml);
     build_steps.@"test".dependOn(build_steps.test_unit);
@@ -145,6 +147,12 @@ fn buildTestToml(
     run_toml_test.addFileArg(decoder.getEmittedBin());
 
     steps.test_toml.dependOn(&run_toml_test.step);
+}
+
+fn buildCi(b: *std.Build, step: *std.Build.Step) void {
+    const argv = .{ b.graph.zig_exe, "build", "test" };
+    const system_command = b.addSystemCommand(&argv);
+    step.dependOn(&system_command.step);
 }
 
 fn resolveVersion(b: *std.Build) ![]const u8 {
