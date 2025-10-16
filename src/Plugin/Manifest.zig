@@ -269,10 +269,18 @@ fn parseManifest(gpa: Allocator, data: []const u8, path: []const u8) !Manifest {
     }
 
     var manifest: Manifest = .{
+        .version = parsed.value.version,
         .name = try gpa.dupe(u8, parsed.value.name),
         .type = parsed.value.type,
     };
     errdefer gpa.free(manifest.name);
+
+    if (manifest.version != 0) {
+        return output.fail(
+            "plugin \"{s}\" has unsupported manifest version: {d}",
+            .{ manifest.name, manifest.version },
+        );
+    }
 
     if (parsed.value.exec.len == 0 or std.mem.eql(u8, parsed.value.exec, manifest.name)) {
         manifest.exec = manifest.name;
