@@ -31,6 +31,7 @@ pub fn build(b: *std.Build) !void {
         .run = b.step("run", "Run Reginald"),
         .@"test" = b.step("test", "Run tests"),
         .test_fmt = b.step("test-fmt", "Check formatting"),
+        .test_plugins = b.step("test-plugins", "Build the test plugins"),
         .test_toml = b.step("test-toml", "Run the `toml-test` test suite"),
         .test_unit = b.step("test-unit", "Run unit tests"),
     };
@@ -75,6 +76,8 @@ pub fn build(b: *std.Build) !void {
         .test_unit = build_steps.test_unit,
     }, options);
 
+    try buildTestPlugins(b, build_steps.test_plugins, options);
+
     buildCi(b, build_steps.ci);
 }
 
@@ -111,7 +114,7 @@ fn buildCi(b: *std.Build, step: *std.Build.Step) void {
 fn buildCiStep(b: *std.Build, step: *std.Build.Step, command: anytype) void {
     const argv = .{ b.graph.zig_exe, "build" } ++ command;
     const system_command = b.addSystemCommand(&argv);
-    const name = std.mem.join(b.allocator, " ", &command) catch @panic("out of memory");
+    const name = std.mem.join(b.allocator, " ", &command) catch @panic("OOM");
     system_command.setName(name);
     step.dependOn(&system_command.step);
 }
@@ -225,6 +228,68 @@ fn buildTestToml(
     run_toml_test.addFileArg(decoder.getEmittedBin());
 
     steps.test_toml.dependOn(&run_toml_test.step);
+}
+
+fn buildTestPlugins(b: *std.Build, step: *std.Build.Step, options: Options) !void {
+    const plugins_path = b.pathJoin(&.{ "src", "test", "plugins" });
+    var plugin_dir = try std.fs.cwd().openDir(plugins_path, .{ .iterate = true });
+    defer plugin_dir.close();
+
+    var it = plugin_dir.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .directory) {
+            continue;
+        }
+
+        var dir = try plugin_dir.openDir(entry.name, .{});
+        defer dir.close();
+
+        dir.access(b.pathJoin(&.{ "src", "main.zig" }), .{}) catch |err| switch (err) {
+            // TODO: Add handling for non-Zig testing plugins.
+            error.FileNotFound => continue,
+            else => @panic(b.fmt(
+                "cannot access \"{s}\": {t}",
+                .{ b.pathJoin(&.{ plugins_path, entry.name, "src", "main.zig" }), err },
+            )),
+        };
+
+        const path = b.pathJoin(&.{ plugins_path, entry.name });
+
+        const plugin = b.addExecutable(.{
+            .name = b.fmt("reginald-{s}", .{entry.name}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.pathJoin(&.{ path, "src", "main.zig" })),
+                .target = options.target,
+                .optimize = options.optimize,
+            }),
+        });
+
+        const dest_path = b.pathJoin(&.{ "plugins", entry.name });
+
+        const install = b.addInstallArtifact(plugin, .{
+            .dest_dir = .{
+                .override = .{
+                    .custom = dest_path,
+                },
+            },
+        });
+
+        const manifest_src = b.path(b.pathJoin(&.{ path, "reginald-plugin.json" }));
+        const install_manifest = b.addInstallFileWithDir(
+            manifest_src,
+            .{ .custom = dest_path },
+            "reginald-plugin.json",
+        );
+
+        const plugin_step = b.step(
+            b.fmt("test-plugin-{s}", .{entry.name}),
+            b.fmt("Build and install test plugin \"{s}\"", .{entry.name}),
+        );
+        plugin_step.dependOn(&install.step);
+        plugin_step.dependOn(&install_manifest.step);
+
+        step.dependOn(plugin_step);
+    }
 }
 
 fn resolveVersion(b: *std.Build) ![]const u8 {
