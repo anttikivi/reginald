@@ -219,7 +219,7 @@ fn buildTestToml(
     const decoder = b.addExecutable(.{
         .name = "toml-decoder",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/test/toml.zig"),
+            .root_source_file = b.path("src/test/toml_decoder.zig"),
             .target = options.target,
             .optimize = options.optimize,
         }),
