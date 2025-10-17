@@ -46,7 +46,10 @@ pub fn runtimeLog(
 }
 
 pub const std_options: std.Options = .{
-    .log_level = .debug,
+    .log_level = std.meta.stringToEnum(
+        std.log.Level,
+        build_options.log_level,
+    ) orelse @compileError("invalid log level: " ++ build_options.log_level),
     .logFn = runtimeLog,
 };
 

@@ -8,15 +8,17 @@ const Options = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     name: []const u8,
-    env_prefix: []const u8,
     version: []const u8,
+    env_prefix: []const u8,
+    log_level: []const u8,
 
     fn stepOptions(self: *const Options, b: *std.Build) *std.Build.Step.Options {
         const options = b.addOptions();
 
         options.addOption([]const u8, "name", self.name);
-        options.addOption([]const u8, "env_prefix", self.env_prefix);
         options.addOption([]const u8, "version", self.version);
+        options.addOption([]const u8, "env_prefix", self.env_prefix);
+        options.addOption([]const u8, "log_level", self.log_level);
 
         return options;
     }
@@ -43,14 +45,6 @@ pub fn build(b: *std.Build) !void {
             "name",
             b.fmt("Name of the program. Default is \"{s}\"", .{reginald_name}),
         ) orelse reginald_name,
-        .env_prefix = b.option(
-            []const u8,
-            "env-prefix",
-            b.fmt(
-                "Use this as the prefix for environment variables used by Reginald. Default is \"{s}\"",
-                .{default_env_prefix},
-            ),
-        ) orelse default_env_prefix,
         .version = b.option(
             []const u8,
             "version",
@@ -59,6 +53,15 @@ pub fn build(b: *std.Build) !void {
             std.debug.print("error: resolving version failed\n", .{});
             std.process.exit(1);
         },
+        .env_prefix = b.option(
+            []const u8,
+            "env-prefix",
+            b.fmt(
+                "Use this as the prefix for environment variables used by Reginald. Default is \"{s}\"",
+                .{default_env_prefix},
+            ),
+        ) orelse default_env_prefix,
+        .log_level = logLevelOption(b),
     };
 
     buildCheck(b, build_steps.check, options);
@@ -421,4 +424,25 @@ fn resolveVersion(b: *std.Build) ![]const u8 {
             return version_string;
         },
     }
+}
+
+fn logLevelOption(b: *std.Build) []const u8 {
+    const option = b.option(
+        []const u8,
+        "log-level",
+        b.fmt(
+            "Minimum log level to include in the compilation. To allow setting all log levels with runtime configuration, this should be \"{t}\". Default is \"{t}\"",
+            .{
+                std.log.Level.debug,
+                std.log.Level.debug,
+            },
+        ),
+    ) orelse @tagName(std.log.Level.debug);
+
+    if (std.meta.stringToEnum(std.log.Level, option) == null) {
+        std.debug.print("invalid log level: {s}\n", .{option});
+        std.process.exit(1);
+    }
+
+    return option;
 }
