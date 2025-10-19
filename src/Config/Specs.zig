@@ -21,7 +21,7 @@ pub const config_file: OptionSpec = .{
     .long = "config",
     .short = 'c',
     .environment_variable = "CONFIG",
-    .description = "use config file from `<path>`",
+    .description = "Use config file from `<path>`. If <path> is set to `-`, Reginald reads config from stdin.",
     .disable_config_file_option = true,
     .is_path = true,
 };

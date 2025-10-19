@@ -25,7 +25,7 @@ pub const OptionSpec = @import("Config/Specs.zig").OptionSpec;
 pub const OptionType = @import("Config/Specs.zig").OptionType;
 
 allocator: Allocator,
-file_directory: []const u8,
+file_directory: ?[]const u8,
 values: StringHashMap(Value),
 
 const is_debug = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
@@ -78,7 +78,7 @@ pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Arg
     try self.parseStatic(arena, specs, null, args, true);
 
     const handle = try self.findFile(arena);
-    defer handle.close();
+    defer if (!std.mem.eql(u8, self.get([]const u8, "config_file").?, "-")) handle.close();
 
     var file_buffer: [4096]u8 = undefined;
     var file_reader = handle.reader(&file_buffer);
@@ -95,7 +95,7 @@ pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Arg
 
 /// Free the memory allocated by the `Config`.
 pub fn deinit(self: *Config) void {
-    self.allocator.free(self.file_directory);
+    if (self.file_directory) |d| self.allocator.free(d);
 
     var val_it = self.values.valueIterator();
     while (val_it.next()) |v| {
@@ -487,11 +487,16 @@ fn getEnvVarValue(arena: Allocator, key: []const u8) error{OutOfMemory}!?[]const
 ///
 /// The caller owns the returned `File` and must call `close` on it.
 fn findFile(self: *Config, arena: Allocator) !std.fs.File {
+    const config_file = self.get([]const u8, "config_file").?;
+    if (std.mem.eql(u8, config_file, "-")) {
+        self.file_directory = null;
+        return std.fs.File.stdin();
+    }
+
     const wd_path = self.get([]const u8, "working_directory").?;
     var wd = try std.fs.cwd().openDir(wd_path, .{});
     defer wd.close();
 
-    const config_file = self.get([]const u8, "config_file").?;
     if (!std.mem.eql(u8, config_file, "")) {
         self.file_directory = try self.allocator.dupe(u8, wd_path);
 
