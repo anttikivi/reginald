@@ -1,27 +1,47 @@
+// This file is derived from TigerBeetle
+// (https://github.com/tigerbeetle/tigerbeetle), licensed under the Apache
+// License, Version 2.0. It is modified by Antti Kivi. See THIRD_PARTY_NOTICES
+// for more information.
+
 const std = @import("std");
+const ArrayList = std.ArrayList;
 
 const reginald_name = "reginald";
 const reginald_version: std.SemanticVersion = .{ .major = 0, .minor = 1, .patch = 0 };
 const default_env_prefix = "REGINALD_";
 
 const Options = struct {
+    stdx_module: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    install_prefix: []const u8,
     name: []const u8,
     version: []const u8,
+    flat: bool,
     env_prefix: []const u8,
     log_level: []const u8,
 
-    fn stepOptions(self: *const Options, b: *std.Build) *std.Build.Step.Options {
+    fn buildOptions(self: Options, b: *std.Build) *std.Build.Step.Options {
         const options = b.addOptions();
-
         options.addOption([]const u8, "name", self.name);
         options.addOption([]const u8, "version", self.version);
         options.addOption([]const u8, "env_prefix", self.env_prefix);
         options.addOption([]const u8, "log_level", self.log_level);
-
         return options;
     }
+
+    fn testOptions(self: Options, b: *std.Build) *std.Build.Step.Options {
+        const options = b.addOptions();
+        options.addOption([]const u8, "install_prefix", self.install_prefix);
+        options.addOption(bool, "flat", self.flat);
+        return options;
+    }
+};
+
+const TestPlugin = struct {
+    name: []const u8,
+    path: []const u8,
+    language: enum { zig },
 };
 
 pub fn build(b: *std.Build) !void {
@@ -31,6 +51,7 @@ pub fn build(b: *std.Build) !void {
         .install = b.getInstallStep(),
         .run = b.step("run", "Run Reginald"),
         .@"test" = b.step("test", "Run tests"),
+        .test_end_to_end = b.step("test-e2e", "Run the end-to-end tests"),
         .test_fmt = b.step("test-fmt", "Check formatting"),
         .test_plugins = b.step("test-plugins", "Build the test plugins"),
         .test_toml = b.step("test-toml", "Run the `toml-test` test suite"),
@@ -38,8 +59,10 @@ pub fn build(b: *std.Build) !void {
     };
 
     const options: Options = .{
+        .stdx_module = b.addModule("stdx", .{ .root_source_file = b.path("src/stdx.zig") }),
         .target = b.standardTargetOptions(.{}),
         .optimize = b.standardOptimizeOption(.{}),
+        .install_prefix = b.install_prefix,
         .name = b.option(
             []const u8,
             "name",
@@ -53,6 +76,11 @@ pub fn build(b: *std.Build) !void {
             std.debug.print("error: resolving version failed\n", .{});
             std.process.exit(1);
         },
+        .flat = b.option(
+            bool,
+            "flat",
+            "Put files into the installation prefix in a manner suited for upstream distribution rather than a posix file system hierarchy standard",
+        ) orelse false,
         .env_prefix = b.option(
             []const u8,
             "env-prefix",
@@ -73,12 +101,13 @@ pub fn build(b: *std.Build) !void {
 
     buildTest(b, .{
         .@"test" = build_steps.@"test",
+        .test_end_to_end = build_steps.test_end_to_end,
         .test_fmt = build_steps.test_fmt,
         .test_toml = build_steps.test_toml,
         .test_unit = build_steps.test_unit,
     }, options);
 
-    try buildTestPlugins(b, build_steps.test_plugins, options);
+    buildTestPlugins(b, build_steps.test_plugins, options);
 
     buildCi(b, build_steps.ci);
 }
@@ -123,22 +152,13 @@ fn buildCiStep(b: *std.Build, step: *std.Build.Step, command: anytype) void {
 
 /// Build Reginald without codegen.
 fn buildCheck(b: *std.Build, step: *std.Build.Step, options: Options) void {
-    const root_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = options.target,
-        .optimize = options.optimize,
-    });
-    root_module.addOptions("build_options", options.stepOptions(b));
-
     const reginald = b.addExecutable(.{
-        .name = "reginald",
-        .root_module = root_module,
+        .name = options.name,
+        .root_module = createReginaldModule(b, options),
     });
-
     step.dependOn(&reginald.step);
 }
 
-/// Add the steps for building, installing, and running Reginald.
 fn buildReginald(
     b: *std.Build,
     steps: struct {
@@ -147,21 +167,19 @@ fn buildReginald(
     },
     options: Options,
 ) void {
-    const root_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = options.target,
-        .optimize = options.optimize,
-    });
-    root_module.addOptions("build_options", options.stepOptions(b));
-
     const reginald = b.addExecutable(.{
-        .name = "reginald",
-        .root_module = root_module,
+        .name = options.name,
+        .root_module = createReginaldModule(b, options),
     });
-    b.installArtifact(reginald);
 
-    const run_cmd = b.addRunArtifact(reginald);
-    run_cmd.step.dependOn(b.getInstallStep());
+    const install_reginald = b.addInstallArtifact(
+        reginald,
+        .{ .dest_dir = if (options.flat) .{ .override = .prefix } else .default },
+    );
+    steps.install.dependOn(&install_reginald.step);
+
+    const run_cmd = std.Build.Step.Run.create(b, b.fmt("run exe {s}", .{options.name}));
+    run_cmd.addFileArg(reginald.getEmittedBin());
 
     if (b.args) |args| {
         run_cmd.addArgs(args);
@@ -172,6 +190,7 @@ fn buildReginald(
 
 fn buildTest(b: *std.Build, steps: struct {
     @"test": *std.Build.Step,
+    test_end_to_end: *std.Build.Step,
     test_fmt: *std.Build.Step,
     test_toml: *std.Build.Step,
     test_unit: *std.Build.Step,
@@ -183,7 +202,8 @@ fn buildTest(b: *std.Build, steps: struct {
             .optimize = options.optimize,
         }),
     });
-    unit_tests.root_module.addOptions("build_options", options.stepOptions(b));
+    unit_tests.root_module.addOptions("build_options", options.buildOptions(b));
+    unit_tests.root_module.addOptions("test_options", options.testOptions(b));
 
     if (options.target.result.os.tag != .windows) {
         unit_tests.linkLibC();
@@ -192,6 +212,7 @@ fn buildTest(b: *std.Build, steps: struct {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     steps.test_unit.dependOn(&run_unit_tests.step);
 
+    buildTestEndToEnd(b, steps.test_end_to_end, options);
     buildTestToml(b, .{ .test_toml = steps.test_toml }, options);
 
     const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
@@ -200,9 +221,27 @@ fn buildTest(b: *std.Build, steps: struct {
     steps.@"test".dependOn(steps.test_unit);
 
     if (b.args == null) {
+        steps.@"test".dependOn(steps.test_end_to_end);
         steps.@"test".dependOn(steps.test_fmt);
         steps.@"test".dependOn(steps.test_toml);
     }
+}
+
+fn buildTestEndToEnd(b: *std.Build, step: *std.Build.Step, options: Options) void {
+    const end_to_end_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test/end_to_end_tests.zig"),
+            .target = options.target,
+            .optimize = options.optimize,
+        }),
+    });
+    end_to_end_tests.root_module.addImport("stdx", options.stdx_module);
+    end_to_end_tests.root_module.addOptions("build_options", options.buildOptions(b));
+    end_to_end_tests.root_module.addOptions("test_options", options.testOptions(b));
+
+    const run_end_to_end_tests = b.addRunArtifact(end_to_end_tests);
+    run_end_to_end_tests.setEnvironmentVariable("ZIG_EXE", b.graph.zig_exe);
+    step.dependOn(&run_end_to_end_tests.step);
 }
 
 fn buildTestToml(
@@ -226,13 +265,73 @@ fn buildTestToml(
     });
     decoder.root_module.addImport("toml", toml);
 
-    const run_toml_test = b.addSystemCommand(&[_][]const u8{"toml-test"});
+    const toml_test = b.findProgram(&.{"toml-test"}, &.{}) catch |err| switch (err) {
+        // Explicitly switch on the error so we can catch new possible error
+        // types in the future.
+        error.FileNotFound => {
+            // TODO: Add a script for installing `toml-test` to the repository.
+            steps.test_toml.dependOn(&b.addFail("\"toml-test\" not found").step);
+            return;
+        },
+    };
+    const run_toml_test = b.addSystemCommand(&[_][]const u8{toml_test});
     run_toml_test.addFileArg(decoder.getEmittedBin());
 
     steps.test_toml.dependOn(&run_toml_test.step);
 }
 
-fn buildTestPlugins(b: *std.Build, step: *std.Build.Step, options: Options) !void {
+fn buildTestPlugins(b: *std.Build, step: *std.Build.Step, options: Options) void {
+    const test_plugins = resolveTestPlugins(b, step) catch |err| switch (err) {
+        error.AccessFailed => return,
+        else => {
+            step.dependOn(&b.addFail(b.fmt("failed to resolve the test plugins: {t}", .{err})).step);
+            return;
+        },
+    };
+
+    // TODO: Add non-Zig plugins.
+    for (test_plugins) |tp| {
+        const plugin = b.addExecutable(.{
+            .name = b.fmt("{s}-{s}", .{ options.name, tp.name }),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.pathJoin(&.{ tp.path, "src", "main.zig" })),
+                .target = options.target,
+                .optimize = options.optimize,
+            }),
+        });
+
+        const dest_path = b.pathJoin(&.{ "plugins", tp.name });
+
+        const install = b.addInstallArtifact(plugin, .{
+            .dest_dir = .{
+                .override = .{
+                    .custom = dest_path,
+                },
+            },
+        });
+
+        const manifest_src = b.path(b.pathJoin(&.{ tp.path, "reginald-plugin.json" }));
+        const install_manifest = b.addInstallFileWithDir(
+            manifest_src,
+            .{ .custom = dest_path },
+            "reginald-plugin.json",
+        );
+
+        const plugin_step = b.step(
+            b.fmt("test-plugin-{s}", .{tp.name}),
+            b.fmt("Build and install test plugin \"{s}\"", .{tp.name}),
+        );
+        plugin_step.dependOn(&install.step);
+        plugin_step.dependOn(&install_manifest.step);
+
+        step.dependOn(plugin_step);
+    }
+}
+
+fn resolveTestPlugins(b: *std.Build, step: *std.Build.Step) ![]TestPlugin {
+    var result: ArrayList(TestPlugin) = .empty;
+    defer result.deinit(b.allocator);
+
     const plugins_path = b.pathJoin(&.{ "src", "test", "plugins" });
     var plugin_dir = try std.fs.cwd().openDir(plugins_path, .{ .iterate = true });
     defer plugin_dir.close();
@@ -249,49 +348,38 @@ fn buildTestPlugins(b: *std.Build, step: *std.Build.Step, options: Options) !voi
         dir.access(b.pathJoin(&.{ "src", "main.zig" }), .{}) catch |err| switch (err) {
             // TODO: Add handling for non-Zig testing plugins.
             error.FileNotFound => continue,
-            else => @panic(b.fmt(
-                "cannot access \"{s}\": {t}",
-                .{ b.pathJoin(&.{ plugins_path, entry.name, "src", "main.zig" }), err },
-            )),
+            else => {
+                step.dependOn(&b.addFail(b.fmt(
+                    "cannot access \"{s}\": {t}",
+                    .{
+                        b.pathJoin(&.{ plugins_path, entry.name, "src", "main.zig" }),
+                        err,
+                    },
+                )).step);
+                return error.AccessFailed;
+            },
         };
 
         const path = b.pathJoin(&.{ plugins_path, entry.name });
 
-        const plugin = b.addExecutable(.{
-            .name = b.fmt("reginald-{s}", .{entry.name}),
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(b.pathJoin(&.{ path, "src", "main.zig" })),
-                .target = options.target,
-                .optimize = options.optimize,
-            }),
+        try result.append(b.allocator, .{
+            .name = try b.allocator.dupe(u8, entry.name),
+            .path = path,
+            .language = .zig,
         });
-
-        const dest_path = b.pathJoin(&.{ "plugins", entry.name });
-
-        const install = b.addInstallArtifact(plugin, .{
-            .dest_dir = .{
-                .override = .{
-                    .custom = dest_path,
-                },
-            },
-        });
-
-        const manifest_src = b.path(b.pathJoin(&.{ path, "reginald-plugin.json" }));
-        const install_manifest = b.addInstallFileWithDir(
-            manifest_src,
-            .{ .custom = dest_path },
-            "reginald-plugin.json",
-        );
-
-        const plugin_step = b.step(
-            b.fmt("test-plugin-{s}", .{entry.name}),
-            b.fmt("Build and install test plugin \"{s}\"", .{entry.name}),
-        );
-        plugin_step.dependOn(&install.step);
-        plugin_step.dependOn(&install_manifest.step);
-
-        step.dependOn(plugin_step);
     }
+
+    return result.toOwnedSlice(b.allocator);
+}
+
+fn createReginaldModule(b: *std.Build, options: Options) *std.Build.Module {
+    const root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = options.target,
+        .optimize = options.optimize,
+    });
+    root_module.addOptions("build_options", options.buildOptions(b));
+    return root_module;
 }
 
 fn resolveVersion(b: *std.Build) ![]const u8 {
@@ -364,7 +452,8 @@ fn resolveVersion(b: *std.Build) ![]const u8 {
 
         const now = std.time.timestamp();
 
-        // We assume that Reginald won't be built before epoch so the timestamp isn't negative.
+        // We assume that Reginald won't be built before epoch so the timestamp
+        // isn't negative.
         const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @as(u64, @intCast(now)) };
         const epoch_day = epoch_secs.getEpochDay();
         const year_day = epoch_day.calculateYearDay();
@@ -410,13 +499,15 @@ fn resolveVersion(b: *std.Build) ![]const u8 {
                 std.process.exit(1);
             }
 
-            // Check that the commit hash is prefixed with a 'g' (a Git convention).
+            // Check that the commit hash is prefixed with a 'g' (a Git
+            // convention).
             if (commit_id.len < 1 or commit_id[0] != 'g') {
                 std.debug.print("Unexpected `git describe` output: {s}\n", .{git_describe});
                 return version_string;
             }
 
-            // The version is reformatted in accordance with the https://semver.org specification.
+            // The version is reformatted in accordance with
+            // the https://semver.org specification.
             return b.fmt("{s}-dev.{s}+{s}", .{ version_string, commit_height, commit_id[1..] });
         },
         else => {
