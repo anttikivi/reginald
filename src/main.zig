@@ -54,6 +54,16 @@ pub const std_options: std.Options = .{
 };
 
 pub fn main() !void {
+    run() catch |err| switch (builtin.mode) {
+        .Debug, .ReleaseSafe => return err,
+        .ReleaseFast, .ReleaseSmall => switch (err) {
+            error.Reported => std.process.exit(1),
+            else => return err,
+        },
+    };
+}
+
+fn run() !void {
     const gpa, const is_debug = gpa: {
         if (native_os == .wasi) {
             break :gpa .{ std.heap.wasm_allocator, false };
@@ -72,9 +82,7 @@ pub fn main() !void {
 
     const raw_args = try std.process.argsAlloc(gpa);
     const raw_args_freed = false;
-    defer if (!raw_args_freed) {
-        std.process.argsFree(gpa, raw_args);
-    };
+    defer if (!raw_args_freed) std.process.argsFree(gpa, raw_args);
 
     assert(raw_args.len > 0);
 
@@ -135,9 +143,7 @@ pub fn main() !void {
 
     const manifests = try Plugin.Manifest.loadAll(gpa, &cfg, dir);
     defer gpa.free(manifests);
-    defer for (manifests) |*m| {
-        m.deinit(gpa);
-    };
+    defer for (manifests) |*m| m.deinit(gpa);
 
     var plugin_host = try Plugin.Host.init(gpa, manifests);
     defer plugin_host.deinit(gpa);
