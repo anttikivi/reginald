@@ -23,6 +23,7 @@
 // for more information.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
@@ -225,6 +226,31 @@ pub fn execStdoutStderr(shell: *Shell, comptime cmd: []const u8, cmd_args: anyty
     return .{ captured_stdout, captured_stderr };
 }
 
+pub fn execStdoutStderrOptions(
+    shell: *Shell,
+    options: struct {
+        stdin_slice: ?[]const u8 = null,
+    },
+    comptime cmd: []const u8,
+    cmd_args: anytype,
+) !struct {
+    []const u8,
+    []const u8,
+} {
+    var argv = try Argv.expand(shell.gpa, cmd, cmd_args);
+    defer argv.deinit(shell.gpa);
+
+    var captured_stdout: []const u8 = &.{};
+    var captured_stderr: []const u8 = &.{};
+    try execInner(shell, argv.slice(), .{
+        .stdin_slice = options.stdin_slice,
+        .capture_stdout = &captured_stdout,
+        .capture_stderr = &captured_stderr,
+    });
+
+    return .{ captured_stdout, captured_stderr };
+}
+
 pub fn execStdoutOptions(
     shell: *Shell,
     options: struct {
@@ -243,6 +269,27 @@ pub fn execStdoutOptions(
     });
 
     return captured_stdout;
+}
+
+/// Runs the given command expecting a non-zero exit code and returns its stderr
+/// output.
+pub fn testFailingExecStderr(
+    shell: *Shell,
+    comptime cmd: []const u8,
+    cmd_args: anytype,
+) ![]const u8 {
+    assert(builtin.is_test);
+
+    var argv = try Argv.expand(shell.gpa, cmd, cmd_args);
+    defer argv.deinit(shell.gpa);
+
+    var captured_stderr: []const u8 = &.{};
+    try execInner(shell, argv.slice(), .{
+        .should_fail = true,
+        .capture_stderr = &captured_stderr,
+    });
+
+    return captured_stderr;
 }
 
 /// Runs the Zig compiler.
@@ -319,6 +366,7 @@ fn execInner(
     shell: *Shell,
     argv: []const []const u8,
     options: struct {
+        should_fail: bool = false,
         stdin_slice: ?[]const u8 = null,
 
         // Optional out parameters:
@@ -329,6 +377,9 @@ fn execInner(
         timeout: units.Duration = .minutes(10),
     },
 ) !void {
+    // Failing runs should be allowed only in tests.
+    if (!builtin.is_test) assert(!options.should_fail);
+
     const argv_formatted = try std.mem.join(shell.gpa, " ", argv);
     defer shell.gpa.free(argv_formatted);
 
@@ -401,7 +452,15 @@ fn execInner(
 
     const term = try child.wait();
     switch (term) {
-        .Exited => |code| if (code != 0) return error.ExecNonZeroExitStatus,
+        .Exited => |code| {
+            if (code != 0 and !options.should_fail) {
+                return error.ExecNonZeroExitStatus;
+            }
+
+            if (options.should_fail and code == 0) {
+                return error.ExecUnexpectedSuccess;
+            }
+        },
         else => return error.ExecFailed,
     }
 
@@ -410,7 +469,6 @@ fn execInner(
         .{ .stdout, .stderr },
     ) |capture_destination, capture_stream| {
         if (capture_destination) |destination| {
-            // const stream = poller.?.fifo(capture_stream).readableSlice(0);
             const stream = poller.?.toOwnedSlice(capture_stream) catch @panic("OOM");
             defer shell.gpa.free(stream);
 
