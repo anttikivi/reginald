@@ -66,7 +66,7 @@ pub const Value = union(OptionType) {
 pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Args) !void {
     self.* = .{
         .allocator = gpa,
-        .file_directory = specs.get("working_directory").?.defaultValue().string,
+        .file_directory = null,
         .values = .init(gpa),
     };
     errdefer self.deinit();
@@ -529,18 +529,8 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
     if (std.process.getEnvVarOwned(arena, "XDG_CONFIG_HOME")) |xdg| {
         defer arena.free(xdg);
 
-        // I think this is the encouraged way to handle the lookups.
-        var dir = try wd.openDir(xdg, .{});
-        defer dir.close();
-
-        if (self.tryPaths(unix_config_lookup, dir)) |result| {
-            self.file_directory = try self.allocator.dupe(u8, xdg);
+        if (try self.tryDir(wd, xdg, unix_config_lookup)) |result| {
             return result;
-        } else |err| {
-            switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            }
         }
     } else |err| {
         switch (err) {
@@ -550,22 +540,12 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
     }
 
     if (native_os == .windows or native_os == .uefi) {
-        // TODO: Are these the correct paths for Windows? I don't know it that
-        // well.
+        // TODO: Are these the correct paths for Windows?
         const dirname = try filepath.expand(arena, "%APPDATA%");
         defer arena.free(dirname);
 
-        var dir = try wd.openDir(dirname, .{});
-        defer dir.close();
-
-        if (self.tryPaths([_][]const u8{ default_filename, "config" }, dir)) |result| {
-            self.file_directory = try self.allocator.dupe(u8, dirname);
+        if (try self.tryDir(wd, dirname, [_][]const u8{ default_filename, "config" })) |result| {
             return result;
-        } else |err| {
-            switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            }
         }
     } else if (native_os.isDarwin()) {
         const app_support_joined = try std.fs.path.join(arena, &[_][]const u8{
@@ -579,17 +559,12 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
         const app_support_expanded = try filepath.expand(arena, app_support_joined);
         defer arena.free(app_support_expanded);
 
-        var app_support_dir = try wd.openDir(app_support_expanded, .{});
-        defer app_support_dir.close();
-
-        if (self.tryPaths([_][]const u8{ default_filename, "config" }, app_support_dir)) |result| {
-            self.file_directory = try self.allocator.dupe(u8, app_support_expanded);
+        if (try self.tryDir(
+            wd,
+            app_support_expanded,
+            [_][]const u8{ default_filename, "config" },
+        )) |result| {
             return result;
-        } else |err| {
-            switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            }
         }
     }
 
@@ -600,17 +575,8 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
         const home_config_expanded = try filepath.expand(arena, home_config_joined);
         defer arena.free(home_config_expanded);
 
-        var home_config_dir = try wd.openDir(home_config_expanded, .{});
-        defer home_config_dir.close();
-
-        if (self.tryPaths(unix_config_lookup, home_config_dir)) |result| {
-            self.file_directory = try self.allocator.dupe(u8, home_config_expanded);
+        if (try self.tryDir(wd, home_config_expanded, unix_config_lookup)) |result| {
             return result;
-        } else |err| {
-            switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            }
         }
 
         const home_joined = try std.fs.path.join(arena, &[_][]const u8{ "~", default_filename });
@@ -619,21 +585,44 @@ fn findFile(self: *Config, arena: Allocator) !std.fs.File {
         const home_name_expanded = try filepath.expand(arena, home_joined);
         defer arena.free(home_name_expanded);
 
-        var home_dir = try wd.openDir(home_name_expanded, .{});
-        defer home_dir.close();
-
-        if (self.tryPaths([_][]const u8{ default_filename, "." ++ default_filename }, home_dir)) |result| {
-            self.file_directory = try self.allocator.dupe(u8, home_name_expanded);
+        if (try self.tryDir(
+            wd,
+            home_name_expanded,
+            [_][]const u8{ default_filename, "." ++ default_filename },
+        )) |result| {
             return result;
-        } else |err| {
-            switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            }
         }
     }
 
     return output.fail("could not find a config file", .{});
+}
+
+/// Try the config file opening with the given path. The point of this helper is
+/// to avoid return with `FileNotFound` if one of the default lookup locations
+/// doesn't exist.
+fn tryDir(
+    self: *Config,
+    wd: std.fs.Dir,
+    path: []const u8,
+    comptime file_paths: anytype,
+) !?std.fs.File {
+    var dir = wd.openDir(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer dir.close();
+
+    if (self.tryPaths(file_paths, dir)) |result| {
+        self.file_directory = try self.allocator.dupe(u8, path);
+        return result;
+    } else |err| {
+        switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
+    }
+
+    return null;
 }
 
 /// Try to open a file from the given path and print the correct error message
