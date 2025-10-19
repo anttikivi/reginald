@@ -11,10 +11,9 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-const stdx = @import("stdx");
+const units = @import("units");
 const Shell = @import("Shell.zig");
-
-const MiB = stdx.MiB;
+const MiB = units.MiB;
 
 const log = std.log.scoped(.tmp_reginald);
 

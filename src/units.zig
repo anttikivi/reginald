@@ -21,8 +21,6 @@ comptime {
     assert(PiB == 1024 * TiB);
 }
 
-pub const BitSet = @import("stdx/bit_set.zig").BitSet;
-
 /// Non-negative time difference between two `Instant`s.
 pub const Duration = struct {
     ns: u64,

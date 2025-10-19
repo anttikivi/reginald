@@ -11,7 +11,6 @@ const reginald_version: std.SemanticVersion = .{ .major = 0, .minor = 1, .patch 
 const default_env_prefix = "REGINALD_";
 
 const Options = struct {
-    stdx_module: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     install_prefix: []const u8,
@@ -59,7 +58,6 @@ pub fn build(b: *std.Build) !void {
     };
 
     const options: Options = .{
-        .stdx_module = b.addModule("stdx", .{ .root_source_file = b.path("src/stdx.zig") }),
         .target = b.standardTargetOptions(.{}),
         .optimize = b.standardOptimizeOption(.{}),
         .install_prefix = b.install_prefix,
@@ -235,7 +233,17 @@ fn buildTestEndToEnd(b: *std.Build, step: *std.Build.Step, options: Options) voi
             .optimize = options.optimize,
         }),
     });
-    end_to_end_tests.root_module.addImport("stdx", options.stdx_module);
+
+    // These modules are outside of the test tree, so we need to add them
+    // manually to the build. Not the cleanest solution but works for now.
+    end_to_end_tests.root_module.addImport(
+        "bit_set",
+        b.addModule("bit_set", .{ .root_source_file = b.path("src/bit_set.zig") }),
+    );
+    end_to_end_tests.root_module.addImport(
+        "units",
+        b.addModule("units", .{ .root_source_file = b.path("src/units.zig") }),
+    );
     end_to_end_tests.root_module.addOptions("build_options", options.buildOptions(b));
     end_to_end_tests.root_module.addOptions("test_options", options.testOptions(b));
 

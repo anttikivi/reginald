@@ -27,8 +27,9 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
 
-const stdx = @import("stdx");
-const MiB = stdx.MiB;
+const BitSet = @import("bit_set").BitSet;
+const units = @import("units");
+const MiB = units.MiB;
 
 const Shell = @This();
 
@@ -252,7 +253,7 @@ pub fn execZig(shell: *Shell, comptime cmd: []const u8, cmd_args: anytype) !void
 pub fn execZigOptions(
     shell: *Shell,
     options: struct {
-        timeout: stdx.Duration = .minutes(10),
+        timeout: units.Duration = .minutes(10),
     },
     comptime cmd: []const u8,
     cmd_args: anytype,
@@ -325,7 +326,7 @@ fn execInner(
         capture_stderr: ?*[]const u8 = null,
 
         output_limit_bytes: usize = 128 * MiB,
-        timeout: stdx.Duration = .minutes(10),
+        timeout: units.Duration = .minutes(10),
     },
 ) !void {
     const argv_formatted = try std.mem.join(shell.gpa, " ", argv);
@@ -443,7 +444,7 @@ fn expandArgv(gpa: Allocator, argv: *Argv, comptime cmd: []const u8, cmd_args: a
     comptime var concat_right: bool = false;
 
     const arg_count = std.meta.fields(@TypeOf(cmd_args)).len;
-    comptime var args_used: stdx.BitSet(arg_count) = .{};
+    comptime var args_used: BitSet(arg_count) = .{};
 
     comptime assert(std.mem.indexOfScalar(u8, cmd, '\'') == null); // Intentionally unsupported.
     comptime assert(std.mem.indexOfScalar(u8, cmd, '"') == null);
