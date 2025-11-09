@@ -28,10 +28,9 @@ allocator: Allocator,
 file_directory: ?[]const u8,
 values: StringHashMap(Value),
 
-fully_parsed: bool = false,
-toml_arena: ArenaAllocator,
-toml_allocator: Allocator,
-toml_value: toml.Value,
+toml_arena: ?ArenaAllocator,
+toml_allocator: ?Allocator = null,
+toml_value: ?toml.Value = null,
 
 const is_debug = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 const native_os = builtin.target.os.tag;
@@ -74,8 +73,6 @@ pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Arg
         .file_directory = null,
         .values = .init(gpa),
         .toml_arena = .init(gpa),
-        .toml_allocator = undefined,
-        .toml_value = undefined,
     };
     errdefer self.deinit();
 
@@ -95,8 +92,8 @@ pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Arg
     const file_data = try file.allocRemaining(arena, .unlimited);
     defer arena.free(file_data);
 
-    self.toml_allocator = self.toml_arena.allocator();
-    self.toml_value = try toml.parse(self.toml_allocator, file_data);
+    self.toml_allocator = self.toml_arena.?.allocator();
+    self.toml_value = try toml.parse(self.toml_allocator.?, file_data);
 
     try self.parseStatic(arena, specs, self.toml_value, args, false);
 }
@@ -120,8 +117,15 @@ pub fn deinit(self: *Config) void {
     }
     self.values.deinit();
 
-    self.toml_value.deinit(self.toml_allocator);
-    self.toml_arena.deinit();
+    if (self.toml_value) |*value| {
+        value.deinit(self.toml_allocator.?);
+    }
+
+    if (self.toml_arena) |*arena| {
+        arena.deinit();
+    }
+
+    self.toml_allocator = null;
 }
 
 pub fn format(self: *const Config, writer: *std.Io.Writer) !void {
