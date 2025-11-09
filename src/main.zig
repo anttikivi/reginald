@@ -138,8 +138,7 @@ fn run() !void {
 
     std.log.debug("logging initialized", .{});
     std.log.info("running Reginald version {s}", .{build_options.version});
-    std.log.debug("using directory \"{?s}\"", .{cfg.get([]const u8, "directory")});
-    std.log.debug("using config file \"{?s}\"", .{cfg.get([]const u8, "config_file")});
+    std.log.debug("initial config parsed:\n{f}", .{cfg});
 
     const manifests = try Plugin.Manifest.loadAll(gpa, &cfg, dir);
     defer gpa.free(manifests);

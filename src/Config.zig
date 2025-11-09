@@ -113,6 +113,39 @@ pub fn deinit(self: *Config) void {
     self.values.deinit();
 }
 
+pub fn format(self: *const Config, writer: *std.Io.Writer) !void {
+    try writer.print(
+        "{{\n  file_directory = \"{?s}\"\n  values = {{\n",
+        .{self.file_directory},
+    );
+    var it = self.values.iterator();
+    while (it.next()) |entry| {
+        try writer.print("    {s} = ", .{entry.key_ptr.*});
+        switch (entry.value_ptr.*) {
+            .bool => |b| try writer.writeAll(if (b) "true" else "false"),
+            .int => |i| try writer.print("{d}", .{i}),
+            .string => |s| try writer.print("\"{s}\"", .{s}),
+            .string_slice => |a| {
+                try writer.writeByte('[');
+                for (a) |s| {
+                    try writer.print("\"{s}\",", .{s});
+                }
+                try writer.writeByte(']');
+            },
+            .log_level => |l| try writer.print("{s}", .{
+                switch (l) {
+                    .err => "error",
+                    .warn => "warning",
+                    .info => "info",
+                    .debug => "debug",
+                },
+            }),
+        }
+        try writer.writeByte('\n');
+    }
+    try writer.writeAll("  }\n}");
+}
+
 pub fn parseBool(a: []const u8) error{InvalidValue}!bool {
     if (a.len > 5) {
         return error.InvalidValue;
