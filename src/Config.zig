@@ -21,12 +21,17 @@ const output = @import("output.zig");
 const toml = @import("toml.zig");
 
 pub const Specs = @import("Config/Specs.zig");
-pub const OptionSpec = @import("Config/Specs.zig").OptionSpec;
-pub const OptionType = @import("Config/Specs.zig").OptionType;
+pub const OptionSpec = Specs.OptionSpec;
+pub const OptionType = Specs.OptionType;
 
 allocator: Allocator,
 file_directory: ?[]const u8,
 values: StringHashMap(Value),
+
+fully_parsed: bool = false,
+toml_arena: ArenaAllocator,
+toml_allocator: Allocator,
+toml_value: toml.Value,
 
 const is_debug = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 const native_os = builtin.target.os.tag;
@@ -68,6 +73,9 @@ pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Arg
         .allocator = gpa,
         .file_directory = null,
         .values = .init(gpa),
+        .toml_arena = .init(gpa),
+        .toml_allocator = undefined,
+        .toml_value = undefined,
     };
     errdefer self.deinit();
 
@@ -87,10 +95,10 @@ pub fn init(self: *Config, gpa: Allocator, specs: *const Specs, args: *const Arg
     const file_data = try file.allocRemaining(arena, .unlimited);
     defer arena.free(file_data);
 
-    var toml_value = try toml.parse(arena, file_data);
-    defer toml_value.deinit(arena);
+    self.toml_allocator = self.toml_arena.allocator();
+    self.toml_value = try toml.parse(self.toml_allocator, file_data);
 
-    try self.parseStatic(arena, specs, toml_value, args, false);
+    try self.parseStatic(arena, specs, self.toml_value, args, false);
 }
 
 /// Free the memory allocated by the `Config`.
@@ -111,6 +119,9 @@ pub fn deinit(self: *Config) void {
         }
     }
     self.values.deinit();
+
+    self.toml_value.deinit(self.toml_allocator);
+    self.toml_arena.deinit();
 }
 
 pub fn format(self: *const Config, writer: *std.Io.Writer) !void {
