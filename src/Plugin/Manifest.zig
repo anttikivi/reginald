@@ -115,7 +115,10 @@ pub fn loadAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Manifest 
     for (paths) |search_path| {
         plugin_log.debug("searching for plugins from \"{s}\"", .{search_path});
 
-        var search_dir = try dir.openDir(search_path, .{});
+        var search_dir = dir.openDir(search_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return output.fail("plugin seach path \"{s}\" does not exist", .{search_path}),
+            else => return err,
+        };
         defer search_dir.close();
 
         var walker = try search_dir.walk(gpa);

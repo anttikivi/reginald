@@ -292,6 +292,29 @@ pub fn testFailingExecStderr(
     return captured_stderr;
 }
 
+pub fn testFailingExecStderrOptions(
+    shell: *Shell,
+    options: struct {
+        stdin_slice: ?[]const u8 = null,
+    },
+    comptime cmd: []const u8,
+    cmd_args: anytype,
+) ![]const u8 {
+    assert(builtin.is_test);
+
+    var argv = try Argv.expand(shell.gpa, cmd, cmd_args);
+    defer argv.deinit(shell.gpa);
+
+    var captured_stderr: []const u8 = &.{};
+    try execInner(shell, argv.slice(), .{
+        .should_fail = true,
+        .stdin_slice = options.stdin_slice,
+        .capture_stderr = &captured_stderr,
+    });
+
+    return captured_stderr;
+}
+
 /// Runs the Zig compiler.
 pub fn execZig(shell: *Shell, comptime cmd: []const u8, cmd_args: anytype) !void {
     return shell.execZigOptions(.{}, cmd, cmd_args);

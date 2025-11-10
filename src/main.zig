@@ -19,6 +19,7 @@ var stdout_buffer: [4096]u8 = undefined;
 /// NOTE: This is a global, which is not good, but there is no need to introduce
 /// excessive complexity to get rid of this.
 pub var log_level: std.log.Level = Config.Specs.@"logging.level".default.?.log_level;
+pub var log_enabled = Config.Specs.@"logging.enabled".default.?.bool;
 
 /// Custom logging function for Reginald. Instead of restricting the logging
 /// level during compile time, the function checks the runtime logging level
@@ -33,6 +34,10 @@ pub fn runtimeLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    if (!log_enabled) {
+        return;
+    }
+
     if (@intFromEnum(message_level) > @intFromEnum(log_level)) {
         return;
     }
@@ -134,6 +139,7 @@ fn run() !void {
     var dir = try working_dir.openDir(cfg.get([]const u8, "directory").?, .{});
     defer dir.close();
 
+    log_enabled = cfg.get(bool, "logging.enabled").?;
     log_level = cfg.get(std.log.Level, "logging.level").?;
 
     std.log.debug("logging initialized", .{});
