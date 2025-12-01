@@ -2,6 +2,7 @@
 //! the initialized manifests must be freed by calling `deinit` on them.
 
 const std = @import("std");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
@@ -15,9 +16,6 @@ const Plugin = @import("../Plugin.zig");
 const Manifest = @This();
 
 const plugin_log = std.log.scoped(.plugin);
-
-/// The name of the static manifest files.
-const manifest_file_name = "reginald-plugin.json";
 
 /// The manifest version. It won't be required for at least the development
 /// versions of the manifests.
@@ -125,7 +123,7 @@ pub fn loadAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Manifest 
         defer walker.deinit();
 
         while (try walker.next()) |entry| {
-            if (!std.mem.eql(u8, manifest_file_name, entry.basename)) {
+            if (!std.mem.eql(u8, build_options.plugin_manifest_filename, entry.basename)) {
                 continue;
             }
 

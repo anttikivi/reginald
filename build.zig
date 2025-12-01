@@ -5,10 +5,13 @@
 
 const std = @import("std");
 const ArrayList = std.ArrayList;
+const StringArrayHashMap = std.StringArrayHashMap;
 
 const reginald_name = "reginald";
 const reginald_version: std.SemanticVersion = .{ .major = 0, .minor = 1, .patch = 0 };
 const default_env_prefix = "REGINALD_";
+const default_plugin_manifest_filename = "reginald-plugin.json";
+const default_test_plugin_dir_name = "plugins";
 
 const Options = struct {
     target: std.Build.ResolvedTarget,
@@ -18,13 +21,16 @@ const Options = struct {
     version: []const u8,
     flat: bool,
     env_prefix: []const u8,
+    plugin_manifest_filename: []const u8,
     log_level: []const u8,
+    test_plugin_dir_name: []const u8,
 
     fn buildOptions(self: Options, b: *std.Build) *std.Build.Step.Options {
         const options = b.addOptions();
         options.addOption([]const u8, "name", self.name);
         options.addOption([]const u8, "version", self.version);
         options.addOption([]const u8, "env_prefix", self.env_prefix);
+        options.addOption([]const u8, "plugin_manifest_filename", self.plugin_manifest_filename);
         options.addOption([]const u8, "log_level", self.log_level);
         return options;
     }
@@ -33,14 +39,20 @@ const Options = struct {
         const options = b.addOptions();
         options.addOption([]const u8, "install_prefix", self.install_prefix);
         options.addOption(bool, "flat", self.flat);
+        options.addOption([]const u8, "plugin_dir", b.pathJoin(&.{
+            self.install_prefix,
+            self.test_plugin_dir_name,
+        }));
         return options;
     }
 };
 
 const TestPlugin = struct {
     name: []const u8,
-    path: []const u8,
-    language: enum { zig },
+    language: enum { go, none, python, zig },
+
+    /// The files that will be copied to the destination directory.
+    files: [][]const u8,
 };
 
 pub fn build(b: *std.Build) !void {
@@ -48,11 +60,14 @@ pub fn build(b: *std.Build) !void {
         .check = b.step("check", "Check if Reginald compiles"),
         .ci = b.step("ci", "Run the CI test suite"),
         .install = b.getInstallStep(),
+        .install_test_plugins = b.step(
+            "install-test-plugins",
+            "Build and install the test plugins",
+        ),
         .run = b.step("run", "Run Reginald"),
         .@"test" = b.step("test", "Run tests"),
         .test_end_to_end = b.step("test-e2e", "Run the end-to-end tests"),
         .test_fmt = b.step("test-fmt", "Check formatting"),
-        .test_plugins = b.step("test-plugins", "Build the test plugins"),
         .test_toml = b.step("test-toml", "Run the `toml-test` test suite"),
         .test_unit = b.step("test-unit", "Run unit tests"),
     };
@@ -87,7 +102,19 @@ pub fn build(b: *std.Build) !void {
                 .{default_env_prefix},
             ),
         ) orelse default_env_prefix,
+        .plugin_manifest_filename = b.option([]const u8, "manifest-name", b.fmt(
+            "Use this as the filename for the manifests of plugins. Default is \"{s}\"",
+            .{default_plugin_manifest_filename},
+        )) orelse default_plugin_manifest_filename,
         .log_level = logLevelOption(b),
+        .test_plugin_dir_name = b.option(
+            []const u8,
+            "test-plugin-dir",
+            b.fmt(
+                "The name of the destination directory for the test plugins within `prefix`. Default is \"{s}\"",
+                .{default_test_plugin_dir_name},
+            ),
+        ) orelse default_test_plugin_dir_name,
     };
 
     buildCheck(b, build_steps.check, options);
@@ -103,9 +130,10 @@ pub fn build(b: *std.Build) !void {
         .test_fmt = build_steps.test_fmt,
         .test_toml = build_steps.test_toml,
         .test_unit = build_steps.test_unit,
+        .install_test_plugins = build_steps.install_test_plugins,
     }, options);
 
-    buildTestPlugins(b, build_steps.test_plugins, options);
+    buildTestPlugins(b, build_steps.install_test_plugins, options);
 
     buildCi(b, build_steps.ci);
 }
@@ -192,6 +220,7 @@ fn buildTest(b: *std.Build, steps: struct {
     test_fmt: *std.Build.Step,
     test_toml: *std.Build.Step,
     test_unit: *std.Build.Step,
+    install_test_plugins: *std.Build.Step,
 }, options: Options) void {
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -210,7 +239,10 @@ fn buildTest(b: *std.Build, steps: struct {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     steps.test_unit.dependOn(&run_unit_tests.step);
 
-    buildTestEndToEnd(b, steps.test_end_to_end, options);
+    buildTestEndToEnd(b, .{
+        .test_end_to_end = steps.test_end_to_end,
+        .install_test_plugins = steps.install_test_plugins,
+    }, options);
     buildTestToml(b, .{ .test_toml = steps.test_toml }, options);
 
     const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
@@ -225,7 +257,10 @@ fn buildTest(b: *std.Build, steps: struct {
     }
 }
 
-fn buildTestEndToEnd(b: *std.Build, step: *std.Build.Step, options: Options) void {
+fn buildTestEndToEnd(b: *std.Build, steps: struct {
+    test_end_to_end: *std.Build.Step,
+    install_test_plugins: *std.Build.Step,
+}, options: Options) void {
     const end_to_end_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/test/end_to_end_tests.zig"),
@@ -249,7 +284,10 @@ fn buildTestEndToEnd(b: *std.Build, step: *std.Build.Step, options: Options) voi
 
     const run_end_to_end_tests = b.addRunArtifact(end_to_end_tests);
     run_end_to_end_tests.setEnvironmentVariable("ZIG_EXE", b.graph.zig_exe);
-    step.dependOn(&run_end_to_end_tests.step);
+
+    run_end_to_end_tests.step.dependOn(steps.install_test_plugins);
+
+    steps.test_end_to_end.dependOn(&run_end_to_end_tests.step);
 }
 
 fn buildTestToml(
@@ -289,7 +327,13 @@ fn buildTestToml(
 }
 
 fn buildTestPlugins(b: *std.Build, step: *std.Build.Step, options: Options) void {
-    const test_plugins = resolveTestPlugins(b, step) catch |err| switch (err) {
+    const root_plugin_path = b.pathJoin(&.{ "src", "test", "plugins" });
+    const test_plugins = resolveTestPlugins(
+        b,
+        step,
+        root_plugin_path,
+        options,
+    ) catch |err| switch (err) {
         error.AccessFailed => return,
         else => {
             step.dependOn(&b.addFail(b.fmt("failed to resolve the test plugins: {t}", .{err})).step);
@@ -297,87 +341,176 @@ fn buildTestPlugins(b: *std.Build, step: *std.Build.Step, options: Options) void
         },
     };
 
-    // TODO: Add non-Zig plugins.
-    for (test_plugins) |tp| {
-        const plugin = b.addExecutable(.{
-            .name = b.fmt("{s}-{s}", .{ options.name, tp.name }),
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(b.pathJoin(&.{ tp.path, "src", "main.zig" })),
-                .target = options.target,
-                .optimize = options.optimize,
-            }),
-        });
+    var search_paths_it = test_plugins.iterator();
+    while (search_paths_it.next()) |search_path_entry| {
+        const group_root_path = b.pathJoin(&.{ root_plugin_path, search_path_entry.key_ptr.* });
 
-        const dest_path = b.pathJoin(&.{ "plugins", tp.name });
+        for (search_path_entry.value_ptr.*) |tp| {
+            const plugin_path = b.pathJoin(&.{ group_root_path, tp.name });
+            const dest_path = b.pathJoin(&.{
+                options.test_plugin_dir_name,
+                search_path_entry.key_ptr.*,
+                tp.name,
+            });
 
-        const install = b.addInstallArtifact(plugin, .{
-            .dest_dir = .{
-                .override = .{
-                    .custom = dest_path,
+            for (tp.files) |f| {
+                const install_file = b.addInstallFileWithDir(
+                    b.path(b.pathJoin(&.{ plugin_path, f })),
+                    .{ .custom = dest_path },
+                    f,
+                );
+                step.dependOn(&install_file.step);
+            }
+
+            switch (tp.language) {
+                .zig => {
+                    const plugin = b.addExecutable(.{
+                        .name = b.fmt("{s}-{s}", .{ options.name, tp.name }),
+                        .root_module = b.createModule(.{
+                            .root_source_file = b.path(b.pathJoin(&.{ plugin_path, "src", "main.zig" })),
+                            .target = options.target,
+                            .optimize = options.optimize,
+                        }),
+                    });
+                    const install = b.addInstallArtifact(plugin, .{
+                        .dest_dir = .{
+                            .override = .{
+                                .custom = dest_path,
+                            },
+                        },
+                    });
+
+                    step.dependOn(&install.step);
                 },
-            },
-        });
-
-        const manifest_src = b.path(b.pathJoin(&.{ tp.path, "reginald-plugin.json" }));
-        const install_manifest = b.addInstallFileWithDir(
-            manifest_src,
-            .{ .custom = dest_path },
-            "reginald-plugin.json",
-        );
-
-        const plugin_step = b.step(
-            b.fmt("test-plugin-{s}", .{tp.name}),
-            b.fmt("Build and install test plugin \"{s}\"", .{tp.name}),
-        );
-        plugin_step.dependOn(&install.step);
-        plugin_step.dependOn(&install_manifest.step);
-
-        step.dependOn(plugin_step);
+                else => {
+                    // no-op
+                },
+            }
+        }
     }
 }
 
-fn resolveTestPlugins(b: *std.Build, step: *std.Build.Step) ![]TestPlugin {
-    var result: ArrayList(TestPlugin) = .empty;
-    defer result.deinit(b.allocator);
+fn resolveTestPlugins(
+    b: *std.Build,
+    step: *std.Build.Step,
+    root_plugin_path: []u8,
+    options: Options,
+) !StringArrayHashMap([]TestPlugin) {
+    var result: StringArrayHashMap([]TestPlugin) = .init(b.allocator);
 
-    const plugins_path = b.pathJoin(&.{ "src", "test", "plugins" });
-    var plugin_dir = try std.fs.cwd().openDir(plugins_path, .{ .iterate = true });
-    defer plugin_dir.close();
+    var root_dir = try std.fs.cwd().openDir(root_plugin_path, .{ .iterate = true });
+    defer root_dir.close();
 
-    var it = plugin_dir.iterate();
-    while (try it.next()) |entry| {
-        if (entry.kind != .directory) {
+    var root_it = root_dir.iterate();
+    while (try root_it.next()) |root_search_entry| {
+        if (root_search_entry.kind != .directory) {
             continue;
         }
 
-        var dir = try plugin_dir.openDir(entry.name, .{});
-        defer dir.close();
+        var path_plugins: ArrayList(TestPlugin) = .empty;
 
-        dir.access(b.pathJoin(&.{ "src", "main.zig" }), .{}) catch |err| switch (err) {
-            // TODO: Add handling for non-Zig testing plugins.
-            error.FileNotFound => continue,
-            else => {
-                step.dependOn(&b.addFail(b.fmt(
-                    "cannot access \"{s}\": {t}",
-                    .{
-                        b.pathJoin(&.{ plugins_path, entry.name, "src", "main.zig" }),
+        var search_dir = try root_dir.openDir(root_search_entry.name, .{ .iterate = true });
+        defer search_dir.close();
+
+        var search_it = search_dir.iterate();
+        while (try search_it.next()) |plugin_entry| {
+            if (plugin_entry.kind != .directory) {
+                continue;
+            }
+
+            var plugin_dir = try search_dir.openDir(plugin_entry.name, .{ .iterate = true });
+            defer plugin_dir.close();
+
+            const plugin_path = b.pathJoin(&.{
+                root_plugin_path,
+                root_search_entry.name,
+                plugin_entry.name,
+            });
+            const manifest_path = b.pathJoin(&.{ plugin_path, options.plugin_manifest_filename });
+
+            plugin_dir.access(options.plugin_manifest_filename, .{}) catch |err| switch (err) {
+                error.FileNotFound => continue,
+                else => {
+                    step.dependOn(&b.addFail(b.fmt("cannot access \"{s}\": {t}", .{
+                        manifest_path,
                         err,
+                    })).step);
+                    return error.AccessFailed;
+                },
+            };
+
+            var language: @FieldType(TestPlugin, "language") = .none;
+            var files: ArrayList([]const u8) = .empty;
+
+            try files.append(b.allocator, options.plugin_manifest_filename);
+
+            var plugin_it = plugin_dir.iterate();
+            while (try plugin_it.next()) |plugin_file_entry| {
+                if (plugin_file_entry.kind != .file) {
+                    continue;
+                }
+
+                if (std.mem.endsWith(u8, plugin_file_entry.name, ".go")) {
+                    language = .go;
+                    break;
+                }
+
+                if (std.mem.endsWith(u8, plugin_file_entry.name, ".py")) {
+                    language = .python;
+                    break;
+                }
+            }
+
+            if (language == .none) {
+                language = .zig;
+
+                plugin_dir.access(b.pathJoin(&.{ "src", "main.zig" }), .{}) catch |err| switch (err) {
+                    error.FileNotFound => language = .none,
+                    else => {
+                        step.dependOn(&b.addFail(b.fmt(
+                            "cannot access \"{s}\": {t}",
+                            .{
+                                b.pathJoin(&.{
+                                    root_plugin_path,
+                                    root_search_entry.name,
+                                    plugin_entry.name,
+                                    "src",
+                                    "main.zig",
+                                }),
+                                err,
+                            },
+                        )).step);
+                        return error.AccessFailed;
                     },
-                )).step);
-                return error.AccessFailed;
-            },
-        };
+                };
+            } else switch (language) {
+                .python => {
+                    var it = plugin_dir.iterate();
+                    while (try it.next()) |entry| {
+                        if (std.mem.endsWith(u8, entry.name, ".py")) {
+                            try files.append(b.allocator, try b.allocator.dupe(u8, entry.name));
+                        }
+                    }
+                },
+                else => {},
+            }
 
-        const path = b.pathJoin(&.{ plugins_path, entry.name });
+            try path_plugins.append(b.allocator, .{
+                .name = try b.allocator.dupe(u8, plugin_entry.name),
+                .language = language,
+                .files = try files.toOwnedSlice(b.allocator),
+            });
+        }
 
-        try result.append(b.allocator, .{
-            .name = try b.allocator.dupe(u8, entry.name),
-            .path = path,
-            .language = .zig,
-        });
+        if (path_plugins.items.len > 0) {
+            try result.put(
+                try b.allocator.dupe(u8, root_search_entry.name),
+                try path_plugins.toOwnedSlice(b.allocator),
+            );
+        }
     }
 
-    return result.toOwnedSlice(b.allocator);
+    return result;
 }
 
 fn createReginaldModule(b: *std.Build, options: Options) *std.Build.Module {
