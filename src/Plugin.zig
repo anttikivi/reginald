@@ -11,7 +11,7 @@ child_process: ?std.process.Child = null,
 name: []const u8,
 type: Type,
 exec: []const u8 = "",
-// runtime: ?[]const u8 = null,
+runtime: ?[]const u8 = null,
 // args: []const []const u8 = &.{},
 namespace: []const u8 = "",
 path: ?[]const u8 = null,
@@ -52,6 +52,10 @@ pub fn init(self: *Plugin, gpa: Allocator, manifest: Manifest) !void {
 
     if (manifest.exec.len > 0) {
         self.exec = try gpa.dupe(u8, manifest.exec);
+    }
+
+    if (manifest.runtime) |rt| {
+        self.runtime = try gpa.dupe(u8, rt);
     }
 
     if (std.mem.eql(u8, manifest.name, manifest.namespace)) {
