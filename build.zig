@@ -39,10 +39,26 @@ const Options = struct {
         const options = b.addOptions();
         options.addOption([]const u8, "install_prefix", self.install_prefix);
         options.addOption(bool, "flat", self.flat);
-        options.addOption([]const u8, "plugin_dir", b.pathJoin(&.{
+        const plugin_dir = b.pathJoin(&.{
             self.install_prefix,
             self.test_plugin_dir_name,
-        }));
+        });
+        options.addOption([]const u8, "plugin_dir", plugin_dir);
+
+        // This is a really stupid hack which I don't feel good about.
+        var escaped_list: ArrayList(u8) = .empty;
+        for (plugin_dir) |c| {
+            if (c == '\\') {
+                escaped_list.append(b.allocator, '\\') catch @panic("OOM");
+            }
+            escaped_list.append(b.allocator, c) catch @panic("OOM");
+        }
+        options.addOption(
+            []const u8,
+            "plugin_dir_escaped",
+            escaped_list.toOwnedSlice(b.allocator) catch @panic("OOM"),
+        );
+
         return options;
     }
 };

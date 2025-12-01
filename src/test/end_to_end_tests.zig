@@ -1,7 +1,10 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const test_options = @import("test_options");
 const Shell = @import("Shell.zig");
 const TmpReginald = @import("TmpReginald.zig");
+
+const native_os = builtin.target.os.tag;
 
 test "unconfigured run" {
     var shell = try Shell.create(std.testing.allocator);
@@ -43,11 +46,11 @@ test "plugins no runtime field" {
     var tmp_reginald = try TmpReginald.init(std.testing.allocator, shell, .{ .flat = true });
     defer tmp_reginald.deinit(std.testing.allocator);
 
-    const plugin_path = try std.fs.path.join(std.testing.allocator, &.{
-        test_options.plugin_dir,
-        "no_runtime",
-    });
-    defer std.testing.allocator.free(plugin_path);
+    const plugin_path = if (native_os == .windows) blk: {
+        break :blk test_options.plugin_dir_escaped ++ "\\\\no_runtime";
+    } else blk: {
+        break :blk test_options.plugin_dir_escaped ++ std.fs.path.sep_str ++ "no_runtime";
+    };
 
     const config = try std.fmt.allocPrint(std.testing.allocator,
         \\plugin-paths = ["{s}"]
