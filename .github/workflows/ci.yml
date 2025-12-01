@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.0
-      - uses: mlugg/setup-zig@v2.0.5
+      - uses: mlugg/setup-zig@v2.1.0
       - run: zig build ci -- check
 
   test:
@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6.0.0
-      - uses: mlugg/setup-zig@v2.0.5
+      - uses: mlugg/setup-zig@v2.1.0
       - uses: actions/setup-go@v6.1.0
         with:
           go-version: "1.25"
