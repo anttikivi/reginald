@@ -13,10 +13,10 @@ existing tools are either too heavy requiring runtimes like Python, quite
 complicated forcing you into rigid workflows, or too fragile like Bash scripts
 that quickly become unmaintainable.
 
-Reginald offers a fast, reliable, and effortless workflow for this. Built in
-Zig, it’s self-contained, cross-platform, and extensible through a
-language-agnostic plugin system that uses JSON-RPC 2.0. You can add your own
-tasks and commands with ease in any language you would like.
+Reginald offers a fast, reliable, and effortless workflow for this. It’s
+self-contained, cross-platform, and extensible through a language-agnostic
+plugin system that uses JSON-RPC 2.0. You can add your own tasks and commands
+with ease in any language you would like.
 
 Reginald is the personal workstation valet: a task runner that executes tasks
 idempotently according to your config file. It comes with built-in plugins for

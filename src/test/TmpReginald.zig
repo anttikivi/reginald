@@ -13,7 +13,7 @@ const assert = std.debug.assert;
 
 const units = @import("units");
 const Shell = @import("Shell.zig");
-const MiB = units.MiB;
+const mib = units.mib;
 
 const log = std.log.scoped(.tmp_reginald);
 

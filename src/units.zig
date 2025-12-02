@@ -6,19 +6,19 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-// Import these as `const GiB = stdx.GiB;`
-pub const KiB = 1 << 10;
-pub const MiB = 1 << 20;
-pub const GiB = 1 << 30;
-pub const TiB = 1 << 40;
-pub const PiB = 1 << 50;
+// Import these as `const GiB = units.GiB;`
+pub const kib = 1 << 10;
+pub const mib = 1 << 20;
+pub const gib = 1 << 30;
+pub const tib = 1 << 40;
+pub const pib = 1 << 50;
 
 comptime {
-    assert(KiB == 1024);
-    assert(MiB == 1024 * KiB);
-    assert(GiB == 1024 * MiB);
-    assert(TiB == 1024 * GiB);
-    assert(PiB == 1024 * TiB);
+    assert(kib == 1024);
+    assert(mib == 1024 * kib);
+    assert(gib == 1024 * mib);
+    assert(tib == 1024 * gib);
+    assert(pib == 1024 * tib);
 }
 
 /// Non-negative time difference between two `Instant`s.

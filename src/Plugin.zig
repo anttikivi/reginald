@@ -1,8 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const build_options = @import("build_options");
+
 pub const Host = @import("Plugin/Host.zig");
 pub const Manifest = @import("Plugin/Manifest.zig");
+const units = @import("units.zig");
+const kib = units.kib;
 
 const Plugin = @This();
 
@@ -20,11 +24,11 @@ buffer: []u8,
 fba: std.heap.FixedBufferAllocator,
 
 /// The default memory buffer size of a plugin in bytes.
-pub const default_buffer_size = 16 * 1024; // 16KiB
+pub const default_buffer_size = 16 * kib;
 
 /// The plugin name prefix that is not taken into account in the plugin's
 /// namespace.
-pub const prefix = "reginald-";
+pub const prefix = build_options.name ++ "-";
 
 /// The special token used in the `args` array of a plugin's manifest to denote
 /// the plugin executable.

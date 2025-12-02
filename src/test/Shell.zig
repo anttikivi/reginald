@@ -30,7 +30,7 @@ const assert = std.debug.assert;
 
 const BitSet = @import("bit_set").BitSet;
 const units = @import("units");
-const MiB = units.MiB;
+const mib = units.mib;
 
 const Shell = @This();
 
@@ -396,7 +396,7 @@ fn execInner(
         capture_stdout: ?*[]const u8 = null,
         capture_stderr: ?*[]const u8 = null,
 
-        output_limit_bytes: usize = 128 * MiB,
+        output_limit_bytes: usize = 128 * mib,
         timeout: units.Duration = .minutes(10),
     },
 ) !void {
