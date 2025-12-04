@@ -36,7 +36,7 @@ const Options = struct {
     }
 
     fn testOptions(self: Options, b: *std.Build) *std.Build.Step.Options {
-        const options = b.addOptions();
+        const options = self.buildOptions(b);
         options.addOption([]const u8, "install_prefix", self.install_prefix);
         options.addOption(bool, "flat", self.flat);
         const plugin_dir = b.pathJoin(&.{
@@ -134,12 +134,10 @@ pub fn build(b: *std.Build) !void {
     };
 
     buildCheck(b, build_steps.check, options);
-
     buildReginald(b, .{
         .install = build_steps.install,
         .run = build_steps.run,
     }, options);
-
     buildTest(b, .{
         .@"test" = build_steps.@"test",
         .test_end_to_end = build_steps.test_end_to_end,
@@ -148,9 +146,7 @@ pub fn build(b: *std.Build) !void {
         .test_unit = build_steps.test_unit,
         .install_test_plugins = build_steps.install_test_plugins,
     }, options);
-
     buildTestPlugins(b, build_steps.install_test_plugins, options);
-
     buildCi(b, build_steps.ci);
 }
 
@@ -245,8 +241,7 @@ fn buildTest(b: *std.Build, steps: struct {
             .optimize = options.optimize,
         }),
     });
-    unit_tests.root_module.addOptions("build_options", options.buildOptions(b));
-    unit_tests.root_module.addOptions("test_options", options.testOptions(b));
+    unit_tests.root_module.addOptions("build_options", options.testOptions(b));
 
     if (options.target.result.os.tag != .windows) {
         unit_tests.linkLibC();
@@ -295,8 +290,7 @@ fn buildTestEndToEnd(b: *std.Build, steps: struct {
         "units",
         b.addModule("units", .{ .root_source_file = b.path("src/units.zig") }),
     );
-    end_to_end_tests.root_module.addOptions("build_options", options.buildOptions(b));
-    end_to_end_tests.root_module.addOptions("test_options", options.testOptions(b));
+    end_to_end_tests.root_module.addOptions("build_options", options.testOptions(b));
 
     const run_end_to_end_tests = b.addRunArtifact(end_to_end_tests);
     run_end_to_end_tests.setEnvironmentVariable("ZIG_EXE", b.graph.zig_exe);

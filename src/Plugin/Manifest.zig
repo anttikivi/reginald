@@ -1,21 +1,21 @@
-//! A plugin manifest. The manifests are initialized with `loadAll`, and all of
-//! the initialized manifests must be freed by calling `deinit` on them.
+//! Intermediate program representation of a plugin manifest. The manifests are
+//! initialized with `loadAll`, and all of the initialized manifests must be
+//! freed by calling `deinit` on them.
 
-const std = @import("std");
+const Manifest = @This();
+
 const build_options = @import("build_options");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
+const log = std.log.scoped(.plugin);
 const StringHashMap = std.StringHashMap;
 
 const Config = @import("../Config.zig");
 const core = @import("core.zig");
 const output = @import("../output.zig");
 const Plugin = @import("../Plugin.zig");
-
-const Manifest = @This();
-
-const plugin_log = std.log.scoped(.plugin);
 
 /// The manifest version. It won't be required for at least the development
 /// versions of the manifests.
@@ -25,7 +25,7 @@ version: u8 = 0,
 name: []const u8,
 
 /// The type of the plugin executable as reported in the manifest.
-type: Plugin.Type = .standalone,
+type: Plugin.ExecutableType = .standalone,
 
 /// The name of the executable file in the plugin's directory that is used as
 /// the plugin.
@@ -104,14 +104,14 @@ pub fn loadAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Manifest 
 
         try manifests.append(gpa, m);
 
-        plugin_log.debug("loaded manifest for \"{s}\": {f}", .{ m.name, m });
+        log.debug("loaded manifest for \"{s}\": {f}", .{ m.name, m });
     }
 
     const paths = cfg.get([]const []const u8, "plugin_paths") orelse {
         return output.fail("no plugin search paths configured", .{});
     };
     for (paths) |search_path| {
-        plugin_log.debug("searching for plugins from \"{s}\"", .{search_path});
+        log.debug("searching for plugins from \"{s}\"", .{search_path});
 
         var search_dir = dir.openDir(search_path, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => return output.fail("plugin seach path \"{s}\" does not exist", .{search_path}),
@@ -130,7 +130,7 @@ pub fn loadAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Manifest 
             const full_path = try std.fs.path.resolve(gpa, &.{ search_path, entry.path });
             defer gpa.free(full_path);
 
-            plugin_log.debug("found a plugin manifest at \"{s}\"", .{full_path});
+            log.debug("found a plugin manifest at \"{s}\"", .{full_path});
 
             var file = entry.dir.openFile(entry.basename, .{ .mode = .read_only }) catch |err| {
                 try output.discard(
@@ -343,7 +343,7 @@ fn parseManifest(gpa: Allocator, data: []const u8, path: []const u8) !Manifest {
     );
     errdefer gpa.free(manifest.path.?);
 
-    plugin_log.debug("parsed manifest for \"{s}\": {f}", .{ manifest.name, manifest });
+    log.debug("parsed manifest for \"{s}\": {f}", .{ manifest.name, manifest });
 
     const dir_name = std.fs.path.basename(manifest.path.?);
     if (!std.mem.eql(u8, dir_name, manifest.name) and !std.mem.eql(u8, dir_name, manifest.namespace)) {

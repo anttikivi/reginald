@@ -2,8 +2,8 @@
 
 const Args = @This();
 
-const std = @import("std");
 const builtin = @import("builtin");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;

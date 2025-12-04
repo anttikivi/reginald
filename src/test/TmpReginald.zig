@@ -6,18 +6,17 @@
 // License, Version 2.0. It is modified by Antti Kivi. See THIRD_PARTY_NOTICES
 // for more information.
 
-const std = @import("std");
+const TmpReginald = @This();
+
 const builtin = @import("builtin");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-
-const units = @import("units");
-const Shell = @import("Shell.zig");
-const mib = units.mib;
-
 const log = std.log.scoped(.tmp_reginald);
 
-const TmpReginald = @This();
+const Shell = @import("Shell.zig");
+const units = @import("units");
+const mib = units.mib;
 
 /// Path to the executable.
 reginald_exe: []const u8,

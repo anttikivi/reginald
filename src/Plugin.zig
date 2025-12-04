@@ -1,26 +1,34 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
+const Plugin = @This();
 
 const build_options = @import("build_options");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
+const assert = std.debug.assert;
 
-pub const Host = @import("Plugin/Host.zig");
-pub const Manifest = @import("Plugin/Manifest.zig");
+const Config = @import("Config.zig");
+const core = @import("Plugin/core.zig");
+const Host = @import("Plugin/Host.zig");
+const Manifest = @import("Plugin/Manifest.zig");
 const units = @import("units.zig");
 const kib = units.kib;
 
-const Plugin = @This();
-
+/// The allocator that the plugin client uses.
 allocator: Allocator,
 child_process: ?std.process.Child = null,
 name: []const u8,
-type: Type,
+type: ExecutableType,
 exec: []const u8 = "",
 runtime: ?[]const u8 = null,
 // args: []const []const u8 = &.{},
 namespace: []const u8 = "",
 path: ?[]const u8 = null,
 
+/// The memory buffer used by the plugin client after initialization.
 buffer: []u8,
+
+/// The allocator instance that creates the allocator to use during the plugin
+/// execution.
 fba: std.heap.FixedBufferAllocator,
 
 /// The default memory buffer size of a plugin in bytes.
@@ -38,12 +46,12 @@ pub const exec_token = "$EXEC";
 /// the runtime executable.
 pub const runtime_token = "$RUNTIME";
 
+/// The plugin executable types. The type of a plugin determines the execution
+/// strategy for it.
+pub const ExecutableType = enum { core, standalone, runtime };
+
 /// The states of a plugin.
 pub const State = enum { not_started, ready, running, stopped };
-
-/// The plugin types. The type of a plugin determines the execution strategy
-/// for it.
-pub const Type = enum { core, standalone, runtime };
 
 pub fn init(self: *Plugin, gpa: Allocator, manifest: Manifest) !void {
     self.* = .{
@@ -94,4 +102,17 @@ pub fn deinit(self: *Plugin, gpa: Allocator) void {
     }
 
     gpa.free(self.name);
+}
+
+/// Find all of the plugin manifest files in the plugin search paths and create
+/// the plugin instances from them.
+pub fn createAll(gpa: Allocator, cfg: *const Config, dir: std.fs.Dir) ![]Plugin {
+    var result: ArrayList(Plugin) = .empty;
+    errdefer result.deinit(gpa);
+
+    const manifests = try Manifest.loadAll(gpa, cfg, dir);
+    defer gpa.free(manifests);
+    defer for (manifests) |*m| m.deinit(gpa);
+
+    return result.toOwnedSlice(gpa);
 }

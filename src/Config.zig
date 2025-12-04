@@ -6,9 +6,9 @@
 
 const Config = @This();
 
-const std = @import("std");
-const builtin = @import("builtin");
 const build_options = @import("build_options");
+const builtin = @import("builtin");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
@@ -21,7 +21,7 @@ const output = @import("output.zig");
 const toml = @import("toml.zig");
 
 pub const Specs = @import("Config/Specs.zig");
-pub const OptionSpec = Specs.OptionSpec;
+const OptionSpec = Specs.OptionSpec;
 pub const OptionType = Specs.OptionType;
 
 allocator: Allocator,

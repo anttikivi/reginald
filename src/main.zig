@@ -1,6 +1,6 @@
-const std = @import("std");
-const builtin = @import("builtin");
 const build_options = @import("build_options");
+const builtin = @import("builtin");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
@@ -10,8 +10,8 @@ const Plugin = @import("Plugin.zig");
 const output = @import("output.zig");
 
 const native_os = builtin.target.os.tag;
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 var stdout_buffer: [4096]u8 = undefined;
 
 /// The runtime log level. It is set according to the config options.
@@ -146,12 +146,15 @@ fn run() !void {
     std.log.info("running Reginald version {s}", .{build_options.version});
     std.log.debug("initial config parsed:\n{f}", .{cfg});
 
-    const manifests = try Plugin.Manifest.loadAll(gpa, &cfg, dir);
-    defer gpa.free(manifests);
-    defer for (manifests) |*m| m.deinit(gpa);
+    const plugins = try Plugin.createAll(gpa, &cfg, dir);
+    defer gpa.free(plugins);
 
-    var plugin_host = try Plugin.Host.init(gpa, manifests);
-    defer plugin_host.deinit(gpa);
+    // const manifests = try Plugin.Manifest.loadAll(gpa, &cfg, dir);
+    // defer gpa.free(manifests);
+    // defer for (manifests) |*m| m.deinit(gpa);
+
+    // var plugin_host = try Plugin.Host.init(gpa, manifests);
+    // defer plugin_host.deinit(gpa);
 }
 
 test {

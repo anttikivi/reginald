@@ -1,6 +1,7 @@
-const std = @import("std");
+const build_options = @import("build_options");
 const builtin = @import("builtin");
-const test_options = @import("test_options");
+const std = @import("std");
+
 const Shell = @import("Shell.zig");
 const TmpReginald = @import("TmpReginald.zig");
 
@@ -47,9 +48,9 @@ test "plugins no runtime field" {
     defer tmp_reginald.deinit(std.testing.allocator);
 
     const plugin_path = if (native_os == .windows) blk: {
-        break :blk test_options.plugin_dir_escaped ++ "\\\\no_runtime";
+        break :blk build_options.plugin_dir_escaped ++ "\\\\no_runtime";
     } else blk: {
-        break :blk test_options.plugin_dir_escaped ++ std.fs.path.sep_str ++ "no_runtime";
+        break :blk build_options.plugin_dir_escaped ++ std.fs.path.sep_str ++ "no_runtime";
     };
 
     const config = try std.fmt.allocPrint(std.testing.allocator,

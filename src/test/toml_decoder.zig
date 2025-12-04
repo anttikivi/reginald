@@ -1,5 +1,5 @@
-const std = @import("std");
 const builtin = @import("builtin");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const fmt = std.fmt;
 const Io = std.Io;

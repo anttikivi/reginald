@@ -22,8 +22,10 @@
 // License, Version 2.0. It is modified by Antti Kivi. See THIRD_PARTY_NOTICES
 // for more information.
 
-const std = @import("std");
+const Shell = @This();
+
 const builtin = @import("builtin");
+const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
@@ -31,8 +33,6 @@ const assert = std.debug.assert;
 const BitSet = @import("bit_set").BitSet;
 const units = @import("units");
 const mib = units.mib;
-
-const Shell = @This();
 
 /// For internal use by the `Shell` itself.
 gpa: Allocator,

@@ -1,5 +1,7 @@
 //! The runtime host of plugins.
 
+const Host = @This();
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -7,8 +9,6 @@ const ArrayList = std.ArrayList;
 const Manifest = @import("Manifest.zig");
 const Plugin = @import("../Plugin.zig");
 const Runtime = @import("Runtime.zig");
-
-const Host = @This();
 
 plugins: []Plugin,
 runtimes: []Runtime,
