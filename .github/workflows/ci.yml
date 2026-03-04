@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: © 2026 Antti Kivi <antti@anttikivi.com>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: ci
+
+jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.14"
+      - run: pipx run reuse lint
