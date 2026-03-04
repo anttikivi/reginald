@@ -1,4 +1,12 @@
-# Reginald
+<h1 align="center">Reginald</h1>
+
+<div align="center">
+
+Personal workstation valet
+
+[![ci](https://github.com/anttikivi/reginald/actions/workflows/ci.yml/badge.svg)](https://github.com/anttikivi/reginald/actions/workflows/ci.yml)
+
+</div>
 
 Reginald is a deterministic workstation bootstrap and maintenance tool.
 
