@@ -1,9 +1,76 @@
+// SPDX-FileCopyrightText: © 2026 Antti Kivi <antti@anttikivi.com>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 const std = @import("std");
+const Io = std.Io;
 
 pub fn build(b: *std.Build) void {
-    const test_reuse_step = b.step("test-reuse", "Check the project for REUSE compliance");
+    const fmt_reuse_step = b.step(
+        "fmt-reuse",
+        "Annotate the source files with license information",
+    );
 
     const uvx_program = b.findProgram(&.{"uvx"}, &.{});
+    if (uvx_program) |uvx| {
+        const uvx_reuse = b.addSystemCommand(&.{
+            uvx,
+            "--from=reuse[charset-normalizer]",
+            "reuse",
+            "annotate",
+            "--copyright=Antti Kivi <antti@anttikivi.com>",
+            "--license=GPL-3.0-or-later",
+            "--copyright-prefix=spdx-symbol",
+        });
+
+        const io = b.graph.io;
+        const cwd: Io.Dir = .cwd();
+
+        const build_root = b.build_root.path.?;
+        var dir = cwd.openDir(io, build_root, .{ .iterate = true }) catch |err| std.debug.panic(
+            "unable to open directory {s}: {t}",
+            .{ build_root, err },
+        );
+        defer dir.close(io);
+
+        var walker = dir.walk(b.allocator) catch @panic("OOM");
+        defer walker.deinit();
+
+        while (walker.next(io) catch |err| std.debug.panic(
+            "failed to walk directory {s}: {t}",
+            .{ build_root, err },
+        )) |entry| {
+            if (entry.kind != .file) {
+                continue;
+            }
+
+            if (std.mem.find(u8, entry.path, ".zig-cache") != null) {
+                continue;
+            }
+
+            if (std.mem.find(u8, entry.path, "zig-out") != null) {
+                continue;
+            }
+
+            if (!std.mem.endsWith(u8, entry.path, ".zig")) {
+                continue;
+            }
+
+            uvx_reuse.addFileArg(b.path(entry.path));
+        }
+
+        uvx_reuse.setCwd(b.path("."));
+        uvx_reuse.stdio = .inherit;
+        fmt_reuse_step.dependOn(&uvx_reuse.step);
+    } else |err| switch (err) {
+        error.FileNotFound => std.debug.print(
+            "not running \"uvx reuse annotate\", uvx not found\n",
+            .{},
+        ),
+    }
+
+    const test_reuse_step = b.step("test-reuse", "Check the project for REUSE compliance");
+
     if (uvx_program) |uvx| {
         const uvx_reuse = b.addSystemCommand(&.{
             uvx,
