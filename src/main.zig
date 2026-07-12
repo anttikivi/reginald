@@ -3,14 +3,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Io = std.Io;
 
 const usage =
-    \\Usage: reginald [--version] [-h | --help] <command> [<args>]
+    \\Usage: reginald [--version] [-h | --help] [--log-level debug|info|warn|err]
+    \\                <command> [<args>]
     \\
     \\Commands:
     \\
-    \\  plan    Resolve and print the execution plan for the current configuration
+    \\  help        Print the usage of the subcommand given as the next argument and
+    \\              exit
+    \\  plan        Resolve and print the execution plan for the current configuration
+    \\  version     Print the program version number and exit
+    \\
+    \\Global options:
+    \\
+    \\  -h, --help
+    \\      Print this help message and exit
+    \\  --log-level debug|info|warn|err
+    \\      Print log messages that are either equal to or have greater severity than
+    \\      the set level
+    \\  --version
+    \\      Print the program version number and exit
     \\
 ;
 
@@ -72,3 +87,5 @@ fn printVersion(io: Io) !void {
     try stdout.flush();
     return std.process.cleanExit(io);
 }
+
+// vim: set colorcolumn=86,100:
