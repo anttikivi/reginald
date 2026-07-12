@@ -92,6 +92,16 @@ pub fn build(b: *std.Build) void {
         ),
     }
 
+    const test_fmt_step = b.step(
+        "test-fmt",
+        "Check whether the source files have conforming formatting",
+    );
+    const check_fmt = b.addFmt(.{
+        .paths = fmt_include_paths,
+        .check = true,
+    });
+    test_fmt_step.dependOn(&check_fmt.step);
+
     const test_reuse_step = b.step("test-reuse", "Check the project for REUSE compliance");
 
     if (uvx_program) |uvx| {
