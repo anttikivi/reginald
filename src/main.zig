@@ -40,7 +40,7 @@ const Cmd = enum {
     version,
 };
 
-const ParsedArgs = struct {
+const GlobalOptions = struct {
     log_level: ?std.log.Level = null,
 };
 
@@ -54,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
         try printIncorrectUsage(io, "expected arguments", .{});
     }
 
-    var parsed_args: ParsedArgs = .{};
+    var global_opts: GlobalOptions = .{};
     var cmd: Cmd = undefined;
 
     args = args[1..];
@@ -67,7 +67,7 @@ pub fn main(init: std.process.Init) !void {
                 const val = parseLongOptionValue(args[i..], "--log-level") catch
                     printIncorrectUsage(io, "option \"--log-level\" requires a value", .{});
 
-                parsed_args.log_level = std.meta.stringToEnum(std.log.Level, val) orelse {
+                global_opts.log_level = std.meta.stringToEnum(std.log.Level, val) orelse {
                     printIncorrectUsage(io, "invalid log level: {s}", .{val});
                 };
 
