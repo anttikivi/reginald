@@ -60,7 +60,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var global_opts: GlobalOptions = .{};
-    var cmd: Cmd = undefined;
+    var cmd: ?Cmd = null;
 
     args = args[1..];
     var i: usize = 0;
@@ -94,7 +94,11 @@ pub fn main(init: std.process.Init) !void {
         break;
     }
 
-    switch (cmd) {
+    if (cmd == null) {
+        printIncorrectUsage(io, "no subcommand", .{});
+    }
+
+    switch (cmd.?) {
         .@"-h", .@"--help" => return printHelp(io, usage),
         .@"--version", .version => return printVersion(io),
         .plan => return cmdPlan(io, args[i..]),
