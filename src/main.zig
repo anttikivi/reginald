@@ -5,6 +5,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
+const testing = std.testing;
 
 const usage =
     \\Usage: reginald [--version] [-h | --help] [--log-level debug|info|warn|err]
@@ -62,7 +63,10 @@ pub fn main(init: std.process.Init) !void {
         const arg = args[i];
 
         const arg_cmd = std.meta.stringToEnum(Cmd, arg) orelse {
-            if (parseLongOptionValue(io, args[i..], "--log-level")) |val| {
+            if (std.mem.startsWith(u8, arg, "--log-level")) {
+                const val = parseLongOptionValue(args[i..], "--log-level") catch
+                    printIncorrectUsage(io, "option \"--log-level\" requires a value", .{});
+
                 parsed_args.log_level = std.meta.stringToEnum(std.log.Level, val) orelse {
                     printIncorrectUsage(io, "invalid log level: {s}", .{val});
                 };
@@ -84,26 +88,23 @@ pub fn main(init: std.process.Init) !void {
     switch (cmd) {
         .@"-h", .@"--help" => return printHelp(io, usage),
         .@"--version", .version => return printVersion(io),
-        .plan => std.debug.print("planning\n", .{}),
+        .plan => return cmdPlan(io, args[i..]),
     }
-    return std.process.cleanExit(io);
 }
 
-/// Parse the value of a long command-line option that requires a value. The function returns `null`
-/// if the option doesn't match.
-fn parseLongOptionValue(io: Io, args: []const []const u8, option: []const u8) ?[]const u8 {
+/// Parse the value of a long command-line option that requires a value. The args slice should start
+/// with the option currently being parsed. The function assumes that the current argument matches
+/// the option.
+fn parseLongOptionValue(args: []const []const u8, option: []const u8) error{NoValue}![]const u8 {
     assert(args.len > 0);
     assert(option.len > 0);
+    assert(std.mem.startsWith(u8, args[0], option));
 
     const arg = args[0];
 
-    if (!std.mem.startsWith(u8, arg, option)) {
-        return null;
-    }
-
     if (arg.len == option.len) {
         if (args.len <= 1) {
-            printIncorrectUsage(io, "option \"{s}\" requires a value", .{option});
+            return error.NoValue;
         }
 
         return args[1];
@@ -112,7 +113,7 @@ fn parseLongOptionValue(io: Io, args: []const []const u8, option: []const u8) ?[
     assert(arg.len > option.len);
 
     if (arg[option.len] != '=') {
-        return null;
+        return error.NoValue;
     }
 
     return arg[option.len + 1 ..];
@@ -138,6 +139,35 @@ fn printVersion(io: Io) !void {
     try stdout.print("0.0.0\n", .{});
     try stdout.flush();
     return std.process.cleanExit(io);
+}
+
+fn cmdPlan(io: Io, args: []const []const u8) !void {
+    _ = args;
+
+    return std.process.cleanExit(io);
+}
+
+test parseLongOptionValue {
+    {
+        const args = &.{ "--log-level", "info" };
+        const result = try parseLongOptionValue(args, "--log-level");
+        try testing.expectEqualStrings("info", result);
+    }
+    {
+        const args = &.{"--log-level=info"};
+        const result = try parseLongOptionValue(args, "--log-level");
+        try testing.expectEqualStrings("info", result);
+    }
+    {
+        const args = &.{"--log-level="};
+        const result = try parseLongOptionValue(args, "--log-level");
+        try testing.expectEqualStrings("", result);
+    }
+    {
+        const args = &.{"--log-level"};
+        const result = parseLongOptionValue(args, "--log-level");
+        try testing.expectError(error.NoValue, result);
+    }
 }
 
 // vim: set colorcolumn=86,100:

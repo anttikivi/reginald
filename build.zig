@@ -92,6 +92,20 @@ pub fn build(b: *std.Build) void {
         ),
     }
 
+    const test_step = b.step("test", "Run all the tests");
+    test_step.dependOn(&exe.step);
+
+    const test_unit_step = b.step("test-unit", "Run the unit tests");
+    const unit_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_unit_step.dependOn(&b.addRunArtifact(unit_test).step);
+    test_step.dependOn(test_unit_step);
+
     const test_fmt_step = b.step(
         "test-fmt",
         "Check whether the source files have conforming formatting",
@@ -101,6 +115,7 @@ pub fn build(b: *std.Build) void {
         .check = true,
     });
     test_fmt_step.dependOn(&check_fmt.step);
+    test_step.dependOn(test_fmt_step);
 
     const test_reuse_step = b.step("test-reuse", "Check the project for REUSE compliance");
 
