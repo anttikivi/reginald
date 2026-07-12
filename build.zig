@@ -15,6 +15,9 @@ pub fn build(b: *std.Build) void {
         uvx_reuse.stdio = .inherit;
         test_reuse_step.dependOn(&uvx_reuse.step);
     } else |err| switch (err) {
-        error.FileNotFound => std.debug.print("not running \"uvx reuse lint\", uvx not found", .{}),
+        error.FileNotFound => std.debug.print(
+            "not running \"uvx reuse lint\", uvx not found\n",
+            .{},
+        ),
     }
 }
