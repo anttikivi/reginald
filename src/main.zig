@@ -44,6 +44,11 @@ const GlobalOptions = struct {
     log_level: ?std.log.Level = null,
 };
 
+const PlanOptions = struct {
+    config: ?[]const u8 = null,
+    jobs: ?i8 = null,
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
@@ -64,6 +69,10 @@ pub fn main(init: std.process.Init) !void {
 
         const arg_cmd = std.meta.stringToEnum(Cmd, arg) orelse {
             if (std.mem.startsWith(u8, arg, "--log-level")) {
+                if (global_opts.log_level != null) {
+                    std.process.fatal("option \"--log-level\" can only be specified once", .{});
+                }
+
                 const val = parseLongOptionValue(args[i..], "--log-level") catch
                     printIncorrectUsage(io, "option \"--log-level\" requires a value", .{});
 
@@ -142,7 +151,51 @@ fn printVersion(io: Io) !void {
 }
 
 fn cmdPlan(io: Io, args: []const []const u8) !void {
-    _ = args;
+    var opts: PlanOptions = .{};
+
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+
+        if (std.mem.startsWith(u8, arg, "--")) {
+            if (std.mem.startsWith(u8, arg, "--config")) {
+                if (opts.config != null) {
+                    std.process.fatal("option \"--config\" can only be specified once", .{});
+                }
+
+                opts.config = parseLongOptionValue(args[i..], "--config") catch
+                    printIncorrectUsage(io, "option \"--config\" requires a value", .{});
+
+                if (arg.len == "--config".len) {
+                    i += 1;
+                }
+            } else if (std.mem.startsWith(u8, arg, "--jobs")) {
+                if (opts.jobs != null) {
+                    std.process.fatal("option \"--jobs\" can only be specified once", .{});
+                }
+
+                const val = parseLongOptionValue(args[i..], "--jobs") catch
+                    printIncorrectUsage(io, "option \"--jobs\" requires a value", .{});
+
+                opts.jobs = std.fmt.parseInt(i8, val, 0) catch |err| switch (err) {
+                    error.Overflow => std.process.fatal(
+                        "value for \"--jobs\" does not fit into signed 8-bit integer: {s}",
+                        .{val},
+                    ),
+                    error.InvalidCharacter => std.process.fatal(
+                        "failed to parse value of option \"--jobs\": {s}",
+                        .{val},
+                    ),
+                };
+
+                if (arg.len == "--jobs".len) {
+                    i += 1;
+                }
+            } else {
+                printIncorrectUsage(io, "unknown argument: {s}", .{arg});
+            }
+        }
+    }
 
     return std.process.cleanExit(io);
 }
