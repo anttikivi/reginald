@@ -23,6 +23,12 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run Reginald");
     run_step.dependOn(&run_exe.step);
 
+    const fmt_include_paths = &.{ "src", "build.zig" };
+
+    const fmt_step = b.step("fmt", "Modify source files in place to have conforming formatting");
+    const do_fmt = b.addFmt(.{ .paths = fmt_include_paths });
+    fmt_step.dependOn(&do_fmt.step);
+
     const fmt_reuse_step = b.step(
         "fmt-reuse",
         "Annotate the source files with license information",
