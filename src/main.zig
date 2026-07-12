@@ -40,27 +40,83 @@ const Cmd = enum {
     version,
 };
 
+const ParsedArgs = struct {
+    log_level: ?std.log.Level = null,
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const args = try init.minimal.args.toSlice(arena);
+    var args = try init.minimal.args.toSlice(arena);
 
     if (args.len <= 1) {
         try printIncorrectUsage(io, "expected arguments", .{});
     }
 
-    const cmd = args[1];
-    switch (std.meta.stringToEnum(Cmd, cmd) orelse printIncorrectUsage(
-        io,
-        "unknown argument: {s}",
-        .{cmd},
-    )) {
+    var parsed_args: ParsedArgs = .{};
+    var cmd: Cmd = undefined;
+
+    args = args[1..];
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+
+        const arg_cmd = std.meta.stringToEnum(Cmd, arg) orelse {
+            if (parseLongOptionValue(io, args[i..], "--log-level")) |val| {
+                parsed_args.log_level = std.meta.stringToEnum(std.log.Level, val) orelse {
+                    printIncorrectUsage(io, "invalid log level: {s}", .{val});
+                };
+
+                if (arg.len == "--log-level".len) {
+                    i += 1;
+                }
+            } else {
+                printIncorrectUsage(io, "unknown argument: {s}", .{arg});
+            }
+
+            continue;
+        };
+
+        cmd = arg_cmd;
+        break;
+    }
+
+    switch (cmd) {
         .@"-h", .@"--help" => return printHelp(io, usage),
         .@"--version", .version => return printVersion(io),
-        .plan => {},
+        .plan => std.debug.print("planning\n", .{}),
     }
     return std.process.cleanExit(io);
+}
+
+/// Parse the value of a long command-line option that requires a value. The function returns `null`
+/// if the option doesn't match.
+fn parseLongOptionValue(io: Io, args: []const []const u8, option: []const u8) ?[]const u8 {
+    assert(args.len > 0);
+    assert(option.len > 0);
+
+    const arg = args[0];
+
+    if (!std.mem.startsWith(u8, arg, option)) {
+        return null;
+    }
+
+    if (arg.len == option.len) {
+        if (args.len <= 1) {
+            printIncorrectUsage(io, "option \"{s}\" requires a value", .{option});
+        }
+
+        return args[1];
+    }
+
+    assert(arg.len > option.len);
+
+    if (arg[option.len] != '=') {
+        return null;
+    }
+
+    return arg[option.len + 1 ..];
 }
 
 fn printIncorrectUsage(io: Io, comptime fmt: []const u8, args: anytype) noreturn {
