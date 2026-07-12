@@ -29,7 +29,6 @@ const usage =
     \\
 ;
 
-var stderr_buffer: [4096]u8 = undefined;
 var stdout_buffer: [4096]u8 = undefined;
 
 const Cmd = enum {
@@ -120,10 +119,7 @@ fn parseLongOptionValue(io: Io, args: []const []const u8, option: []const u8) ?[
 }
 
 fn printIncorrectUsage(io: Io, comptime fmt: []const u8, args: anytype) noreturn {
-    var stderr_writer = Io.File.stderr().writer(io, &stderr_buffer);
-    const stderr = &stderr_writer.interface;
-    stderr.writeAll(usage) catch {};
-    stderr.flush() catch {};
+    Io.File.stderr().writeStreamingAll(io, usage) catch {};
     std.process.fatal(fmt, args);
 }
 
