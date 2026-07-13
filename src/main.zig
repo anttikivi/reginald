@@ -40,13 +40,10 @@ const Cmd = enum {
     version,
 };
 
-const GlobalOptions = struct {
-    log_level: ?std.log.Level = null,
-};
-
-const PlanOptions = struct {
+const CliOptions = struct {
     config: ?[]const u8 = null,
     jobs: ?i8 = null,
+    log_level: ?std.log.Level = null,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -59,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
         try printIncorrectUsage(io, "expected arguments", .{});
     }
 
-    var global_opts: GlobalOptions = .{};
+    var cli_opts: CliOptions = .{};
     var cmd: ?Cmd = null;
 
     args = args[1..];
@@ -69,14 +66,14 @@ pub fn main(init: std.process.Init) !void {
 
         const arg_cmd = std.meta.stringToEnum(Cmd, arg) orelse {
             if (std.mem.startsWith(u8, arg, "--log-level")) {
-                if (global_opts.log_level != null) {
+                if (cli_opts.log_level != null) {
                     std.process.fatal("option \"--log-level\" can only be specified once", .{});
                 }
 
                 const val = parseLongOptionValue(args[i..], "--log-level") catch
                     printIncorrectUsage(io, "option \"--log-level\" requires a value", .{});
 
-                global_opts.log_level = std.meta.stringToEnum(std.log.Level, val) orelse {
+                cli_opts.log_level = std.meta.stringToEnum(std.log.Level, val) orelse {
                     printIncorrectUsage(io, "invalid log level: {s}", .{val});
                 };
 
@@ -101,7 +98,7 @@ pub fn main(init: std.process.Init) !void {
     switch (cmd.?) {
         .@"-h", .@"--help" => return printHelp(io, usage),
         .@"--version", .version => return printVersion(io),
-        .plan => return cmdPlan(io, args[i..]),
+        .plan => return cmdPlan(io, args[i..], &cli_opts),
     }
 }
 
@@ -154,34 +151,32 @@ fn printVersion(io: Io) !void {
     return std.process.cleanExit(io);
 }
 
-fn cmdPlan(io: Io, args: []const []const u8) !void {
-    var opts: PlanOptions = .{};
-
+fn cmdPlan(io: Io, args: []const []const u8, cli_opts: *CliOptions) !void {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
 
         if (std.mem.startsWith(u8, arg, "--")) {
             if (std.mem.startsWith(u8, arg, "--config")) {
-                if (opts.config != null) {
+                if (cli_opts.config != null) {
                     std.process.fatal("option \"--config\" can only be specified once", .{});
                 }
 
-                opts.config = parseLongOptionValue(args[i..], "--config") catch
+                cli_opts.config = parseLongOptionValue(args[i..], "--config") catch
                     printIncorrectUsage(io, "option \"--config\" requires a value", .{});
 
                 if (arg.len == "--config".len) {
                     i += 1;
                 }
             } else if (std.mem.startsWith(u8, arg, "--jobs")) {
-                if (opts.jobs != null) {
+                if (cli_opts.jobs != null) {
                     std.process.fatal("option \"--jobs\" can only be specified once", .{});
                 }
 
                 const val = parseLongOptionValue(args[i..], "--jobs") catch
                     printIncorrectUsage(io, "option \"--jobs\" requires a value", .{});
 
-                opts.jobs = std.fmt.parseInt(i8, val, 0) catch |err| switch (err) {
+                cli_opts.jobs = std.fmt.parseInt(i8, val, 0) catch |err| switch (err) {
                     error.Overflow => std.process.fatal(
                         "value for \"--jobs\" does not fit into signed 8-bit integer: {s}",
                         .{val},
