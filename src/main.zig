@@ -7,6 +7,8 @@ const assert = std.debug.assert;
 const Io = std.Io;
 const testing = std.testing;
 
+const Config = @import("Config.zig");
+
 const usage =
     \\Usage: reginald [--version] [-h | --help] [--log-level debug|info|warn|err]
     \\                <command> [<args>]
@@ -32,18 +34,18 @@ const usage =
 
 var stdout_buffer: [4096]u8 = undefined;
 
+pub const CliOptions = struct {
+    config: ?[]const u8 = null,
+    jobs: ?i8 = null,
+    log_level: ?std.log.Level = null,
+};
+
 const Cmd = enum {
     @"-h",
     @"--help",
     @"--version",
     plan,
     version,
-};
-
-const CliOptions = struct {
-    config: ?[]const u8 = null,
-    jobs: ?i8 = null,
-    log_level: ?std.log.Level = null,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -98,7 +100,7 @@ pub fn main(init: std.process.Init) !void {
     switch (cmd.?) {
         .@"-h", .@"--help" => return printHelp(io, usage),
         .@"--version", .version => return printVersion(io),
-        .plan => return cmdPlan(io, args[i..], &cli_opts),
+        .plan => return cmdPlan(io, args[i..], init.environ_map, &cli_opts),
     }
 }
 
@@ -151,7 +153,12 @@ fn printVersion(io: Io) !void {
     return std.process.cleanExit(io);
 }
 
-fn cmdPlan(io: Io, args: []const []const u8, cli_opts: *CliOptions) !void {
+fn cmdPlan(
+    io: Io,
+    args: []const []const u8,
+    environ_map: *std.process.Environ.Map,
+    cli_opts: *CliOptions,
+) !void {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -195,6 +202,8 @@ fn cmdPlan(io: Io, args: []const []const u8, cli_opts: *CliOptions) !void {
             }
         }
     }
+
+    Config.findAndParse(io, environ_map, cli_opts);
 
     return std.process.cleanExit(io);
 }
