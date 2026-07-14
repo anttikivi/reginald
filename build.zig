@@ -95,7 +95,9 @@ pub fn build(b: *std.Build) void {
                 continue;
             }
 
-            if (std.mem.find(u8, entry.path, ".git") != null) {
+            if (std.mem.find(u8, entry.path, ".git") != null and
+                !std.mem.startsWith(u8, entry.path, ".github"))
+            {
                 continue;
             }
 
@@ -107,7 +109,9 @@ pub fn build(b: *std.Build) void {
                 continue;
             }
 
-            if (!std.mem.endsWith(u8, entry.path, ".zig")) {
+            if (!std.mem.endsWith(u8, entry.path, ".zig") and
+                !std.mem.endsWith(u8, entry.path, ".yml"))
+            {
                 continue;
             }
 
