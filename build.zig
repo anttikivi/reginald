@@ -9,6 +9,32 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const build_options = b.addOptions();
+
+    const docs_step = b.step("docs", "Build and install documentation");
+
+    const docs_reginald_step = b.step(
+        "docs-reginald",
+        "Build and install documentation for the main application",
+    );
+    const docs_reginald = b.addObject(.{
+        .name = "reginald",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
+    });
+    docs_reginald.root_module.addOptions("build_options", build_options);
+    const install_docs_reginald = b.addInstallDirectory(.{
+        .source_dir = docs_reginald.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "share/doc/reginald",
+    });
+    b.getInstallStep().dependOn(&install_docs_reginald.step);
+    docs_reginald_step.dependOn(&install_docs_reginald.step);
+    docs_step.dependOn(docs_reginald_step);
+
     const exe = b.addExecutable(.{
         .name = "reginald",
         .root_module = b.createModule(.{
@@ -19,7 +45,6 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
-    const build_options = b.addOptions();
     exe.root_module.addOptions("build_options", build_options);
 
     const run_exe = b.addRunArtifact(exe);
