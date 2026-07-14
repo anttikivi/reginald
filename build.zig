@@ -95,6 +95,10 @@ pub fn build(b: *std.Build) void {
                 continue;
             }
 
+            if (std.mem.find(u8, entry.path, ".git") != null) {
+                continue;
+            }
+
             if (std.mem.find(u8, entry.path, ".zig-cache") != null) {
                 continue;
             }
