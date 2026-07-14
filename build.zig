@@ -99,14 +99,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&exe.step);
 
     const test_unit_step = b.step("test-unit", "Run the unit tests");
-    const unit_test = b.addTest(.{
+    const test_unit = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    test_unit_step.dependOn(&b.addRunArtifact(unit_test).step);
+    test_unit_step.dependOn(&b.addRunArtifact(test_unit).step);
     test_step.dependOn(test_unit_step);
 
     const test_e2e_step = b.step("test-e2e", "Run the end-to-end tests");
