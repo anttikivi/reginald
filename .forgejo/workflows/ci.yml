@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ forgejo.workflow }}-${{ forgejo.event.pull_request.number || forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: codeberg-tiny
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: mlugg/setup-zig@v2.2.1
+      - uses: astral-sh/setup-uv@v8.3.1
+      - run: zig build test-fmt
+      - run: zig build test-reuse

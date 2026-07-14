@@ -1,0 +1,7 @@
+.{
+    .name = .reginald,
+    .version = "0.1.0-dev",
+    .fingerprint = 0xc271a0d575dc2b62,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{""},
+}
