@@ -19,6 +19,9 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    const build_options = b.addOptions();
+    exe.root_module.addOptions("build_options", build_options);
+
     const run_exe = b.addRunArtifact(exe);
     const run_step = b.step("run", "Run Reginald");
     run_step.dependOn(&run_exe.step);
@@ -105,6 +108,21 @@ pub fn build(b: *std.Build) void {
     });
     test_unit_step.dependOn(&b.addRunArtifact(unit_test).step);
     test_step.dependOn(test_unit_step);
+
+    const test_e2e_step = b.step("test-e2e", "Run the end-to-end tests");
+    const test_e2e = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/end_to_end_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    test_e2e.root_module.addOptions("build_options", build_options);
+    build_options.addOption([:0]const u8, "zig_exe", b.graph.zig_exe);
+
+    test_e2e_step.dependOn(&b.addRunArtifact(test_e2e).step);
+    test_step.dependOn(test_e2e_step);
 
     const test_fmt_step = b.step(
         "test-fmt",
