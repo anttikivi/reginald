@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  aarch64-linux:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: https://codeberg.org/anttikivi/forgejo-status@v0.1.2
+        with:
+          token: ${{ secrets.CODEBERG_TOKEN }}
+      - uses: actions/checkout@v6.0.2
+      - uses: mlugg/setup-zig@v2.2.1
+      - run: zig build test
