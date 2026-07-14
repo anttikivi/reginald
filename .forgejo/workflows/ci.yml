@@ -19,7 +19,7 @@ jobs:
     runs-on: codeberg-tiny
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: mlugg/setup-zig@v2.2.1
+      - uses: https://codeberg.org/mlugg/setup-zig@v2.2.1
       - uses: astral-sh/setup-uv@v8.3.1
       - run: zig build test-fmt
       - run: zig build test-reuse
