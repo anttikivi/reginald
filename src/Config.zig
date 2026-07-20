@@ -11,7 +11,8 @@ const CliOptions = @import("root").CliOptions;
 
 const Config = @This();
 
-jobs: i8,
+filetype: Filetype,
+jobs: ?i8 = null,
 
 const filenames = [_][]const u8{"reginald.json"};
 const lookup_paths = [_][]const u8{
@@ -35,12 +36,22 @@ const Handle = struct {
     }
 };
 
+const Filetype = union(enum) {
+    json: std.json.Parsed(std.json.Value),
+};
+
+pub fn deinit(self: Config) void {
+    switch (self.filetype) {
+        .json => |json| json.deinit(),
+    }
+}
+
 pub fn findAndParse(
     gpa: Allocator,
     io: Io,
     environ_map: *std.process.Environ.Map,
     cli_opts: *const CliOptions,
-) void {
+) Config {
     const handle: Handle = blk: {
         if (cli_opts.config) |filename| {
             if (std.mem.eql(u8, filename, "-")) {
@@ -76,6 +87,54 @@ pub fn findAndParse(
         std.process.fatal("failed to read config file \"{s}\": {t}", .{ handle.path, err });
     };
     defer gpa.free(content);
+
+    // TODO: Detect the config file type when support is added.
+    // TODO: Add JSON diagnostics.
+    const parsed_json = std.json.parseFromSlice(std.json.Value, gpa, content, .{}) catch |err| {
+        if (std.mem.eql(u8, handle.path, "-")) {
+            std.process.fatal("failed to parse JSON config from standard input: {t}", .{err});
+        } else {
+            std.process.fatal(
+                "failed to parse JSON config file \"{s}\": {t}",
+                .{ handle.path, err },
+            );
+        }
+    };
+    defer parsed_json.deinit();
+
+    const val = parsed_json.value;
+    var obj: std.json.ObjectMap = undefined;
+
+    switch (val) {
+        .object => |o| obj = o,
+        else => |tag| std.process.fatal(
+            "invalid JSON config type: expected object, got {t}",
+            .{tag},
+        ),
+    }
+
+    var config: Config = .{ .filetype = .{ .json = parsed_json } };
+
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        if (std.mem.eql(u8, entry.key_ptr.*, "jobs")) {
+            switch (entry.value_ptr.*) {
+                .integer => |i| {
+                    if (i < std.math.minInt(i8) or i > std.math.maxInt(i8)) {
+                        config.jobs = @intCast(i);
+                    }
+                },
+                else => |tag| std.process.fatal(
+                    "invalid value for config entry \"jobs\": expected integer, got {t}",
+                    .{tag},
+                ),
+            }
+        }
+
+        std.process.fatal("unknown config entry \"{s}\" in {s}", .{ entry.key_ptr.*, handle.path });
+    }
+
+    return config;
 }
 
 /// Try to find a config file from the default locations and return a `Handle` with the file and

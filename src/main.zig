@@ -206,7 +206,8 @@ fn cmdPlan(
         }
     }
 
-    Config.findAndParse(gpa, io, environ_map, cli_opts);
+    const config = Config.findAndParse(gpa, io, environ_map, cli_opts);
+    defer config.deinit();
 
     return std.process.cleanExit(io);
 }
