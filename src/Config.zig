@@ -26,6 +26,10 @@ pub fn findAndParse(
 ) void {
     const config_file = blk: {
         if (cli_opts.config) |filename| {
+            if (std.mem.eql(u8, filename, "-")) {
+                break :blk Io.File.stdin();
+            }
+
             break :blk Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
                 std.process.fatal("failed to open config file \"{s}\": {t}", .{ filename, err });
             };
@@ -33,7 +37,9 @@ pub fn findAndParse(
             break :blk findFile(io, environ_map);
         }
     };
-    defer config_file.close(io);
+    defer if (cli_opts.config == null or !std.mem.eql(u8, cli_opts.config.?, "-")) {
+        config_file.close(io);
+    };
 }
 
 fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
