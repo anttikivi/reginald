@@ -186,4 +186,37 @@ pub fn build(b: *std.Build) void {
             .{},
         ),
     }
+
+    const check_step = b.step("check", "Check if Reginald compiles");
+
+    const exe_check = b.addExecutable(.{
+        .name = "reginald",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    exe_check.root_module.addOptions("build_options", build_options);
+    check_step.dependOn(&exe_check.step);
+
+    const test_unit_check = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_unit_check.root_module.addOptions("build_options", build_options);
+    check_step.dependOn(&test_unit_check.step);
+
+    const test_e2e_check = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/end_to_end_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_e2e_check.root_module.addOptions("build_options", build_options);
+    check_step.dependOn(&test_e2e_check.step);
 }
