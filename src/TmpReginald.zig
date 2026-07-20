@@ -97,6 +97,7 @@ pub fn run(
     gpa: Allocator,
     io: Io,
     args: []const []const u8,
+    environ_map: ?*const std.process.Environ.Map,
 ) Error!Result {
     comptime assert(builtin.is_test);
 
@@ -107,8 +108,9 @@ pub fn run(
     errdefer gpa.free(cmd);
 
     const result = try std.process.run(gpa, io, .{
-        .argv = &.{self.reginald_exe},
+        .argv = argv,
         .cwd = .{ .dir = self.tmp_dir.dir },
+        .environ_map = environ_map,
     });
     errdefer gpa.free(result.stdout);
     errdefer gpa.free(result.stderr);
@@ -140,9 +142,43 @@ pub fn runExpectStderrStartsWith(
 ) !void {
     comptime assert(builtin.is_test);
 
-    var result = try self.run(gpa, io, args);
+    var result = try self.run(gpa, io, args, null);
     defer result.deinit(gpa);
 
     try testing.expectStringStartsWith(result.stderr, expected_starts_with);
+    try testing.expectEqual(expected_exit_code, result.code);
+}
+
+pub fn runExpectStdoutEquals(
+    self: *TmpReginald,
+    gpa: Allocator,
+    io: Io,
+    args: []const []const u8,
+    expected_stdout: []const u8,
+    expected_exit_code: u8,
+) !void {
+    comptime assert(builtin.is_test);
+
+    var result = try self.run(gpa, io, args, null);
+    defer result.deinit(gpa);
+
+    try testing.expectEqualStrings(expected_stdout, result.stdout);
+    try testing.expectEqual(expected_exit_code, result.code);
+}
+
+pub fn runExpectStderrContains(
+    self: *TmpReginald,
+    gpa: Allocator,
+    io: Io,
+    args: []const []const u8,
+    expected_substring: []const u8,
+    expected_exit_code: u8,
+) !void {
+    comptime assert(builtin.is_test);
+
+    var result = try self.run(gpa, io, args, null);
+    defer result.deinit(gpa);
+
+    try testing.expect(std.mem.find(u8, result.stderr, expected_substring) != null);
     try testing.expectEqual(expected_exit_code, result.code);
 }
