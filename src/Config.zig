@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const Io = std.Io;
+const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 const native_os = builtin.target.os.tag;
 const CliOptions = @import("root").CliOptions;
@@ -19,38 +20,80 @@ const lookup_paths = [_][]const u8{
     "reginald.json",
 };
 
+var file_buffer: [4096]u8 = undefined;
+
+const Handle = struct {
+    file: Io.File,
+    /// Full path of the file with the possible search directories prepended to it.
+    path: []const u8,
+
+    fn deinit(self: @This(), gpa: Allocator, io: Io) void {
+        if (!std.mem.eql(u8, self.path, "-")) {
+            self.file.close(io);
+            gpa.free(self.path);
+        }
+    }
+};
+
 pub fn findAndParse(
+    gpa: Allocator,
     io: Io,
     environ_map: *std.process.Environ.Map,
     cli_opts: *const CliOptions,
 ) void {
-    const config_file = blk: {
+    const handle: Handle = blk: {
         if (cli_opts.config) |filename| {
             if (std.mem.eql(u8, filename, "-")) {
-                break :blk Io.File.stdin();
+                break :blk .{
+                    .file = Io.File.stdin(),
+                    .path = "-",
+                };
             }
 
-            break :blk Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
-                std.process.fatal("failed to open config file \"{s}\": {t}", .{ filename, err });
+            break :blk .{
+                .file = Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
+                    std.process.fatal("failed to open config file \"{s}\": {t}", .{ filename, err });
+                },
+                .path = gpa.dupe(u8, filename) catch |err| {
+                    std.process.fatal("failed to duplicate config file name: {t}", .{err});
+                },
             };
         } else {
-            break :blk findFile(io, environ_map);
+            break :blk findFile(gpa, io, environ_map) catch |err| switch (err) {
+                error.OutOfMemory => std.process.fatal(
+                    "out of memory while finding the config file",
+                    .{},
+                ),
+            };
         }
     };
-    defer if (cli_opts.config == null or !std.mem.eql(u8, cli_opts.config.?, "-")) {
-        config_file.close(io);
+    defer handle.deinit(gpa, io); // TODO: Save to config when the file can be modified
+
+    var file_reader = handle.file.reader(io, &file_buffer);
+    const file = &file_reader.interface;
+
+    const content = file.allocRemaining(gpa, .unlimited) catch |err| {
+        std.process.fatal("failed to read config file \"{s}\": {t}", .{ handle.path, err });
     };
+    defer gpa.free(content);
 }
 
-fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
+/// Try to find a config file from the default locations and return a `Handle` with the file and
+/// extra information for later utility. The caller own the `Handle`.
+fn findFile(gpa: Allocator, io: Io, environ_map: *std.process.Environ.Map) Allocator.Error!Handle {
     const cwd = Io.Dir.cwd();
+
     for (filenames) |filename| {
-        return cwd.openFile(io, filename, .{}) catch |err| switch (err) {
+        const file = cwd.openFile(io, filename, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => std.process.fatal(
                 "failed to open config file \"{s}\": {t}",
                 .{ filename, err },
             ),
+        };
+        return .{
+            .file = file,
+            .path = filename,
         };
     }
 
@@ -61,12 +104,18 @@ fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
         defer dir.close(io);
 
         for (lookup_paths) |path| {
-            return dir.openFile(io, path, .{}) catch |err| switch (err) {
+            const file = dir.openFile(io, path, .{}) catch |err| switch (err) {
                 error.FileNotFound => continue,
                 else => std.process.fatal(
                     "failed to open config file \"{s}{c}{s}\": {t}",
                     .{ dirname, std.fs.path.sep, path, err },
                 ),
+            };
+            errdefer file.close(io);
+            const full_path = try std.fs.path.join(gpa, &.{ dirname, path });
+            return .{
+                .file = file,
+                .path = full_path,
             };
         }
     }
@@ -80,12 +129,18 @@ fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
             defer dir.close(io);
 
             for (lookup_paths) |path| {
-                return dir.openFile(io, path, .{}) catch |err| switch (err) {
+                const file = dir.openFile(io, path, .{}) catch |err| switch (err) {
                     error.FileNotFound => continue,
                     else => std.process.fatal(
                         "failed to open config file \"{s}{c}{s}\": {t}",
                         .{ dirname, std.fs.path.sep, path, err },
                     ),
+                };
+                errdefer file.close(io);
+                const full_path = try std.fs.path.join(gpa, &.{ dirname, path });
+                return .{
+                    .file = file,
+                    .path = full_path,
                 };
             }
         }
@@ -128,7 +183,7 @@ fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
 
             if (dir) |d| {
                 for (filenames) |filename| {
-                    return d.openFile(io, filename, .{}) catch |err| switch (err) {
+                    const file = d.openFile(io, filename, .{}) catch |err| switch (err) {
                         error.FileNotFound => continue,
                         else => std.process.fatal(
                             "failed to open config file {s}{c}{s}{c}{s}: {t}",
@@ -141,6 +196,19 @@ fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
                                 err,
                             },
                         ),
+                    };
+                    errdefer file.close(io);
+                    const full_path = try std.fs.path.join(
+                        gpa,
+                        &.{
+                            home_dir_path.?,
+                            lookup_dir,
+                            filename,
+                        },
+                    );
+                    return .{
+                        .file = file,
+                        .path = full_path,
                     };
                 }
             }
@@ -166,7 +234,7 @@ fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
 
             if (dir) |d| {
                 for (lookup_paths) |path| {
-                    return d.openFile(io, path, .{}) catch |err| switch (err) {
+                    const file = d.openFile(io, path, .{}) catch |err| switch (err) {
                         error.FileNotFound => continue,
                         else => std.process.fatal(
                             "failed to open config file {s}{c}{s}{c}{s}: {t}",
@@ -179,6 +247,19 @@ fn findFile(io: Io, environ_map: *std.process.Environ.Map) Io.File {
                                 err,
                             },
                         ),
+                    };
+                    errdefer file.close(io);
+                    const full_path = try std.fs.path.join(
+                        gpa,
+                        &.{
+                            home_dir_path.?,
+                            lookup_dir,
+                            path,
+                        },
+                    );
+                    return .{
+                        .file = file,
+                        .path = full_path,
                     };
                 }
             }

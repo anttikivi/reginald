@@ -5,6 +5,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
+const Allocator = std.mem.Allocator;
 const testing = std.testing;
 
 const Config = @import("Config.zig");
@@ -49,6 +50,7 @@ const Cmd = enum {
 };
 
 pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
 
@@ -100,7 +102,7 @@ pub fn main(init: std.process.Init) !void {
     switch (cmd.?) {
         .@"-h", .@"--help" => return printHelp(io, usage),
         .@"--version", .version => return printVersion(io),
-        .plan => return cmdPlan(io, args[i..], init.environ_map, &cli_opts),
+        .plan => return cmdPlan(gpa, io, args[i..], init.environ_map, &cli_opts),
     }
 }
 
@@ -154,6 +156,7 @@ fn printVersion(io: Io) !void {
 }
 
 fn cmdPlan(
+    gpa: Allocator,
     io: Io,
     args: []const []const u8,
     environ_map: *std.process.Environ.Map,
@@ -203,7 +206,7 @@ fn cmdPlan(
         }
     }
 
-    Config.findAndParse(io, environ_map, cli_opts);
+    Config.findAndParse(gpa, io, environ_map, cli_opts);
 
     return std.process.cleanExit(io);
 }
