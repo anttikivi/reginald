@@ -4,15 +4,15 @@
 
 //! TmpReginald creates and runs a temporary instance of Reginald for testing.
 
-const TmpReginald = @This();
-
-const build_options = @import("build_options");
-const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const Io = std.Io;
 const testing = std.testing;
+const builtin = @import("builtin");
+const build_options = @import("build_options");
+
+const TmpReginald = @This();
 
 reginald_exe: [:0]const u8,
 tmp_dir: std.testing.TmpDir,

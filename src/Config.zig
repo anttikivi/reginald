@@ -2,17 +2,15 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-const Config = @This();
-
-const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
-
+const builtin = @import("builtin");
+const native_os = builtin.target.os.tag;
 const CliOptions = @import("root").CliOptions;
 
-jobs: i8,
+const Config = @This();
 
-const native_os = builtin.target.os.tag;
+jobs: i8,
 
 const filenames = [_][]const u8{"reginald.json"};
 const lookup_paths = [_][]const u8{
