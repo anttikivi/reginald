@@ -22,7 +22,7 @@ const prefix = "zig-out";
 pub const Error = error{
     BuildFailed,
     RunFailed,
-} || std.process.RunError;
+} || std.process.RunError || Io.Writer.Error;
 
 pub const Result = struct {
     argv: []const []const u8,
@@ -132,6 +132,79 @@ pub fn run(
     }
 }
 
+pub fn runWithStdin(
+    self: *const TmpReginald,
+    gpa: Allocator,
+    io: Io,
+    args: []const []const u8,
+    stdin_slice: []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+) Error!Result {
+    comptime assert(builtin.is_test);
+
+    const argv = try std.mem.concat(gpa, []const u8, &.{ &.{self.reginald_exe}, args });
+    errdefer gpa.free(argv);
+
+    const cmd = try std.mem.join(gpa, " ", argv);
+    errdefer gpa.free(cmd);
+
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = .{ .dir = self.tmp_dir.dir },
+        .environ_map = environ_map,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
+
+    var future = io.async(writeAndCloseStdin, .{ io, &child, stdin_slice });
+    try future.await(io);
+
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(
+        gpa,
+        io,
+        multi_reader_buffer.toStreams(),
+        &.{ child.stdout.?, child.stderr.? },
+    );
+    defer multi_reader.deinit();
+
+    while (multi_reader.fill(64, .none)) |_| {
+        // TODO: Limit checks if necessary.
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+
+    try multi_reader.checkAnyError();
+
+    const term = try child.wait(io);
+
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    errdefer gpa.free(stdout_slice);
+
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    errdefer gpa.free(stderr_slice);
+
+    switch (term) {
+        .exited => |code| {
+            return .{
+                .argv = argv,
+                .cmd = cmd,
+                .code = code,
+                .stdout = stdout_slice,
+                .stderr = stderr_slice,
+            };
+        },
+        else => {
+            std.debug.print("failed to run \"{s}\":\n{s}\n", .{ cmd, stderr_slice });
+            return error.RunFailed;
+        },
+    }
+}
+
 pub fn runExpectStderrStartsWith(
     self: *TmpReginald,
     gpa: Allocator,
@@ -181,4 +254,62 @@ pub fn runExpectStderrContains(
 
     try testing.expect(std.mem.find(u8, result.stderr, expected_substring) != null);
     try testing.expectEqual(expected_exit_code, result.code);
+}
+
+pub fn runWithStdinExpectStderrContains(
+    self: *TmpReginald,
+    gpa: Allocator,
+    io: Io,
+    args: []const []const u8,
+    stdin_slice: []const u8,
+    expected_substring: []const u8,
+    expected_exit_code: u8,
+) !void {
+    comptime assert(builtin.is_test);
+
+    var result = try self.runWithStdin(gpa, io, args, stdin_slice, null);
+    defer result.deinit(gpa);
+
+    try expectStringContains(expected_substring, result.stderr);
+    try testing.expectEqual(expected_exit_code, result.code);
+}
+
+fn writeAndCloseStdin(io: Io, child: *std.process.Child, data: []const u8) Io.Writer.Error!void {
+    var file = child.stdin.?;
+    defer child.stdin = null;
+    defer file.close(io);
+
+    var buf: [4096]u8 = undefined;
+    var file_writer = file.writer(io, &buf);
+    const writer = &file_writer.interface;
+    try writer.writeAll(data);
+    try writer.flush();
+}
+
+fn expectStringContains(expected: []const u8, actual: []const u8) !void {
+    if (std.mem.find(u8, actual, expected) == null) {
+        std.debug.print("\n======== expected this part in output: ===========\n", .{});
+        printWithVisibleNewlines(expected);
+        std.debug.print("\n======== instead found this full output: =========\n", .{});
+        printWithVisibleNewlines(actual);
+        std.debug.print("\n======================================\n", .{});
+
+        return error.TestExpectedEqual;
+    }
+}
+
+fn printWithVisibleNewlines(source: []const u8) void {
+    var i: usize = 0;
+    while (std.mem.findScalar(u8, source[i..], '\n')) |nl| : (i += nl + 1) {
+        printLine(source[i..][0..nl]);
+    }
+    std.debug.print("{s}␃\n", .{source[i..]}); // End of Text symbol (ETX)
+}
+
+fn printLine(line: []const u8) void {
+    if (line.len != 0) switch (line[line.len - 1]) {
+        ' ', '\t' => return std.debug.print("{s}⏎\n", .{line}), // Return symbol
+        else => {},
+    };
+    std.debug.print("{s}\n", .{line});
 }

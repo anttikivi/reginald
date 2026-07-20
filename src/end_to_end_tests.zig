@@ -294,3 +294,17 @@ test "plan --config with a valid file" {
         0,
     );
 }
+
+test "plan --config from stdin with syntax error" {
+    var tmp_reginald = try TmpReginald.init(testing.allocator, testing.io);
+    defer tmp_reginald.deinit(testing.allocator);
+
+    try tmp_reginald.runWithStdinExpectStderrContains(
+        testing.allocator,
+        testing.io,
+        &.{ "plan", "--config", "-" },
+        "Hello\n",
+        "failed to parse JSON config from standard input: SyntaxError",
+        1,
+    );
+}
