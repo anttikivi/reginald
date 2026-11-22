@@ -2,6 +2,8 @@
 name = "reginald"
 version = "0.1.0-dev"
 edition = "2024"
-publish = false       # TODO: remove when ready to publish
+license = "GPL-3.0-or-later"
+repository = "https://github.com/anttikivi/reginald"
+publish = false                                      # TODO: remove when ready to publish
 
 [dependencies]
