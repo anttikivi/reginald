@@ -6,7 +6,6 @@ use std::{env, process::ExitCode};
 use crate::error::Error;
 
 fn main() -> ExitCode {
-    println!("Hello, world!");
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -14,6 +13,16 @@ fn main() -> ExitCode {
             e.exit_code()
         }
     }
+}
+
+fn run() -> Result<(), Error> {
+    let args = args::parse(env::args_os().skip(1))?;
+
+    if args.help.unwrap_or(false) {
+        println!("{}", args::HELP_MESSAGE);
+        return Ok(());
+    }
+    Ok(())
 }
 
 fn report(e: &dyn std::error::Error) {
@@ -26,9 +35,4 @@ fn report(e: &dyn std::error::Error) {
         cur = e.source();
     }
     eprintln!("{line}");
-}
-
-fn run() -> Result<(), Error> {
-    let _ = args::parse(env::args_os().skip(1))?;
-    Ok(())
 }
