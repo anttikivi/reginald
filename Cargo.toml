@@ -6,4 +6,7 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/anttikivi/reginald"
 publish = false                                      # TODO: remove when ready to publish
 
+[workspace]
+members = [".", "xtask"]
+
 [dependencies]
