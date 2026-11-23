@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices"],
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update the version of REUSE that xtask runs with uvx",
+      "managerFilePatterns": ["/^xtask/src/main\\.rs$/"],
+      "matchStrings": ["\"--from=(?<depName>reuse)\\[[^\\]]*\\]==(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "pypi"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "minimumReleaseAge": "7 days"
+    }
+  ]
+}
