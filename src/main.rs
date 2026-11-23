@@ -1,25 +1,34 @@
-use std::process::ExitCode;
+mod args;
+mod error;
 
-enum Exit {
-    Success = 0,
-}
+use std::{env, process::ExitCode};
 
-impl From<Exit> for ExitCode {
-    fn from(value: Exit) -> Self {
-        ExitCode::from(value as u8)
-    }
-}
-
-enum Error {}
+use crate::error::Error;
 
 fn main() -> ExitCode {
     println!("Hello, world!");
     match run() {
-        Ok(()) => Exit::Success,
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            report(&e);
+            e.exit_code()
+        }
     }
-    .into()
+}
+
+fn report(e: &dyn std::error::Error) {
+    use std::fmt::Write;
+
+    let mut line = e.to_string();
+    let mut cur = e.source();
+    while let Some(e) = cur {
+        let _ = write!(line, ": {e}");
+        cur = e.source();
+    }
+    eprintln!("{line}");
 }
 
 fn run() -> Result<(), Error> {
+    let _ = args::parse(env::args_os().skip(1))?;
     Ok(())
 }
