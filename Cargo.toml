@@ -10,6 +10,7 @@ publish = false                                      # TODO: remove when ready t
 members = [".", "xtask"]
 
 [dependencies]
+clap = { version = "4.6.9", features = ["derive"] }
 semver = "1.0.28"
 
 [build-dependencies]
