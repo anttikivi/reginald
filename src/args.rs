@@ -11,6 +11,7 @@ pub struct Args {
     pub command: Option<Command>,
     pub config_file: Option<PathBuf>,
     pub help: Option<bool>,
+    pub verbose: Option<bool>,
     pub version: Option<bool>,
     pub working_directory: Option<PathBuf>,
 }
@@ -23,6 +24,7 @@ impl OptionSet for Args {
             "--chdir" => Some(GlobalOption::WorkingDirectory),
             "--config" => Some(GlobalOption::ConfigFile),
             "--help" => Some(GlobalOption::Help),
+            "--verbose" => Some(GlobalOption::Verbose),
             "--version" => Some(GlobalOption::Version),
             _ => None,
         }
@@ -33,6 +35,7 @@ impl OptionSet for Args {
             b'C' => Some(GlobalOption::WorkingDirectory),
             b'c' => Some(GlobalOption::ConfigFile),
             b'h' => Some(GlobalOption::Help),
+            b'v' => Some(GlobalOption::Verbose),
             b'V' => Some(GlobalOption::Version),
             _ => None,
         }
@@ -48,6 +51,9 @@ impl OptionSet for Args {
                 set_option_value(&mut self.config_file, name, path_value(name, value)?)
             }
             GlobalOption::Help => set_option_value(&mut self.help, name, flag_value(name, value)?),
+            GlobalOption::Verbose => {
+                set_option_value(&mut self.verbose, name, flag_value(name, value)?)
+            }
             GlobalOption::Version => {
                 set_option_value(&mut self.version, name, flag_value(name, value)?)
             }
@@ -218,6 +224,7 @@ trait OptionSet {
 enum GlobalOption {
     ConfigFile,
     Help,
+    Verbose,
     Version,
     WorkingDirectory,
 }
