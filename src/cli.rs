@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(version)]
+#[command(version = env!("REGINALD_VERSION"))]
 pub struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

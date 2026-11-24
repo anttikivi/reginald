@@ -11,7 +11,7 @@ members = [".", "xtask"]
 
 [dependencies]
 clap = { version = "4.6.9", features = ["derive"] }
-semver = "1.0.28"
 
 [build-dependencies]
-versolve = "0.3.0"
+semver = "1.0.28"
+versolve = "0.4.0"
