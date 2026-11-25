@@ -80,27 +80,23 @@ pub fn init(l: LevelFilter) {
     log::set_max_level(l);
 }
 
-pub fn resolve_level_filter(
-    flag: Option<LogLevel>,
-    verbose: u8,
-    quiet: bool,
-) -> Result<LevelFilter, String> {
+pub fn resolve_level_filter(flag: Option<LogLevel>, verbose: u8, quiet: bool) -> LevelFilter {
     if quiet {
-        return Ok(LevelFilter::Error);
+        return LevelFilter::Error;
     }
 
     match verbose {
         0 => {}
-        1 => return Ok(LevelFilter::Info),
-        2 => return Ok(LevelFilter::Debug),
-        _ => return Ok(LevelFilter::Trace),
+        1 => return LevelFilter::Info,
+        2 => return LevelFilter::Debug,
+        _ => return LevelFilter::Trace,
     }
 
     if let Some(level) = flag {
-        return Ok(level.into());
+        return level.into();
     }
 
-    Ok(LevelFilter::Off)
+    LevelFilter::Off
 }
 
 #[cfg(test)]
@@ -117,7 +113,7 @@ mod tests {
     ];
 
     fn resolve(flag: Option<LevelFilter>, verbose: u8, quiet: bool) -> LevelFilter {
-        resolve_level_filter(flag.map(LogLevel), verbose, quiet).unwrap()
+        resolve_level_filter(flag.map(LogLevel), verbose, quiet)
     }
 
     #[test]

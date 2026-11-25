@@ -2,11 +2,12 @@ use std::io::{self, Write};
 
 pub const PLUGIN_PROTOCOL: u32 = 0;
 
-const VERSION: &str = env!("REGINALD_VERSION");
+pub const VERSION: &str = env!("REGINALD_VERSION");
+pub const COMMIT_HASH: Option<&str> = option_env!("REGINALD_COMMIT_HASH");
+pub const COMMIT_DATE: Option<&str> = option_env!("REGINALD_COMMIT_DATE");
+
 const TARGET: &str = env!("REGINALD_TARGET");
 const BUILD_HOST: &str = env!("REGINALD_BUILD_HOST");
-const COMMIT_HASH: Option<&str> = option_env!("REGINALD_COMMIT_HASH");
-const COMMIT_DATE: Option<&str> = option_env!("REGINALD_COMMIT_DATE");
 
 pub fn print(verbose: bool) -> io::Result<()> {
     let mut out = io::stdout().lock();

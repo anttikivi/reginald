@@ -6,34 +6,41 @@ mod version;
 use std::process::ExitCode;
 
 use clap::Parser;
-use log::debug;
+use log::{debug, info};
 
 use crate::{cli::Cli, error::Error};
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(_e) => {
-            ExitCode::FAILURE
-            // report(&e);
-            // e.exit_code()
+        Err(e) if e.exit_code() == ExitCode::SUCCESS => e.exit_code(),
+        Err(e) => {
+            report(&e);
+            e.exit_code()
         }
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> Result<(), Error> {
     let cli = Cli::parse();
 
     if cli.version {
-        version::print(cli.verbose > 0)?;
-        return Ok(());
+        return version::print(cli.verbose > 0).map_err(Error::Write);
     }
 
-    // TODO: Cloning is stupid.
-    let level = logger::resolve_level_filter(cli.log_level.clone(), cli.verbose, cli.quiet)?;
+    let level = logger::resolve_level_filter(cli.log_level.clone(), cli.verbose, cli.quiet);
     logger::init(level);
 
     debug!("parsed arguments: {cli:?}");
+    info!("running reginald {}", version::VERSION);
+
+    if let Some(date) = version::COMMIT_DATE {
+        debug!("commit date: {date}");
+    }
+
+    if let Some(hash) = version::COMMIT_DATE {
+        debug!("commit: {hash}");
+    }
 
     Ok(())
 }
