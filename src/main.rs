@@ -1,4 +1,5 @@
 mod cli;
+mod config;
 mod error;
 mod logger;
 mod version;
@@ -41,6 +42,10 @@ fn run() -> Result<(), Error> {
     if let Some(hash) = version::COMMIT_DATE {
         debug!("commit: {hash}");
     }
+
+    debug!("plugin protocol version: {}", version::PLUGIN_PROTOCOL);
+
+    let _config_data = config::read_file(cli.config_file, cli.working_directory)?;
 
     Ok(())
 }
