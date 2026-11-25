@@ -22,8 +22,6 @@ pub fn print(verbose: bool) -> io::Result<()> {
         return Ok(());
     }
 
-    writeln!(out, "release: {VERSION}")?;
-
     if let Some(s) = COMMIT_HASH {
         writeln!(out, "commit-hash: {s}")?;
     }
