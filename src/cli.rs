@@ -7,9 +7,9 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
-    #[arg(short, long = "config")]
+    #[arg(short, long = "config", value_name = "FILE")]
     config_file: Option<PathBuf>,
-    #[arg(short = 'C', long = "chdir", default_value = ".")]
+    #[arg(short = 'C', long = "chdir", default_value = ".", value_name = "DIR")]
     working_directory: PathBuf,
 }
 
