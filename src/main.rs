@@ -1,26 +1,39 @@
 mod cli;
 mod error;
+mod logger;
+mod version;
 
 use std::process::ExitCode;
 
 use clap::Parser;
+use log::debug;
 
 use crate::{cli::Cli, error::Error};
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            report(&e);
-            e.exit_code()
+        Err(_e) => {
+            ExitCode::FAILURE
+            // report(&e);
+            // e.exit_code()
         }
     }
 }
 
-fn run() -> Result<(), Error> {
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    eprintln!("{cli:?}");
+    if cli.version {
+        version::print(cli.verbose > 0)?;
+        return Ok(());
+    }
+
+    // TODO: Cloning is stupid.
+    let level = logger::resolve_level_filter(cli.log_level.clone(), cli.verbose, cli.quiet)?;
+    logger::init(level);
+
+    debug!("parsed arguments: {cli:?}");
 
     Ok(())
 }
