@@ -14,7 +14,7 @@ jobs:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     env:
-      VERSOLVE_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+      REGINALD_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
     strategy:
       fail-fast: false
       matrix:
