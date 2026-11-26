@@ -153,7 +153,7 @@ pub fn read_file(path: Option<PathBuf>) -> Result<(String, PathBuf)> {
 /// behave like a Linux or Unix platform, except macOS that is allowed to use
 /// `~/Library/Application Support` in addition to the "standard" directories.
 fn search_paths() -> Vec<PathBuf> {
-    let mut paths = vec![PathBuf::from(FILE_NAME)];
+    let mut paths = Vec::new();
 
     // XDG_CONFIG_HOME is given highest precedence and must also be absolute
     // according to the spec.
