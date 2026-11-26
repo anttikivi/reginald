@@ -32,14 +32,8 @@ pub struct Cli {
     pub version: bool,
 
     /// Run as if the process was started from the given directory.
-    #[arg(
-        short = 'C',
-        long = "chdir",
-        global = true,
-        default_value = ".",
-        value_name = "DIR"
-    )]
-    pub working_directory: PathBuf,
+    #[arg(short = 'C', long = "chdir", global = true, value_name = "DIR", action = ArgAction::Append)]
+    pub working_directories: Vec<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]

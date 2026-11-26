@@ -1,5 +1,6 @@
 use std::{
     io::{self, ErrorKind},
+    path::PathBuf,
     process::ExitCode,
 };
 
@@ -9,6 +10,12 @@ use crate::config;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("failed to change current directory to \"{path}\"")]
+    Chdir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error(transparent)]
     Config(#[from] config::Error),
     #[error("failed to write")]
@@ -18,13 +25,8 @@ pub enum Error {
 impl Error {
     pub fn exit_code(&self) -> ExitCode {
         match self {
-            Self::Config(e) if matches!(e, config::Error::NoFile { searched: _ }) => {
-                ExitCode::from(2) // essentially usage error
-            }
-            Self::Config(e) if matches!(e, config::Error::Read { path: _, source: _ }) => {
-                ExitCode::FAILURE
-            }
-            Self::Config(_) => ExitCode::from(2), // essentially usage error
+            Self::Chdir { path: _, source: _ } => ExitCode::from(2),
+            Self::Config(_) => ExitCode::from(2),
             Self::Write(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
             Self::Write(_) => ExitCode::FAILURE,
         }

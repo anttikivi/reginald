@@ -4,10 +4,10 @@ mod error;
 mod logger;
 mod version;
 
-use std::process::ExitCode;
+use std::{env, process::ExitCode};
 
 use clap::Parser;
-use log::{debug, info};
+use log::{debug, info, warn};
 
 use crate::{cli::Cli, error::Error};
 
@@ -29,23 +29,36 @@ fn run() -> Result<(), Error> {
         return version::print(cli.verbose > 0).map_err(Error::Write);
     }
 
-    let level = logger::resolve_level_filter(cli.log_level.clone(), cli.verbose, cli.quiet);
-    logger::init(level);
+    let invocation = config::Invocation::new(&cli)?;
+    for wd in &invocation.working_directories {
+        env::set_current_dir(wd).map_err(|e| Error::Chdir {
+            path: wd.to_path_buf(),
+            source: e,
+        })?;
+    }
 
-    debug!("parsed arguments: {cli:?}");
+    logger::init(invocation.log_level_filter);
+
+    debug!("parsed arguments: {cli:#?}");
+    debug!("parsed invocation config: {invocation:#?}");
     info!("running reginald {}", version::VERSION);
+
+    match env::current_dir() {
+        Ok(p) => info!("current directory is {}", p.display()),
+        Err(e) => warn!("failed to read the current directory: {e}"),
+    }
 
     if let Some(date) = version::COMMIT_DATE {
         debug!("commit date: {date}");
     }
 
-    if let Some(hash) = version::COMMIT_DATE {
+    if let Some(hash) = version::COMMIT_HASH {
         debug!("commit: {hash}");
     }
 
     debug!("plugin protocol version: {}", version::PLUGIN_PROTOCOL);
 
-    let _config_data = config::read_file(cli.config_file, cli.working_directory)?;
+    let (_config_data, _path) = config::read_file(invocation.config_file)?;
 
     Ok(())
 }

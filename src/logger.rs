@@ -5,7 +5,7 @@ use log::{Level, LevelFilter, Log};
 
 static LOGGER: Logger = Logger;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct LogLevel(LevelFilter);
 
 impl ValueEnum for LogLevel {
@@ -80,23 +80,29 @@ pub fn init(l: LevelFilter) {
     log::set_max_level(l);
 }
 
-pub fn resolve_level_filter(flag: Option<LogLevel>, verbose: u8, quiet: bool) -> LevelFilter {
+pub fn filter_from_flags(flag: Option<LogLevel>, verbose: u8, quiet: bool) -> Option<LevelFilter> {
     if quiet {
-        return LevelFilter::Error;
+        return Some(LevelFilter::Error);
     }
 
     match verbose {
         0 => {}
-        1 => return LevelFilter::Info,
-        2 => return LevelFilter::Debug,
-        _ => return LevelFilter::Trace,
+        1 => return Some(LevelFilter::Info),
+        2 => return Some(LevelFilter::Debug),
+        _ => return Some(LevelFilter::Trace),
     }
 
     if let Some(level) = flag {
-        return level.into();
+        return Some(level.into());
     }
 
-    LevelFilter::Off
+    None
+}
+
+pub fn filter_from_str(s: &str) -> Result<LevelFilter, String> {
+    LogLevel::from_str(s, false)
+        .map(Into::into)
+        .map_err(|_| format!("value \"{s}\" is not a valid log level"))
 }
 
 #[cfg(test)]
@@ -113,7 +119,7 @@ mod tests {
     ];
 
     fn resolve(flag: Option<LevelFilter>, verbose: u8, quiet: bool) -> LevelFilter {
-        resolve_level_filter(flag.map(LogLevel), verbose, quiet)
+        filter_from_flags(flag.map(LogLevel), verbose, quiet).unwrap()
     }
 
     #[test]
