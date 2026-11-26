@@ -5,7 +5,6 @@ use clap::{ArgAction, Parser, Subcommand};
 use crate::logger::LogLevel;
 
 #[derive(Debug, Parser)]
-#[command(disable_version_flag = false)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
