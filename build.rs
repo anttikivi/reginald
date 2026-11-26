@@ -7,6 +7,12 @@ use semver::BuildMetadata;
 use serde_json::Value;
 use versolve::cargo::Resolver;
 
+struct Commit {
+    hash: String,
+    short_hash: String,
+    date: Option<String>,
+}
+
 fn main() {
     let mut version = Resolver::new()
         .tag_prefix("v")
@@ -28,19 +34,25 @@ fn main() {
     set("REGINALD_RUSTC_VERSION", rustc_version);
 
     let manifest_dir = var("CARGO_MANIFEST_DIR");
-    if let Some((hash, date)) = commit(Path::new(&manifest_dir)) {
-        // TODO: Pass also the short hash from a Git-resolved value.
-        set("REGINALD_COMMIT_HASH", hash);
-        if let Some(date) = date {
+    if let Some(c) = commit(Path::new(&manifest_dir)) {
+        set("REGINALD_COMMIT_HASH", c.hash);
+        set("REGINALD_COMMIT_SHORT_HASH", c.short_hash);
+        if let Some(date) = c.date {
             set("REGINALD_COMMIT_DATE", date);
         }
     }
 }
 
-fn commit(dir: &Path) -> Option<(String, Option<String>)> {
+fn commit(dir: &Path) -> Option<Commit> {
     if let Ok(json) = fs::read_to_string(dir.join(".cargo_vcs_info.json")) {
         let info: Value = serde_json::from_str(&json).ok()?;
-        return Some((info["git"]["sha1"].as_str()?.to_owned(), None));
+        let hash = info["git"]["sha1"].as_str()?.to_owned();
+        let short_hash = hash.get(..7).unwrap_or(&hash).to_owned();
+        return Some(Commit {
+            hash,
+            short_hash,
+            date: None,
+        });
     }
     if dir.join("Cargo.toml.orig").exists() {
         return None;
@@ -52,9 +64,17 @@ fn commit(dir: &Path) -> Option<(String, Option<String>)> {
         return None;
     }
     let commit = repo.head().ok()?.peel_to_commit().ok()?;
+    let short = commit.as_object().short_id().ok()?;
     let ts = Timestamp::from_second(commit.time().seconds()).ok()?;
     let date = Offset::UTC.to_datetime(ts).date().to_string();
-    Some((commit.id().to_string(), Some(date)))
+    Some(Commit {
+        hash: commit.id().to_string(),
+        short_hash: short
+            .as_str()
+            .expect("short ID buffer can be converted to str")
+            .to_owned(),
+        date: Some(date),
+    })
 }
 
 fn set(name: &str, value: impl fmt::Display) {

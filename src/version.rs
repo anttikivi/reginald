@@ -4,6 +4,7 @@ pub const PLUGIN_PROTOCOL: u32 = 0;
 
 pub const VERSION: &str = env!("REGINALD_VERSION");
 pub const COMMIT_HASH: Option<&str> = option_env!("REGINALD_COMMIT_HASH");
+pub const COMMIT_SHORT_HASH: Option<&str> = option_env!("REGINALD_COMMIT_SHORT_HASH");
 pub const COMMIT_DATE: Option<&str> = option_env!("REGINALD_COMMIT_DATE");
 
 const TARGET: &str = env!("REGINALD_TARGET");
@@ -11,9 +12,8 @@ const BUILD_HOST: &str = env!("REGINALD_BUILD_HOST");
 
 pub fn print(verbose: bool) -> io::Result<()> {
     let mut out = io::stdout().lock();
-    let short_hash = COMMIT_HASH.map(|s| &s[..7]);
 
-    match (short_hash, COMMIT_DATE) {
+    match (COMMIT_SHORT_HASH, COMMIT_DATE) {
         (Some(hash), Some(date)) => writeln!(out, "reginald {VERSION} ({hash} {date})")?,
         (Some(hash), None) => writeln!(out, "reginald {VERSION} ({hash})")?,
         _ => writeln!(out, "reginald {VERSION}")?,
