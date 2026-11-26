@@ -66,9 +66,15 @@ impl Invocation {
 pub enum Error {
     #[error("failed to parse {name}: {reason}")]
     EnvironmentVariableValue { name: &'static str, reason: String },
+    #[error("failed to open config file at \"{}\"", .path.display())]
+    FileNotFound {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error("no config file found, searched:{}", .searched.iter().map(|p| format!("\n  {}", p.display())).collect::<String>())]
     NoFile { searched: Vec<PathBuf> },
-    #[error("failed to read config file {path}")]
+    #[error("failed to read config file {}", .path.display())]
     Read {
         path: PathBuf,
         #[source]
@@ -83,6 +89,9 @@ pub fn read_file(path: Option<PathBuf>) -> Result<(String, PathBuf)> {
             Ok(s) => {
                 info!("read config file from {}", p.display());
                 Ok((s, p))
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                Err(Error::FileNotFound { path: p, source: e })
             }
             Err(e) => Err(Error::Read { path: p, source: e }),
         };

@@ -26,6 +26,7 @@ impl Error {
     pub fn exit_code(&self) -> ExitCode {
         match self {
             Self::Chdir { path: _, source: _ } => ExitCode::from(2),
+            Self::Config(config::Error::Read { path: _, source: _ }) => ExitCode::FAILURE,
             Self::Config(_) => ExitCode::from(2),
             Self::Write(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
             Self::Write(_) => ExitCode::FAILURE,
