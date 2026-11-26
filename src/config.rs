@@ -59,7 +59,7 @@ pub fn read_file(path: Option<PathBuf>, cwd: PathBuf) -> Result<String> {
     Err(Error::NoFile { searched: paths })
 }
 
-/// Creates a [`Vec`] of the defaults paths to look for the config file.
+/// Creates a [`Vec`] of the default paths to look for the config file.
 ///
 /// Currently assumes that everything that is not a Windows platform should
 /// behave like a Linux or Unix platform.
@@ -70,13 +70,27 @@ fn search_paths(cwd: PathBuf) -> Vec<PathBuf> {
     let xdg = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute());
-
+    let home = env::var_os("HOME").map(PathBuf::from);
     if let Some(xdg) = xdg {
         paths.push(xdg.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
         paths.push(xdg.join(FILE_NAME));
+    } else if !cfg!(windows)
+        && let Some(home) = &home
+    {
+        // Add the .config directory as a backup for XDG_CONFIG_HOME on
+        // platforms that most probably want to use ~/.config. These are added
+        // again later so that the default locations are preserved and searched
+        // for even if XDG_CONFIG_HOME is set to something else to avoid
+        // surprises. However, they come only after checking the more
+        // platform-specific directories if XDG_CONFIG_HOME is set. This might
+        // not be the final resolution but a reasonable compromise right now.
+        paths.push(
+            home.join(".config")
+                .join(DIRECTORY_NAME)
+                .join(IN_DIRECTORY_FILE_NAME),
+        );
+        paths.push(home.join(".config").join(FILE_NAME));
     }
-
-    let home = env::var_os("HOME").map(PathBuf::from);
 
     if cfg!(windows) {
         let appdata = env::var_os("APPDATA").map(PathBuf::from);
