@@ -449,9 +449,9 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "versolve"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6be0cd7d237368baed0112f735bf849201149c696346f5fd67f9c39b908ff55"
+checksum = "762624a26900cd16209d2facfded8466ee8ea61ac66708bdb9455a66a5c1d808"
 dependencies = [
  "git2",
  "log",

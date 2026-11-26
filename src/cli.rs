@@ -14,7 +14,7 @@ pub struct Cli {
     pub config_file: Option<PathBuf>,
 
     /// Set the log level.
-    #[arg(long, value_name = "LEVEL", global = true, conflicts_with_all = ["quiet", "verbose"])]
+    #[arg(long, global = true, value_name = "LEVEL", conflicts_with_all = ["quiet", "verbose"])]
     pub log_level: Option<LogLevel>,
 
     /// Only log errors.

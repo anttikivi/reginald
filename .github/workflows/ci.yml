@@ -36,6 +36,22 @@ jobs:
       - run: cargo doc --locked --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    env:
+      REGINALD_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Install the minimum supported Rust version
+        run: |
+          msrv="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "reginald") | .rust_version')"
+          rustup toolchain install "${msrv}" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=${msrv}" >> "${GITHUB_ENV}"
+      - run: cargo check --locked --workspace --all-targets
   deny:
     name: deny
     runs-on: ubuntu-latest
