@@ -1,3 +1,5 @@
+#![expect(clippy::exit, clippy::unwrap_used, reason = "dev tooling")]
+
 use std::{
     env,
     path::Path,
@@ -15,6 +17,10 @@ fn main() {
     }
 }
 
+#[expect(
+    clippy::single_match_else,
+    reason = "subcommand dispatch will grow more arms"
+)]
 fn run() -> Result {
     let mut it = env::args().skip(1);
     match it.next().as_deref() {

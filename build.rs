@@ -1,3 +1,11 @@
+#![expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "build scripts fail by panicking"
+)]
+
 use core::fmt;
 use std::{env, fs, path::Path, process::Command};
 

@@ -21,6 +21,9 @@ toml = { version = "1.2.3", default-features = false, features = [
   "parse",
 ] }
 
+[dev-dependencies]
+tempfile = "=3.27.0"
+
 [build-dependencies]
 git2 = { version = "0.21.0", default-features = false }
 jiff = "1.0.3"
@@ -28,8 +31,45 @@ semver = "1.0.28"
 serde_json = "1.0.154"
 versolve = "0.4.1"
 
+[lints]
+workspace = true
+
 [workspace]
 members = [".", "xtask"]
 
-[dev-dependencies]
-tempfile = "=3.27.0"
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "allow"    # "warn" if we add a library for some reason
+unused_must_use = "warn"
+unreachable_pub = "allow" # "warn" if we add a library for some reason
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+empty_drop = "warn"
+excessive_nesting = "warn"
+exit = "warn"
+expect_used = "warn"
+host_endian_bytes = "warn"
+implicit_return = "allow"
+indexing_slicing = "warn"
+lossy_float_literal = "warn"
+missing_assert_message = "warn"
+panic = "warn"
+panic_in_result_fn = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+shadow_unrelated = "warn"
+str_to_string = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "warn"
+verbose_file_reads = "warn"
+wildcard_enum_match_arm = "warn"

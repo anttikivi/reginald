@@ -23,6 +23,10 @@ pub enum Error {
 }
 
 impl Error {
+    #[expect(
+        clippy::match_same_arms,
+        reason = "exit codes are assigned per error kind and only happen to match"
+    )]
     pub fn exit_code(&self) -> ExitCode {
         match self {
             Self::Chdir { path: _, source: _ } => ExitCode::from(2),

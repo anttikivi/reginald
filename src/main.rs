@@ -32,11 +32,11 @@ fn run() -> Result<(), Error> {
         return version::print(cli.verbose > 0).map_err(Error::Write);
     }
 
-    let invocation = config::Invocation::new(&cli)?;
+    let invocation = config::Invocation::new(&cli);
 
     for wd in &invocation.working_directories {
         env::set_current_dir(wd).map_err(|e| Error::Chdir {
-            path: wd.to_path_buf(),
+            path: wd.clone(),
             source: e,
         })?;
     }
@@ -77,9 +77,9 @@ fn report(e: &dyn std::error::Error) {
 
     let mut line = e.to_string();
     let mut cur = e.source();
-    while let Some(e) = cur {
-        let _ = write!(line, ": {e}");
-        cur = e.source();
+    while let Some(source) = cur {
+        let _ = write!(line, ": {source}");
+        cur = source.source();
     }
     eprintln!("{line}");
 }

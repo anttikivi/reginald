@@ -93,6 +93,10 @@ impl State {
 
 /// Initializes the logger. Every message is buffered until calling
 /// [`finish_buffering`].
+#[expect(
+    clippy::expect_used,
+    reason = "`set_logger` fails only if called twice, and `init` is called once at startup"
+)]
 pub fn init() {
     log::set_logger(&LOGGER).expect("logger is initialized once");
     log::set_max_level(LevelFilter::Trace);
@@ -118,12 +122,11 @@ pub fn finish_buffering() {
 }
 
 pub fn parse_level_filter(s: &str) -> Result<LevelFilter, String> {
-    if LEVEL_NAMES.contains(&s) {
-        Ok(s.parse()
-            .expect("LEVEL_NAMES contains valid LevelFilter values"))
-    } else {
-        Err(format!("value \"{s}\" is not a valid log level"))
-    }
+    LEVEL_NAMES
+        .contains(&s)
+        .then(|| s.parse().ok())
+        .flatten()
+        .ok_or_else(|| format!("value \"{s}\" is not a valid log level"))
 }
 
 pub fn deserialize_level_filter<'de, D>(d: D) -> Result<LevelFilter, D::Error>
@@ -135,8 +138,7 @@ where
 }
 
 pub fn level_filter_parser() -> impl TypedValueParser<Value = LevelFilter> {
-    PossibleValuesParser::new(LEVEL_NAMES)
-        .map(|s| parse_level_filter(&s).expect("clap validates the value"))
+    PossibleValuesParser::new(LEVEL_NAMES).try_map(|s| parse_level_filter(&s))
 }
 
 fn format_record(r: &log::Record) -> String {
@@ -157,10 +159,10 @@ fn format_record(r: &log::Record) -> String {
 
     let mut line = String::new();
 
-    if origin != "reginald" {
-        let _ = writeln!(line, "[{level}] [{origin}] {}", r.args());
-    } else {
+    if origin == "reginald" {
         let _ = writeln!(line, "[{level}] {}", r.args());
+    } else {
+        let _ = writeln!(line, "[{level}] [{origin}] {}", r.args());
     }
 
     line

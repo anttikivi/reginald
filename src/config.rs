@@ -1,8 +1,10 @@
 use std::{
     env,
     ffi::OsString,
+    fmt::Write as _,
     fs,
     io::{self, ErrorKind},
+    iter,
     path::{Path, PathBuf},
     result,
 };
@@ -57,6 +59,10 @@ impl Config {
         } else {
             let name = "REGINALD_LOG_LEVEL";
             if let Some(s) = var(name) {
+                #[expect(
+                    clippy::unnecessary_debug_formatting,
+                    reason = "`Debug` escapes the invalid bytes, `display` would hide them"
+                )]
                 let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
                     name,
                     reason: format!("value {s:?} is not valid Unicode"),
@@ -80,20 +86,20 @@ pub struct Invocation {
 }
 
 impl Invocation {
-    pub fn new(cli: &Cli) -> Result<Self> {
+    pub fn new(cli: &Cli) -> Self {
         Self::with_env(cli, |name| env::var_os(name))
     }
 
     /// Resolves the `Invocation` using `var` to look up environment variables.
     /// Empty values are treated as unset.
-    fn with_env(cli: &Cli, var: impl Fn(&str) -> Option<OsString>) -> Result<Self> {
+    fn with_env(cli: &Cli, var: impl Fn(&str) -> Option<OsString>) -> Self {
         let var = |name: &str| var(name).filter(|v| !v.is_empty());
 
         let mut wd = cli.working_directories.clone();
         if wd.is_empty()
             && let Some(s) = var("REGINALD_CHDIR")
         {
-            wd = vec![s.into()]
+            wd = vec![s.into()];
         }
 
         let config_file = cli
@@ -101,10 +107,10 @@ impl Invocation {
             .clone()
             .or_else(|| var("REGINALD_CONFIG_FILE").map(PathBuf::from));
 
-        Ok(Self {
+        Self {
             config_file,
             working_directories: wd,
-        })
+        }
     }
 }
 
@@ -118,7 +124,7 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("no config file found, searched:{}", .searched.iter().map(|p| format!("\n  {}", p.display())).collect::<String>())]
+    #[error("no config file found, searched:{}", path_list(.searched))]
     NoFile { searched: Vec<PathBuf> },
     #[error("failed to parse config file {}", .path.display())]
     Parse {
@@ -165,25 +171,24 @@ pub fn read_file(path: Option<PathBuf>) -> Result<(String, PathBuf)> {
 /// Reads the first readable file in `paths`, warning about the other existing
 /// files that it shadows.
 fn read_first(paths: Vec<PathBuf>) -> Result<(String, PathBuf)> {
-    let mut result = None;
-    let mut found = Vec::new();
+    let mut chosen = None;
+    let mut others = Vec::new();
     for path in &paths {
         trace!("trying config file {}", path.display());
-        if result.is_none() {
-            let s = fs::read_to_string(path);
-            match s {
+        if chosen.is_none() {
+            // let s = fs::read_to_string(path);
+            match fs::read_to_string(path) {
                 Ok(s) => {
-                    result = Some(s);
-                    found.push(path);
-                    info!("read config file from {}", path.display())
+                    info!("read config file from {}", path.display());
+                    chosen = Some((s, path));
                 }
                 Err(e) if e.kind() == ErrorKind::NotFound => {}
                 Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-                    warn!("failed to open config file at {}: {e}", path.display())
+                    warn!("failed to open config file at {}: {e}", path.display());
                 }
                 Err(e) => {
                     return Err(Error::Read {
-                        path: path.to_path_buf(),
+                        path: path.clone(),
                         source: e,
                     });
                 }
@@ -191,36 +196,33 @@ fn read_first(paths: Vec<PathBuf>) -> Result<(String, PathBuf)> {
         } else {
             match fs::exists(path) {
                 Ok(true) => {
-                    found.push(path);
-                    info!("found config file at {}", path.display())
+                    info!("found config file at {}", path.display());
+                    others.push(path);
                 }
                 Ok(false) => {}
                 Err(e) => {
-                    warn!("failed to open config file at {}: {e}", path.display())
+                    warn!("failed to open config file at {}: {e}", path.display());
                 }
             }
         }
     }
 
-    if found.len() > 1 {
+    let Some((s, path)) = chosen else {
+        return Err(Error::NoFile { searched: paths });
+    };
+
+    if !others.is_empty() {
         warn!(
             "multiple config files found:{}",
-            found
-                .iter()
-                .map(|p| format!("\n  {}", p.display()))
-                .collect::<String>()
+            path_list(iter::once(path).chain(others))
         );
         warn!(
             "using config file with the highest precedence: {}",
-            found[0].display()
+            path.display()
         );
     }
 
-    if let Some(s) = result {
-        Ok((s, found[0].to_path_buf()))
-    } else {
-        Err(Error::NoFile { searched: paths })
-    }
+    Ok((s, path.clone()))
 }
 
 /// Creates a [`Vec`] of the default paths to look for the config file.
@@ -290,6 +292,16 @@ const fn default_log_level() -> LevelFilter {
     LevelFilter::Warn
 }
 
+fn path_list<P>(paths: impl IntoIterator<Item = P>) -> String
+where
+    P: AsRef<Path>,
+{
+    paths.into_iter().fold(String::new(), |mut out, p| {
+        let _ = write!(out, "\n  {}", p.as_ref().display());
+        out
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -311,7 +323,7 @@ mod tests {
         }
     }
 
-    fn invocation(args: &[&str], vars: &[(&str, &str)]) -> Result<Invocation> {
+    fn invocation(args: &[&str], vars: &[(&str, &str)]) -> Invocation {
         Invocation::with_env(&cli(args), fake_env(vars))
     }
 
@@ -323,41 +335,41 @@ mod tests {
 
     #[test]
     fn invocation_defaults() {
-        let inv = invocation(&[], &[]).unwrap();
-        assert!(inv.working_directories.is_empty());
+        let inv = invocation(&[], &[]);
+        assert_eq!(inv.working_directories, Vec::<PathBuf>::new());
         assert_eq!(inv.config_file, None);
     }
 
     #[test]
     fn chdir_flag_overrides_env() {
-        let inv = invocation(&["-C", "flag"], &[("REGINALD_CHDIR", "env")]).unwrap();
+        let inv = invocation(&["-C", "flag"], &[("REGINALD_CHDIR", "env")]);
         assert_eq!(inv.working_directories, [PathBuf::from("flag")]);
     }
 
     #[test]
     fn chdir_env_is_used_without_flag() {
-        let inv = invocation(&[], &[("REGINALD_CHDIR", "env")]).unwrap();
+        let inv = invocation(&[], &[("REGINALD_CHDIR", "env")]);
         assert_eq!(inv.working_directories, [PathBuf::from("env")]);
     }
 
     #[test]
     fn config_file_flag_overrides_env() {
         let vars = [("REGINALD_CONFIG_FILE", "env.toml")];
-        let inv = invocation(&["-c", "flag.toml"], &vars).unwrap();
+        let inv = invocation(&["-c", "flag.toml"], &vars);
         assert_eq!(inv.config_file, Some("flag.toml".into()));
     }
 
     #[test]
     fn config_file_env_is_used_without_flag() {
-        let inv = invocation(&[], &[("REGINALD_CONFIG_FILE", "env.toml")]).unwrap();
+        let inv = invocation(&[], &[("REGINALD_CONFIG_FILE", "env.toml")]);
         assert_eq!(inv.config_file, Some("env.toml".into()));
     }
 
     #[test]
     fn empty_env_values_are_ignored() {
         let vars = [("REGINALD_CHDIR", ""), ("REGINALD_CONFIG_FILE", "")];
-        let inv = invocation(&[], &vars).unwrap();
-        assert!(inv.working_directories.is_empty());
+        let inv = invocation(&[], &vars);
+        assert_eq!(inv.working_directories, Vec::<PathBuf>::new());
         assert_eq!(inv.config_file, None);
     }
 
@@ -481,7 +493,7 @@ mod tests {
 
     #[test]
     fn search_paths_without_home_or_env_is_empty() {
-        assert!(search_paths(fake_env(&[]), None).is_empty());
+        assert_eq!(search_paths(fake_env(&[]), None), Vec::<PathBuf>::new());
     }
 
     #[test]
