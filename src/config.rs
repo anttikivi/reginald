@@ -1,5 +1,7 @@
 use std::{
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     io::{self, ErrorKind},
     path::PathBuf,
     result,
@@ -28,30 +30,37 @@ pub struct Invocation {
 
 impl Invocation {
     pub fn new(cli: &Cli) -> Result<Self> {
+        Self::with_env(cli, |name| env::var_os(name))
+    }
+
+    /// Resolves the `Invocation` using `var` to look up environment variables.
+    /// Empty values are treated as unset.
+    fn with_env(cli: &Cli, var: impl Fn(&str) -> Option<OsString>) -> Result<Self> {
+        let var = |name: &str| var(name).filter(|v| !v.is_empty());
+
         let mut wd = cli.working_directories.clone();
         if wd.is_empty()
-            && let Some(s) = env::var_os("REGINALD_CHDIR").filter(|v| !v.is_empty())
+            && let Some(s) = var("REGINALD_CHDIR")
         {
             wd = vec![s.into()]
         }
 
-        let config_file = cli.config_file.clone().or_else(|| {
-            env::var_os("REGINALD_CONFIG_FILE")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-        });
+        let config_file = cli
+            .config_file
+            .clone()
+            .or_else(|| var("REGINALD_CONFIG_FILE").map(PathBuf::from));
 
         let mut level_filter = LevelFilter::Warn;
         if let Some(l) = logger::filter_from_flags(cli.log_level, cli.verbose, cli.quiet) {
             level_filter = l;
-        } else if let Ok(s) = env::var("REGINALD_LOG_LEVEL")
-            && !s.is_empty()
-        {
-            level_filter =
-                logger::filter_from_str(&s).map_err(|e| Error::EnvironmentVariableValue {
-                    name: "REGINALD_LOG_LEVEL",
-                    reason: e,
-                })?;
+        } else if let Some(s) = var("REGINALD_LOG_LEVEL") {
+            let name = "REGINALD_LOG_LEVEL";
+            let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
+                name,
+                reason: format!("value {s:?} is not valid Unicode"),
+            })?;
+            level_filter = logger::filter_from_str(s)
+                .map_err(|reason| Error::EnvironmentVariableValue { name, reason })?;
         }
 
         Ok(Self {
@@ -82,6 +91,16 @@ pub enum Error {
     },
 }
 
+/// Reads the configuration file data as a string from the first valid
+/// configuration file path it finds. Checks the user-supplied (via command-line
+/// option or environment variable) value `path` first. If `path` is `Some`,
+/// fails if a configuration file cannot be opened at that path. Otherwise,
+/// checks the default paths and returns the first one that was found. The order
+/// is determined by [`search_paths`].
+///
+/// If finding, opening, and reading the file is successful, returns a tuple
+/// containing the contents of the file as a [`String`] and the path that was
+/// used as a [`PathBuf`].
 pub fn read_file(path: Option<PathBuf>) -> Result<(String, PathBuf)> {
     if let Some(p) = path {
         trace!("trying user-supplied config file {}", p.display());
@@ -97,7 +116,12 @@ pub fn read_file(path: Option<PathBuf>) -> Result<(String, PathBuf)> {
         };
     }
 
-    let paths = search_paths();
+    read_first(search_paths(|name| env::var_os(name), env::home_dir()))
+}
+
+/// Reads the first readable file in `paths`, warning about the other existing
+/// files that it shadows.
+fn read_first(paths: Vec<PathBuf>) -> Result<(String, PathBuf)> {
     let mut result = None;
     let mut found = Vec::new();
     for path in &paths {
@@ -161,12 +185,12 @@ pub fn read_file(path: Option<PathBuf>) -> Result<(String, PathBuf)> {
 /// Currently assumes that everything that is not a Windows platform should
 /// behave like a Linux or Unix platform, except macOS that is allowed to use
 /// `~/Library/Application Support` in addition to the "standard" directories.
-fn search_paths() -> Vec<PathBuf> {
+fn search_paths(var: impl Fn(&str) -> Option<OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     // XDG_CONFIG_HOME is given highest precedence and must also be absolute
     // according to the spec.
-    let xdg = env::var_os("XDG_CONFIG_HOME")
+    let xdg = var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute());
     if let Some(d) = xdg {
@@ -174,17 +198,15 @@ fn search_paths() -> Vec<PathBuf> {
         paths.push(d.join(FILE_NAME));
     }
 
-    let home = env::home_dir();
-
     // The platform-specific directories are next. It feels like a logical
     // choice.
     if cfg!(windows) {
-        let localappdata = env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        let localappdata = var("LOCALAPPDATA").map(PathBuf::from);
         if let Some(d) = localappdata {
             paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
         }
 
-        let appdata = env::var_os("APPDATA").map(PathBuf::from);
+        let appdata = var("APPDATA").map(PathBuf::from);
         if let Some(d) = appdata {
             paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
         }
@@ -220,4 +242,297 @@ fn search_paths() -> Vec<PathBuf> {
     }
 
     unique
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use clap::Parser;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn cli(args: &[&str]) -> Cli {
+        Cli::try_parse_from(std::iter::once("reginald").chain(args.iter().copied())).unwrap()
+    }
+
+    fn env<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+        move |name| {
+            vars.iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| OsString::from(v))
+        }
+    }
+
+    fn invocation(args: &[&str], vars: &[(&str, &str)]) -> Result<Invocation> {
+        Invocation::with_env(&cli(args), env(vars))
+    }
+
+    fn write(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn invocation_defaults() {
+        let inv = invocation(&[], &[]).unwrap();
+        assert!(inv.working_directories.is_empty());
+        assert_eq!(inv.config_file, None);
+        assert_eq!(inv.log_level_filter, LevelFilter::Warn);
+    }
+
+    #[test]
+    fn chdir_flags_keep_their_order() {
+        let inv = invocation(&["-C", "a", "-C", "b"], &[]).unwrap();
+        assert_eq!(inv.working_directories, [PathBuf::from("a"), "b".into()]);
+    }
+
+    #[test]
+    fn chdir_flag_overrides_env() {
+        let inv = invocation(&["-C", "flag"], &[("REGINALD_CHDIR", "env")]).unwrap();
+        assert_eq!(inv.working_directories, [PathBuf::from("flag")]);
+    }
+
+    #[test]
+    fn chdir_env_is_used_without_flag() {
+        let inv = invocation(&[], &[("REGINALD_CHDIR", "env")]).unwrap();
+        assert_eq!(inv.working_directories, [PathBuf::from("env")]);
+    }
+
+    #[test]
+    fn config_file_flag_overrides_env() {
+        let vars = [("REGINALD_CONFIG_FILE", "env.toml")];
+        let inv = invocation(&["-c", "flag.toml"], &vars).unwrap();
+        assert_eq!(inv.config_file, Some("flag.toml".into()));
+    }
+
+    #[test]
+    fn config_file_env_is_used_without_flag() {
+        let inv = invocation(&[], &[("REGINALD_CONFIG_FILE", "env.toml")]).unwrap();
+        assert_eq!(inv.config_file, Some("env.toml".into()));
+    }
+
+    #[test]
+    fn empty_env_values_are_ignored() {
+        let vars = [
+            ("REGINALD_CHDIR", ""),
+            ("REGINALD_CONFIG_FILE", ""),
+            ("REGINALD_LOG_LEVEL", ""),
+        ];
+        let inv = invocation(&[], &vars).unwrap();
+        assert!(inv.working_directories.is_empty());
+        assert_eq!(inv.config_file, None);
+        assert_eq!(inv.log_level_filter, LevelFilter::Warn);
+    }
+
+    #[test]
+    fn log_level_env_is_used_without_flags() {
+        let inv = invocation(&[], &[("REGINALD_LOG_LEVEL", "debug")]).unwrap();
+        assert_eq!(inv.log_level_filter, LevelFilter::Debug);
+    }
+
+    #[test]
+    fn log_level_flags_override_env() {
+        let vars = [("REGINALD_LOG_LEVEL", "debug")];
+        for (args, filter) in [
+            (&["--log-level", "info"][..], LevelFilter::Info),
+            (&["-q"], LevelFilter::Error),
+            (&["-vvv"], LevelFilter::Trace),
+        ] {
+            assert_eq!(invocation(args, &vars).unwrap().log_level_filter, filter);
+        }
+    }
+
+    #[test]
+    fn invalid_log_level_env_is_an_error() {
+        let err = invocation(&[], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::EnvironmentVariableValue {
+                name: "REGINALD_LOG_LEVEL",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn invalid_log_level_env_is_ignored_when_flag_is_given() {
+        let inv = invocation(&["-v"], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap();
+        assert_eq!(inv.log_level_filter, LevelFilter::Info);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_log_level_env_is_an_error() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let var = |name: &str| {
+            (name == "REGINALD_LOG_LEVEL").then(|| OsString::from_vec(b"de\xffbug".to_vec()))
+        };
+        let err = Invocation::with_env(&cli(&[]), var).unwrap_err();
+        assert!(matches!(err, Error::EnvironmentVariableValue { .. }));
+    }
+
+    /// The paths that are searched in the home directory, in order, including
+    /// the platform-specific ones.
+    fn home_paths(home: &Path) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if cfg!(target_os = "macos") {
+            paths.push(home.join("Library/Application Support/reginald/config.toml"));
+        }
+        paths.extend([
+            home.join(".config/reginald/config.toml"),
+            home.join(".config/reginald.toml"),
+            home.join(".reginald.toml"),
+        ]);
+        paths
+    }
+
+    fn absolute(path: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!("C:{path}"))
+        } else {
+            PathBuf::from(path)
+        }
+    }
+
+    #[test]
+    fn search_paths_without_home_or_env_is_empty() {
+        assert!(search_paths(env(&[]), None).is_empty());
+    }
+
+    #[test]
+    fn search_paths_use_home() {
+        let home = absolute("/home/u");
+        assert_eq!(
+            search_paths(env(&[]), Some(home.clone())),
+            home_paths(&home)
+        );
+    }
+
+    #[test]
+    fn search_paths_put_xdg_config_home_first() {
+        let home = absolute("/home/u");
+        let xdg = absolute("/xdg");
+        let vars = [("XDG_CONFIG_HOME", xdg.to_str().unwrap())];
+
+        let mut expected = vec![xdg.join("reginald/config.toml"), xdg.join("reginald.toml")];
+        expected.extend(home_paths(&home));
+        assert_eq!(search_paths(env(&vars), Some(home)), expected);
+    }
+
+    #[test]
+    fn search_paths_ignore_relative_xdg_config_home() {
+        let home = absolute("/home/u");
+        let vars = [("XDG_CONFIG_HOME", "relative")];
+        assert_eq!(
+            search_paths(env(&vars), Some(home.clone())),
+            home_paths(&home)
+        );
+    }
+
+    #[test]
+    fn search_paths_are_unique() {
+        let home = absolute("/home/u");
+        let xdg = home.join(".config");
+        let vars = [("XDG_CONFIG_HOME", xdg.to_str().unwrap())];
+
+        let paths = search_paths(env(&vars), Some(home.clone()));
+        // With XDG_CONFIG_HOME at ~/.config, its paths are the same as the
+        // ~/.config ones and must appear only once, in the XDG position.
+        let mut expected = vec![xdg.join("reginald/config.toml"), xdg.join("reginald.toml")];
+        let home_only = home_paths(&home);
+        expected.extend(home_only.into_iter().filter(|p| !p.starts_with(&xdg)));
+        assert_eq!(paths, expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn search_paths_use_app_data_on_windows() {
+        let vars = [("LOCALAPPDATA", r"C:\local"), ("APPDATA", r"C:\roaming")];
+        assert_eq!(
+            search_paths(env(&vars), None),
+            [
+                PathBuf::from(r"C:\local\reginald\config.toml"),
+                PathBuf::from(r"C:\roaming\reginald\config.toml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_first_reports_all_searched_paths() {
+        let dir = TempDir::new().unwrap();
+        let paths = vec![dir.path().join("a.toml"), dir.path().join("b.toml")];
+        match read_first(paths.clone()) {
+            Err(Error::NoFile { searched }) => assert_eq!(searched, paths),
+            r => panic!("unexpected result: {r:?}"),
+        }
+    }
+
+    #[test]
+    fn read_first_skips_missing_files() {
+        let dir = TempDir::new().unwrap();
+        let b = write(dir.path(), "b.toml", "b");
+        let (s, p) = read_first(vec![dir.path().join("a.toml"), b.clone()]).unwrap();
+        assert_eq!((s.as_str(), p), ("b", b));
+    }
+
+    #[test]
+    fn read_first_uses_the_highest_precedence_file() {
+        let dir = TempDir::new().unwrap();
+        let a = write(dir.path(), "a.toml", "a");
+        let b = write(dir.path(), "b.toml", "b");
+        let (s, p) = read_first(vec![a.clone(), b]).unwrap();
+        assert_eq!((s.as_str(), p), ("a", a));
+    }
+
+    // Reading a directory fails with `PermissionDenied` on Windows, which is
+    // skipped instead.
+    #[cfg(unix)]
+    #[test]
+    fn read_first_fails_on_other_read_errors() {
+        let dir = TempDir::new().unwrap();
+        let b = write(dir.path(), "b.toml", "b");
+        match read_first(vec![dir.path().to_path_buf(), b]) {
+            Err(Error::Read { path, .. }) => assert_eq!(path, dir.path()),
+            r => panic!("unexpected result: {r:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_first_skips_unreadable_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let a = write(dir.path(), "a.toml", "a");
+        let b = write(dir.path(), "b.toml", "b");
+        fs::set_permissions(&a, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&a).is_ok() {
+            // Running as root, permissions are not enforced.
+            return;
+        }
+        let (s, p) = read_first(vec![a, b.clone()]).unwrap();
+        assert_eq!((s.as_str(), p), ("b", b));
+    }
+
+    #[test]
+    fn read_file_reads_the_given_file() {
+        let dir = TempDir::new().unwrap();
+        let a = write(dir.path(), "a.toml", "a");
+        let (s, p) = read_file(Some(a.clone())).unwrap();
+        assert_eq!((s.as_str(), p), ("a", a));
+    }
+
+    #[test]
+    fn read_file_reports_missing_given_file() {
+        let dir = TempDir::new().unwrap();
+        let a = dir.path().join("a.toml");
+        match read_file(Some(a.clone())) {
+            Err(Error::FileNotFound { path, .. }) => assert_eq!(path, a),
+            r => panic!("unexpected result: {r:?}"),
+        }
+    }
 }
