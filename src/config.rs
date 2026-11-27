@@ -40,7 +40,7 @@ pub struct Invocation {
     /// Manually configured config file. When it is `None`, we will look for the
     /// config file from default locations.
     pub config_file: Option<PathBuf>,
-    pub log_level_filter: LevelFilter,
+    pub log_level_filter: Option<LevelFilter>,
     pub working_directories: Vec<PathBuf>,
 }
 
@@ -66,18 +66,20 @@ impl Invocation {
             .clone()
             .or_else(|| var("REGINALD_CONFIG_FILE").map(PathBuf::from));
 
-        let mut level_filter = LevelFilter::Warn;
-        if let Some(l) = logger::filter_from_flags(cli.log_level, cli.verbose, cli.quiet) {
-            level_filter = l;
-        } else if let Some(s) = var("REGINALD_LOG_LEVEL") {
-            let name = "REGINALD_LOG_LEVEL";
-            let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
-                name,
-                reason: format!("value {s:?} is not valid Unicode"),
-            })?;
-            level_filter = logger::filter_from_str(s)
-                .map_err(|reason| Error::EnvironmentVariableValue { name, reason })?;
-        }
+        let level_filter = match logger::filter_from_flags(cli.log_level, cli.verbose, cli.quiet) {
+            Some(l) => Some(l),
+            None => var("REGINALD_LOG_LEVEL")
+                .map(|s| {
+                    let name = "REGINALD_LOG_LEVEL";
+                    let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
+                        name,
+                        reason: format!("value {s:?} is not valid Unicode"),
+                    })?;
+                    logger::filter_from_str(s)
+                        .map_err(|reason| Error::EnvironmentVariableValue { name, reason })
+                })
+                .transpose()?,
+        };
 
         Ok(Self {
             config_file,
@@ -301,7 +303,7 @@ mod tests {
         let inv = invocation(&[], &[]).unwrap();
         assert!(inv.working_directories.is_empty());
         assert_eq!(inv.config_file, None);
-        assert_eq!(inv.log_level_filter, LevelFilter::Warn);
+        assert_eq!(inv.log_level_filter, None);
     }
 
     #[test]
@@ -339,19 +341,19 @@ mod tests {
         let inv = invocation(&[], &vars).unwrap();
         assert!(inv.working_directories.is_empty());
         assert_eq!(inv.config_file, None);
-        assert_eq!(inv.log_level_filter, LevelFilter::Warn);
+        assert_eq!(inv.log_level_filter, None);
     }
 
     #[test]
     fn log_level_env_is_used_without_flags() {
         let inv = invocation(&[], &[("REGINALD_LOG_LEVEL", "debug")]).unwrap();
-        assert_eq!(inv.log_level_filter, LevelFilter::Debug);
+        assert_eq!(inv.log_level_filter, Some(LevelFilter::Debug));
     }
 
     #[test]
     fn log_level_flag_overrides_env() {
         let inv = invocation(&["--log-level", "info"], &[("REGINALD_LOG_LEVEL", "debug")]).unwrap();
-        assert_eq!(inv.log_level_filter, LevelFilter::Info);
+        assert_eq!(inv.log_level_filter, Some(LevelFilter::Info));
     }
 
     #[test]
@@ -369,7 +371,7 @@ mod tests {
     #[test]
     fn invalid_log_level_env_is_ignored_when_flag_is_given() {
         let inv = invocation(&["--log-level", "info"], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap();
-        assert_eq!(inv.log_level_filter, LevelFilter::Info);
+        assert_eq!(inv.log_level_filter, Some(LevelFilter::Info));
     }
 
     #[cfg(unix)]

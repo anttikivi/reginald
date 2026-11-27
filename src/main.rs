@@ -12,7 +12,10 @@ use log::{debug, info, warn};
 use crate::{cli::Cli, config::Config, error::Error};
 
 fn main() -> ExitCode {
-    match run() {
+    logger::init();
+    let result = run();
+    logger::finish_buffering();
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) if e.exit_code() == ExitCode::SUCCESS => e.exit_code(),
         Err(e) => {
@@ -30,14 +33,16 @@ fn run() -> Result<(), Error> {
     }
 
     let invocation = config::Invocation::new(&cli)?;
+    if let Some(level) = invocation.log_level_filter {
+        logger::set_level(level);
+    }
+
     for wd in &invocation.working_directories {
         env::set_current_dir(wd).map_err(|e| Error::Chdir {
             path: wd.to_path_buf(),
             source: e,
         })?;
     }
-
-    logger::init(invocation.log_level_filter);
 
     debug!("parsed arguments: {cli:#?}");
     debug!("parsed invocation config: {invocation:#?}");
@@ -60,6 +65,8 @@ fn run() -> Result<(), Error> {
 
     let (config_data, config_path) = config::read_file(invocation.config_file)?;
     let _config = Config::parse(&config_data, &config_path)?;
+
+    logger::finish_buffering();
 
     Ok(())
 }

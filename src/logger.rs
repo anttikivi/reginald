@@ -1,9 +1,15 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    mem,
+    sync::{Mutex, MutexGuard, PoisonError},
+};
 
 use clap::{ValueEnum, builder::PossibleValue};
 use log::{Level, LevelFilter, Log};
 
-static LOGGER: Logger = Logger;
+static LOGGER: Logger = Logger {
+    state: Mutex::new(State::new()),
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct LogLevel(LevelFilter);
@@ -38,7 +44,15 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
-struct Logger;
+struct Logger {
+    state: Mutex<State>,
+}
+
+impl Logger {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 impl Log for Logger {
     fn enabled(&self, m: &log::Metadata) -> bool {
@@ -50,23 +64,8 @@ impl Log for Logger {
             return;
         }
 
-        let origin = match r.target() {
-            t if t == "reginald" || t.starts_with("reginald::") => "reginald",
-            t => t,
-        };
-
-        let level = match r.level() {
-            Level::Error => "error",
-            Level::Warn => "warn",
-            Level::Info => "info",
-            Level::Debug => "debug",
-            Level::Trace => "trace",
-        };
-
-        if origin != "reginald" {
-            let _ = writeln!(io::stderr().lock(), "[{level}] [{origin}] {}", r.args());
-        } else {
-            let _ = writeln!(io::stderr().lock(), "[{level}] {}", r.args());
+        if let Some(line) = self.state().record(r.level(), format_record(r)) {
+            let _ = io::stderr().lock().write_all(line.as_bytes());
         }
     }
 
@@ -75,9 +74,77 @@ impl Log for Logger {
     }
 }
 
-pub fn init(l: LevelFilter) {
+enum State {
+    Buffering {
+        level: LevelFilter,
+        buf: Vec<(Level, String)>,
+    },
+    Direct,
+}
+
+impl State {
+    const fn new() -> Self {
+        Self::Buffering {
+            level: LevelFilter::Warn,
+            buf: Vec::new(),
+        }
+    }
+
+    fn finish_buffering(&mut self) -> Option<(LevelFilter, Vec<String>)> {
+        match mem::replace(self, Self::Direct) {
+            Self::Buffering { level, buf } => {
+                let lines = buf
+                    .into_iter()
+                    .filter(|(l, _)| *l <= level)
+                    .map(|(_, line)| line)
+                    .collect();
+                Some((level, lines))
+            }
+            Self::Direct => None,
+        }
+    }
+
+    fn record(&mut self, level: Level, line: String) -> Option<String> {
+        match self {
+            Self::Buffering { buf, .. } => {
+                buf.push((level, line));
+                None
+            }
+            Self::Direct => Some(line),
+        }
+    }
+
+    fn set_level(&mut self, new: LevelFilter) {
+        if let Self::Buffering { level, .. } = self {
+            *level = new;
+        }
+    }
+}
+
+/// Initializes the logger. Every message is buffered until calling
+/// [`finish_buffering`].
+pub fn init() {
     log::set_logger(&LOGGER).expect("logger is initialized once");
-    log::set_max_level(l);
+    log::set_max_level(LevelFilter::Trace);
+}
+
+/// Sets the level the buffered records are filtered with. It has no effect
+/// after [`finish_buffering`].
+pub fn set_level(level: LevelFilter) {
+    LOGGER.state().set_level(level);
+}
+
+/// Writes the buffered logger records that pass the level and switches to
+/// direct log output.
+pub fn finish_buffering() {
+    let mut state = LOGGER.state();
+    if let Some((level, buf)) = state.finish_buffering() {
+        log::set_max_level(level);
+        let mut stderr = io::stderr().lock();
+        for line in buf {
+            let _ = stderr.write_all(line.as_bytes());
+        }
+    }
 }
 
 pub fn filter_from_flags(flag: Option<LogLevel>, verbose: u8, quiet: bool) -> Option<LevelFilter> {
@@ -103,6 +170,33 @@ pub fn filter_from_str(s: &str) -> Result<LevelFilter, String> {
     LogLevel::from_str(s, false)
         .map(Into::into)
         .map_err(|_| format!("value \"{s}\" is not a valid log level"))
+}
+
+fn format_record(r: &log::Record) -> String {
+    use std::fmt::Write;
+
+    let origin = match r.target() {
+        t if t == "reginald" || t.starts_with("reginald::") => "reginald",
+        t => t,
+    };
+
+    let level = match r.level() {
+        Level::Error => "error",
+        Level::Warn => "warn",
+        Level::Info => "info",
+        Level::Debug => "debug",
+        Level::Trace => "trace",
+    };
+
+    let mut line = String::new();
+
+    if origin != "reginald" {
+        let _ = writeln!(line, "[{level}] [{origin}] {}", r.args());
+    } else {
+        let _ = writeln!(line, "[{level}] {}", r.args());
+    }
+
+    line
 }
 
 #[cfg(test)]
@@ -169,5 +263,41 @@ mod tests {
         for (name, filter) in NAMES {
             assert_eq!(resolve(Some(filter), 0, false), filter, "{name}");
         }
+    }
+
+    fn lines(state: &mut State) -> Vec<String> {
+        state.finish_buffering().unwrap().1
+    }
+
+    #[test]
+    fn default_level_is_warn() {
+        let mut state = State::new();
+        state.record(Level::Warn, "w".into());
+        state.record(Level::Info, "i".into());
+        assert_eq!(lines(&mut state), ["w"]);
+    }
+
+    #[test]
+    fn buffered_records_use_the_last_set_level() {
+        let mut state = State::new();
+        state.record(Level::Debug, "d".into());
+        state.record(Level::Trace, "t".into());
+        state.set_level(LevelFilter::Error);
+        state.set_level(LevelFilter::Debug);
+        assert_eq!(lines(&mut state), ["d"]);
+    }
+
+    #[test]
+    fn records_are_written_directly_after_finish_buffering() {
+        let mut state = State::new();
+        assert_eq!(state.finish_buffering(), Some((LevelFilter::Warn, vec![])));
+        assert_eq!(state.record(Level::Info, "i".into()), Some("i".into()));
+    }
+
+    #[test]
+    fn finishing_twice_does_nothing() {
+        let mut state = State::new();
+        state.finish_buffering();
+        assert_eq!(state.finish_buffering(), None);
     }
 }
