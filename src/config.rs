@@ -76,44 +76,6 @@ impl Config {
     }
 }
 
-/// The configuration options for the current run.
-#[derive(Debug)]
-pub struct Invocation {
-    /// Manually configured config file. When it is `None`, we will look for the
-    /// config file from default locations.
-    pub config_file: Option<PathBuf>,
-    pub working_directories: Vec<PathBuf>,
-}
-
-impl Invocation {
-    pub fn new(cli: &Cli) -> Self {
-        Self::with_env(cli, |name| env::var_os(name))
-    }
-
-    /// Resolves the `Invocation` using `var` to look up environment variables.
-    /// Empty values are treated as unset.
-    fn with_env(cli: &Cli, var: impl Fn(&str) -> Option<OsString>) -> Self {
-        let var = |name: &str| var(name).filter(|v| !v.is_empty());
-
-        let mut wd = cli.working_directories.clone();
-        if wd.is_empty()
-            && let Some(s) = var("REGINALD_CHDIR")
-        {
-            wd = vec![s.into()];
-        }
-
-        let config_file = cli
-            .config_file
-            .clone()
-            .or_else(|| var("REGINALD_CONFIG_FILE").map(PathBuf::from));
-
-        Self {
-            config_file,
-            working_directories: wd,
-        }
-    }
-}
-
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("failed to parse {name}: {reason}")]
@@ -138,6 +100,29 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+}
+
+/// Returns the directories to change into, in order: the `-C` flags, or
+/// `REGINALD_CHDIR` if none were given.
+pub fn working_directories(cli: &Cli, var: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    if !cli.working_directories.is_empty() {
+        return cli.working_directories.clone();
+    }
+    var("REGINALD_CHDIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .into_iter()
+        .collect()
+}
+
+/// Returns the config file given with `-c` or `REGINALD_CONFIG_FILE`, or `None`
+/// to search the default locations.
+pub fn file(cli: &Cli, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    cli.config_file.clone().or_else(|| {
+        var("REGINALD_CONFIG_FILE")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    })
 }
 
 /// Reads the configuration file data as a string from the first valid
@@ -323,8 +308,12 @@ mod tests {
         }
     }
 
-    fn invocation(args: &[&str], vars: &[(&str, &str)]) -> Invocation {
-        Invocation::with_env(&cli(args), fake_env(vars))
+    fn working_dirs(args: &[&str], vars: &[(&str, &str)]) -> Vec<PathBuf> {
+        working_directories(&cli(args), fake_env(vars))
+    }
+
+    fn config_file(args: &[&str], vars: &[(&str, &str)]) -> Option<PathBuf> {
+        file(&cli(args), fake_env(vars))
     }
 
     fn write(dir: &Path, name: &str, content: &str) -> PathBuf {
@@ -334,43 +323,43 @@ mod tests {
     }
 
     #[test]
-    fn invocation_defaults() {
-        let inv = invocation(&[], &[]);
-        assert_eq!(inv.working_directories, Vec::<PathBuf>::new());
-        assert_eq!(inv.config_file, None);
+    fn defaults_without_flags_or_env() {
+        assert_eq!(working_dirs(&[], &[]), Vec::<PathBuf>::new());
+        assert_eq!(config_file(&[], &[]), None);
     }
 
     #[test]
     fn chdir_flag_overrides_env() {
-        let inv = invocation(&["-C", "flag"], &[("REGINALD_CHDIR", "env")]);
-        assert_eq!(inv.working_directories, [PathBuf::from("flag")]);
+        let wd = working_dirs(&["-C", "flag"], &[("REGINALD_CHDIR", "env")]);
+        assert_eq!(wd, [PathBuf::from("flag")]);
     }
 
     #[test]
     fn chdir_env_is_used_without_flag() {
-        let inv = invocation(&[], &[("REGINALD_CHDIR", "env")]);
-        assert_eq!(inv.working_directories, [PathBuf::from("env")]);
+        let wd = working_dirs(&[], &[("REGINALD_CHDIR", "env")]);
+        assert_eq!(wd, [PathBuf::from("env")]);
     }
 
     #[test]
     fn config_file_flag_overrides_env() {
         let vars = [("REGINALD_CONFIG_FILE", "env.toml")];
-        let inv = invocation(&["-c", "flag.toml"], &vars);
-        assert_eq!(inv.config_file, Some("flag.toml".into()));
+        assert_eq!(
+            config_file(&["-c", "flag.toml"], &vars),
+            Some("flag.toml".into())
+        );
     }
 
     #[test]
     fn config_file_env_is_used_without_flag() {
-        let inv = invocation(&[], &[("REGINALD_CONFIG_FILE", "env.toml")]);
-        assert_eq!(inv.config_file, Some("env.toml".into()));
+        let vars = [("REGINALD_CONFIG_FILE", "env.toml")];
+        assert_eq!(config_file(&[], &vars), Some("env.toml".into()));
     }
 
     #[test]
     fn empty_env_values_are_ignored() {
         let vars = [("REGINALD_CHDIR", ""), ("REGINALD_CONFIG_FILE", "")];
-        let inv = invocation(&[], &vars);
-        assert_eq!(inv.working_directories, Vec::<PathBuf>::new());
-        assert_eq!(inv.config_file, None);
+        assert_eq!(working_dirs(&[], &vars), Vec::<PathBuf>::new());
+        assert_eq!(config_file(&[], &vars), None);
     }
 
     fn config(data: &str, args: &[&str], vars: &[(&str, &str)]) -> Result<Config> {

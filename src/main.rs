@@ -28,21 +28,20 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Error> {
     let cli = Cli::parse();
 
+    debug!("parsed arguments: {cli:#?}");
+
     if cli.version {
         return version::print(cli.verbose > 0).map_err(Error::Write);
     }
 
-    let invocation = config::Invocation::new(&cli);
-
-    for wd in &invocation.working_directories {
-        env::set_current_dir(wd).map_err(|e| Error::Chdir {
+    for wd in config::working_directories(&cli, |s| env::var_os(s)) {
+        debug!("changing directory to {}", wd.display());
+        env::set_current_dir(&wd).map_err(|e| Error::Chdir {
             path: wd.clone(),
             source: e,
         })?;
     }
 
-    debug!("parsed arguments: {cli:#?}");
-    debug!("parsed invocation config: {invocation:#?}");
     info!("running reginald {}", version::VERSION);
 
     match env::current_dir() {
@@ -60,7 +59,7 @@ fn run() -> Result<(), Error> {
 
     debug!("plugin protocol version: {}", version::PLUGIN_PROTOCOL);
 
-    let (config_data, config_path) = config::read_file(invocation.config_file)?;
+    let (config_data, config_path) = config::read_file(config::file(&cli, |s| env::var_os(s)))?;
     let config = Config::new(&config_data, &config_path, &cli, |name| env::var_os(name))?;
 
     debug!("parsed config: {config:#?}");
