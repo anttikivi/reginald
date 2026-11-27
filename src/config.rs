@@ -188,26 +188,25 @@ fn read_first(paths: Vec<PathBuf>) -> Result<(String, PathBuf)> {
 fn search_paths(var: impl Fn(&str) -> Option<OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
+    // Directories from the environment must be absolute. Otherwise an empty or
+    // relative value would make us search relative to the current directory.
+    let absolute_dir = |name: &str| var(name).map(PathBuf::from).filter(|p| p.is_absolute());
+
     // XDG_CONFIG_HOME is given highest precedence and must also be absolute
     // according to the spec.
-    let xdg = var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute());
-    if let Some(d) = xdg {
+    if let Some(d) = absolute_dir("XDG_CONFIG_HOME") {
         paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
         paths.push(d.join(FILE_NAME));
     }
 
-    // The platform-specific directories are next. It feels like a logical
+    // The platform-specific directories are next. It feels like the logical
     // choice.
     if cfg!(windows) {
-        let localappdata = var("LOCALAPPDATA").map(PathBuf::from);
-        if let Some(d) = localappdata {
+        if let Some(d) = absolute_dir("LOCALAPPDATA") {
             paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
         }
 
-        let appdata = var("APPDATA").map(PathBuf::from);
-        if let Some(d) = appdata {
+        if let Some(d) = absolute_dir("APPDATA") {
             paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
         }
     } else if cfg!(target_os = "macos")
@@ -459,6 +458,17 @@ mod tests {
                 PathBuf::from(r"C:\roaming\reginald\config.toml"),
             ]
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn search_paths_ignore_empty_and_relative_app_data_on_windows() {
+        for vars in [
+            [("LOCALAPPDATA", ""), ("APPDATA", "")],
+            [("LOCALAPPDATA", "local"), ("APPDATA", "roaming")],
+        ] {
+            assert!(search_paths(env(&vars), None).is_empty(), "{vars:?}");
+        }
     }
 
     #[test]
