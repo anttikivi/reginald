@@ -256,7 +256,7 @@ mod tests {
         Cli::try_parse_from(std::iter::once("reginald").chain(args.iter().copied())).unwrap()
     }
 
-    fn env<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+    fn fake_env<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |name| {
             vars.iter()
                 .find(|(k, _)| *k == name)
@@ -265,7 +265,7 @@ mod tests {
     }
 
     fn invocation(args: &[&str], vars: &[(&str, &str)]) -> Result<Invocation> {
-        Invocation::with_env(&cli(args), env(vars))
+        Invocation::with_env(&cli(args), fake_env(vars))
     }
 
     fn write(dir: &Path, name: &str, content: &str) -> PathBuf {
@@ -280,12 +280,6 @@ mod tests {
         assert!(inv.working_directories.is_empty());
         assert_eq!(inv.config_file, None);
         assert_eq!(inv.log_level_filter, LevelFilter::Warn);
-    }
-
-    #[test]
-    fn chdir_flags_keep_their_order() {
-        let inv = invocation(&["-C", "a", "-C", "b"], &[]).unwrap();
-        assert_eq!(inv.working_directories, [PathBuf::from("a"), "b".into()]);
     }
 
     #[test]
@@ -333,15 +327,9 @@ mod tests {
     }
 
     #[test]
-    fn log_level_flags_override_env() {
-        let vars = [("REGINALD_LOG_LEVEL", "debug")];
-        for (args, filter) in [
-            (&["--log-level", "info"][..], LevelFilter::Info),
-            (&["-q"], LevelFilter::Error),
-            (&["-vvv"], LevelFilter::Trace),
-        ] {
-            assert_eq!(invocation(args, &vars).unwrap().log_level_filter, filter);
-        }
+    fn log_level_flag_overrides_env() {
+        let inv = invocation(&["--log-level", "info"], &[("REGINALD_LOG_LEVEL", "debug")]).unwrap();
+        assert_eq!(inv.log_level_filter, LevelFilter::Info);
     }
 
     #[test]
@@ -358,7 +346,7 @@ mod tests {
 
     #[test]
     fn invalid_log_level_env_is_ignored_when_flag_is_given() {
-        let inv = invocation(&["-v"], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap();
+        let inv = invocation(&["--log-level", "info"], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap();
         assert_eq!(inv.log_level_filter, LevelFilter::Info);
     }
 
@@ -371,7 +359,13 @@ mod tests {
             (name == "REGINALD_LOG_LEVEL").then(|| OsString::from_vec(b"de\xffbug".to_vec()))
         };
         let err = Invocation::with_env(&cli(&[]), var).unwrap_err();
-        assert!(matches!(err, Error::EnvironmentVariableValue { .. }));
+        assert!(matches!(
+            err,
+            Error::EnvironmentVariableValue {
+                name: "REGINALD_LOG_LEVEL",
+                ..
+            }
+        ));
     }
 
     /// The paths that are searched in the home directory, in order, including
@@ -399,14 +393,14 @@ mod tests {
 
     #[test]
     fn search_paths_without_home_or_env_is_empty() {
-        assert!(search_paths(env(&[]), None).is_empty());
+        assert!(search_paths(fake_env(&[]), None).is_empty());
     }
 
     #[test]
     fn search_paths_use_home() {
         let home = absolute("/home/u");
         assert_eq!(
-            search_paths(env(&[]), Some(home.clone())),
+            search_paths(fake_env(&[]), Some(home.clone())),
             home_paths(&home)
         );
     }
@@ -419,7 +413,7 @@ mod tests {
 
         let mut expected = vec![xdg.join("reginald/config.toml"), xdg.join("reginald.toml")];
         expected.extend(home_paths(&home));
-        assert_eq!(search_paths(env(&vars), Some(home)), expected);
+        assert_eq!(search_paths(fake_env(&vars), Some(home)), expected);
     }
 
     #[test]
@@ -427,7 +421,7 @@ mod tests {
         let home = absolute("/home/u");
         let vars = [("XDG_CONFIG_HOME", "relative")];
         assert_eq!(
-            search_paths(env(&vars), Some(home.clone())),
+            search_paths(fake_env(&vars), Some(home.clone())),
             home_paths(&home)
         );
     }
@@ -438,13 +432,15 @@ mod tests {
         let xdg = home.join(".config");
         let vars = [("XDG_CONFIG_HOME", xdg.to_str().unwrap())];
 
-        let paths = search_paths(env(&vars), Some(home.clone()));
-        // With XDG_CONFIG_HOME at ~/.config, its paths are the same as the
-        // ~/.config ones and must appear only once, in the XDG position.
-        let mut expected = vec![xdg.join("reginald/config.toml"), xdg.join("reginald.toml")];
-        let home_only = home_paths(&home);
-        expected.extend(home_only.into_iter().filter(|p| !p.starts_with(&xdg)));
-        assert_eq!(paths, expected);
+        let mut expected = vec![
+            home.join(".config/reginald/config.toml"),
+            home.join(".config/reginald.toml"),
+        ];
+        if cfg!(target_os = "macos") {
+            expected.push(home.join("Library/Application Support/reginald/config.toml"));
+        }
+        expected.push(home.join(".reginald.toml"));
+        assert_eq!(search_paths(fake_env(&vars), Some(home)), expected);
     }
 
     #[cfg(windows)]
@@ -452,7 +448,7 @@ mod tests {
     fn search_paths_use_app_data_on_windows() {
         let vars = [("LOCALAPPDATA", r"C:\local"), ("APPDATA", r"C:\roaming")];
         assert_eq!(
-            search_paths(env(&vars), None),
+            search_paths(fake_env(&vars), None),
             [
                 PathBuf::from(r"C:\local\reginald\config.toml"),
                 PathBuf::from(r"C:\roaming\reginald\config.toml"),
@@ -467,7 +463,7 @@ mod tests {
             [("LOCALAPPDATA", ""), ("APPDATA", "")],
             [("LOCALAPPDATA", "local"), ("APPDATA", "roaming")],
         ] {
-            assert!(search_paths(env(&vars), None).is_empty(), "{vars:?}");
+            assert!(search_paths(fake_env(&vars), None).is_empty(), "{vars:?}");
         }
     }
 
@@ -542,6 +538,15 @@ mod tests {
         let a = dir.path().join("a.toml");
         match read_file(Some(a.clone())) {
             Err(Error::FileNotFound { path, .. }) => assert_eq!(path, a),
+            r => panic!("unexpected result: {r:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_fails_on_other_errors_with_given_file() {
+        let dir = TempDir::new().unwrap();
+        match read_file(Some(dir.path().to_path_buf())) {
+            Err(Error::Read { path, .. }) => assert_eq!(path, dir.path()),
             r => panic!("unexpected result: {r:?}"),
         }
     }

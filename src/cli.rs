@@ -53,4 +53,13 @@ mod tests {
     fn command_definition_is_valid() {
         Cli::command().debug_assert();
     }
+
+    /// Each `-C` is relative to the previous one, so all of them must be kept
+    /// in order. Added as a way to catch any changes in the dependencies that
+    /// would break our assumptions in the future.
+    #[test]
+    fn chdir_flags_keep_their_order() {
+        let cli = Cli::try_parse_from(["reginald", "-C", "a", "-C", "b"]).unwrap();
+        assert_eq!(cli.working_directories, [PathBuf::from("a"), "b".into()]);
+    }
 }
