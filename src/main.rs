@@ -9,7 +9,7 @@ use std::{env, process::ExitCode};
 use clap::Parser;
 use log::{debug, info, warn};
 
-use crate::{cli::Cli, error::Error};
+use crate::{cli::Cli, config::Config, error::Error};
 
 fn main() -> ExitCode {
     match run() {
@@ -58,7 +58,8 @@ fn run() -> Result<(), Error> {
 
     debug!("plugin protocol version: {}", version::PLUGIN_PROTOCOL);
 
-    let (_config_data, _path) = config::read_file(invocation.config_file)?;
+    let (config_data, config_path) = config::read_file(invocation.config_file)?;
+    let _config = Config::parse(&config_data, &config_path)?;
 
     Ok(())
 }

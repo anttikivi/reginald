@@ -3,11 +3,12 @@ use std::{
     ffi::OsString,
     fs,
     io::{self, ErrorKind},
-    path::PathBuf,
+    path::{Path, PathBuf},
     result,
 };
 
 use log::{LevelFilter, info, trace, warn};
+use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{cli::Cli, logger};
@@ -16,7 +17,22 @@ const DIRECTORY_NAME: &str = "reginald";
 const FILE_NAME: &str = "reginald.toml";
 const IN_DIRECTORY_FILE_NAME: &str = "config.toml";
 
-pub type Result<T> = result::Result<T, Error>;
+type Result<T> = result::Result<T, Error>;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Config {
+    plugin_paths: Vec<PathBuf>,
+}
+
+impl Config {
+    pub fn parse(data: &str, path: &Path) -> Result<Self> {
+        toml::from_str(data).map_err(|e| Error::Parse {
+            path: path.to_path_buf(),
+            source: e,
+        })
+    }
+}
 
 /// The configuration options for the current run.
 #[derive(Debug)]
@@ -83,6 +99,12 @@ pub enum Error {
     },
     #[error("no config file found, searched:{}", .searched.iter().map(|p| format!("\n  {}", p.display())).collect::<String>())]
     NoFile { searched: Vec<PathBuf> },
+    #[error("failed to parse config file {}", .path.display())]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
     #[error("failed to read config file {}", .path.display())]
     Read {
         path: PathBuf,
