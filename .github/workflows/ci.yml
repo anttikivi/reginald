@@ -46,8 +46,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - name: Install the minimum supported Rust version
-        run: |
+      - run: |
           msrv="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "reginald") | .rust_version')"
           rustup toolchain install "${msrv}" --profile minimal
           echo "RUSTUP_TOOLCHAIN=${msrv}" >> "${GITHUB_ENV}"
