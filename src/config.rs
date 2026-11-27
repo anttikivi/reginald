@@ -56,16 +56,13 @@ impl Config {
             config.log_level = l;
         } else {
             let name = "REGINALD_LOG_LEVEL";
-            match var(name) {
-                Some(s) => {
-                    let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
-                        name,
-                        reason: format!("value {s:?} is not valid Unicode"),
-                    })?;
-                    config.log_level = logger::parse_level_filter(s)
-                        .map_err(|reason| Error::EnvironmentVariableValue { name, reason })?;
-                }
-                None => {}
+            if let Some(s) = var(name) {
+                let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
+                    name,
+                    reason: format!("value {s:?} is not valid Unicode"),
+                })?;
+                config.log_level = logger::parse_level_filter(s)
+                    .map_err(|reason| Error::EnvironmentVariableValue { name, reason })?;
             }
         }
 
