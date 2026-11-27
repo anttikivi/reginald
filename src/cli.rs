@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use clap::{ArgAction, Parser, Subcommand};
+use log::LevelFilter;
 
-use crate::logger::LogLevel;
+use crate::logger;
 
 #[derive(Debug, Parser)]
 pub struct Cli {
@@ -14,8 +15,8 @@ pub struct Cli {
     pub config_file: Option<PathBuf>,
 
     /// Set the log level.
-    #[arg(long, global = true, value_name = "LEVEL", conflicts_with_all = ["quiet", "verbose"])]
-    pub log_level: Option<LogLevel>,
+    #[arg(long, global = true, value_name = "LEVEL", value_parser = logger::level_filter_parser(), conflicts_with_all = ["quiet", "verbose"])]
+    pub log_level: Option<LevelFilter>,
 
     /// Only log errors.
     #[arg(short, long, global = true, conflicts_with = "verbose")]
@@ -61,5 +62,16 @@ mod tests {
     fn chdir_flags_keep_their_order() {
         let cli = Cli::try_parse_from(["reginald", "-C", "a", "-C", "b"]).unwrap();
         assert_eq!(cli.working_directories, [PathBuf::from("a"), "b".into()]);
+    }
+
+    #[test]
+    fn log_level_flag_is_parsed() {
+        let cli = Cli::try_parse_from(["reginald", "--log-level", "debug"]).unwrap();
+        assert_eq!(cli.log_level, Some(LevelFilter::Debug));
+    }
+
+    #[test]
+    fn log_level_flag_is_case_sensitive() {
+        assert!(Cli::try_parse_from(["reginald", "--log-level", "DEBUG"]).is_err());
     }
 }

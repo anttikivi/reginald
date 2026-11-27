@@ -33,9 +33,6 @@ fn run() -> Result<(), Error> {
     }
 
     let invocation = config::Invocation::new(&cli)?;
-    if let Some(level) = invocation.log_level_filter {
-        logger::set_level(level);
-    }
 
     for wd in &invocation.working_directories {
         env::set_current_dir(wd).map_err(|e| Error::Chdir {
@@ -64,7 +61,11 @@ fn run() -> Result<(), Error> {
     debug!("plugin protocol version: {}", version::PLUGIN_PROTOCOL);
 
     let (config_data, config_path) = config::read_file(invocation.config_file)?;
-    let _config = Config::parse(&config_data, &config_path)?;
+    let config = Config::new(&config_data, &config_path, &cli, |name| env::var_os(name))?;
+
+    debug!("parsed config: {config:#?}");
+
+    logger::set_level(config.log_level);
 
     logger::finish_buffering();
 

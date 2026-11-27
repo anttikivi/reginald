@@ -4,45 +4,15 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use clap::{ValueEnum, builder::PossibleValue};
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use log::{Level, LevelFilter, Log};
+use serde::{Deserialize, Deserializer, de};
+
+const LEVEL_NAMES: [&str; 6] = ["off", "error", "warn", "info", "debug", "trace"];
 
 static LOGGER: Logger = Logger {
     state: Mutex::new(State::new()),
 };
-
-#[derive(Clone, Copy, Debug)]
-pub struct LogLevel(LevelFilter);
-
-impl ValueEnum for LogLevel {
-    fn value_variants<'a>() -> &'a [Self] {
-        &[
-            Self(LevelFilter::Off),
-            Self(LevelFilter::Error),
-            Self(LevelFilter::Warn),
-            Self(LevelFilter::Info),
-            Self(LevelFilter::Debug),
-            Self(LevelFilter::Trace),
-        ]
-    }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        Some(PossibleValue::new(match self.0 {
-            LevelFilter::Off => "off",
-            LevelFilter::Error => "error",
-            LevelFilter::Warn => "warn",
-            LevelFilter::Info => "info",
-            LevelFilter::Debug => "debug",
-            LevelFilter::Trace => "trace",
-        }))
-    }
-}
-
-impl From<LogLevel> for LevelFilter {
-    fn from(value: LogLevel) -> Self {
-        value.0
-    }
-}
 
 struct Logger {
     state: Mutex<State>,
@@ -147,29 +117,26 @@ pub fn finish_buffering() {
     }
 }
 
-pub fn filter_from_flags(flag: Option<LogLevel>, verbose: u8, quiet: bool) -> Option<LevelFilter> {
-    if quiet {
-        return Some(LevelFilter::Error);
+pub fn parse_level_filter(s: &str) -> Result<LevelFilter, String> {
+    if LEVEL_NAMES.contains(&s) {
+        Ok(s.parse()
+            .expect("LEVEL_NAMES contains valid LevelFilter values"))
+    } else {
+        Err(format!("value \"{s}\" is not a valid log level"))
     }
-
-    match verbose {
-        0 => {}
-        1 => return Some(LevelFilter::Info),
-        2 => return Some(LevelFilter::Debug),
-        _ => return Some(LevelFilter::Trace),
-    }
-
-    if let Some(level) = flag {
-        return Some(level.into());
-    }
-
-    None
 }
 
-pub fn filter_from_str(s: &str) -> Result<LevelFilter, String> {
-    LogLevel::from_str(s, false)
-        .map(Into::into)
-        .map_err(|_| format!("value \"{s}\" is not a valid log level"))
+pub fn deserialize_level_filter<'de, D>(d: D) -> Result<LevelFilter, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(d)?;
+    parse_level_filter(&s).map_err(de::Error::custom)
+}
+
+pub fn level_filter_parser() -> impl TypedValueParser<Value = LevelFilter> {
+    PossibleValuesParser::new(LEVEL_NAMES)
+        .map(|s| parse_level_filter(&s).expect("clap validates the value"))
 }
 
 fn format_record(r: &log::Record) -> String {
@@ -212,57 +179,31 @@ mod tests {
         ("trace", LevelFilter::Trace),
     ];
 
-    fn resolve(flag: Option<LevelFilter>, verbose: u8, quiet: bool) -> LevelFilter {
-        filter_from_flags(flag.map(LogLevel), verbose, quiet).unwrap()
-    }
-
     #[test]
-    fn level_names_are_lowercase_and_complete() {
-        let names: Vec<_> = LogLevel::value_variants()
-            .iter()
-            .map(|l| l.to_possible_value().unwrap().get_name().to_owned())
-            .collect();
+    fn level_names_are_complete_and_in_order() {
         let expected: Vec<_> = NAMES.iter().map(|(name, _)| *name).collect();
-        assert_eq!(names, expected);
+        assert_eq!(LEVEL_NAMES, expected[..]);
     }
 
     #[test]
     fn level_names_parse_to_their_filter() {
         for (name, filter) in NAMES {
-            let level = LogLevel::from_str(name, false).unwrap();
-            assert_eq!(LevelFilter::from(level), filter, "{name}");
+            assert_eq!(parse_level_filter(name), Ok(filter), "{name}");
         }
     }
 
     #[test]
     fn level_names_are_case_sensitive() {
-        assert!(LogLevel::from_str("DEBUG", false).is_err());
-        assert!(LogLevel::from_str("Warn", false).is_err());
+        assert!(parse_level_filter("DEBUG").is_err());
+        assert!(parse_level_filter("Warn").is_err());
     }
 
     #[test]
-    fn quiet_logs_only_errors() {
-        assert_eq!(resolve(None, 0, true), LevelFilter::Error);
-    }
-
-    #[test]
-    fn verbose_count_raises_the_level() {
-        assert_eq!(resolve(None, 1, false), LevelFilter::Info);
-        assert_eq!(resolve(None, 2, false), LevelFilter::Debug);
-        assert_eq!(resolve(None, 3, false), LevelFilter::Trace);
-    }
-
-    #[test]
-    fn verbose_count_saturates_at_trace() {
-        assert_eq!(resolve(None, 4, false), LevelFilter::Trace);
-        assert_eq!(resolve(None, u8::MAX, false), LevelFilter::Trace);
-    }
-
-    #[test]
-    fn log_level_flag_is_used_as_is() {
-        for (name, filter) in NAMES {
-            assert_eq!(resolve(Some(filter), 0, false), filter, "{name}");
-        }
+    fn unknown_level_names_are_rejected() {
+        assert_eq!(
+            parse_level_filter("loud"),
+            Err("value \"loud\" is not a valid log level".to_owned())
+        );
     }
 
     fn lines(state: &mut State) -> Vec<String> {

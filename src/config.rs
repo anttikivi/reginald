@@ -22,15 +22,54 @@ type Result<T> = result::Result<T, Error>;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
-    plugin_paths: Vec<PathBuf>,
+    #[serde(
+        default = "default_log_level",
+        deserialize_with = "logger::deserialize_level_filter"
+    )]
+    pub log_level: LevelFilter,
+    // #[serde(default)]
+    // pub plugin_paths: Vec<PathBuf>,
 }
 
 impl Config {
-    pub fn parse(data: &str, path: &Path) -> Result<Self> {
-        toml::from_str(data).map_err(|e| Error::Parse {
+    pub fn new(
+        data: &str,
+        path: &Path,
+        cli: &Cli,
+        var: impl Fn(&str) -> Option<OsString>,
+    ) -> Result<Self> {
+        let mut config: Self = toml::from_str(data).map_err(|e| Error::Parse {
             path: path.to_path_buf(),
             source: e,
-        })
+        })?;
+
+        let var = |name: &str| var(name).filter(|v| !v.is_empty());
+
+        if cli.quiet {
+            config.log_level = LevelFilter::Error;
+        } else if let Some(l) = match cli.verbose {
+            0 => cli.log_level,
+            1 => Some(LevelFilter::Info),
+            2 => Some(LevelFilter::Debug),
+            _ => Some(LevelFilter::Trace),
+        } {
+            config.log_level = l;
+        } else {
+            let name = "REGINALD_LOG_LEVEL";
+            match var(name) {
+                Some(s) => {
+                    let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
+                        name,
+                        reason: format!("value {s:?} is not valid Unicode"),
+                    })?;
+                    config.log_level = logger::parse_level_filter(s)
+                        .map_err(|reason| Error::EnvironmentVariableValue { name, reason })?;
+                }
+                None => {}
+            }
+        }
+
+        Ok(config)
     }
 }
 
@@ -40,7 +79,6 @@ pub struct Invocation {
     /// Manually configured config file. When it is `None`, we will look for the
     /// config file from default locations.
     pub config_file: Option<PathBuf>,
-    pub log_level_filter: Option<LevelFilter>,
     pub working_directories: Vec<PathBuf>,
 }
 
@@ -66,24 +104,8 @@ impl Invocation {
             .clone()
             .or_else(|| var("REGINALD_CONFIG_FILE").map(PathBuf::from));
 
-        let level_filter = match logger::filter_from_flags(cli.log_level, cli.verbose, cli.quiet) {
-            Some(l) => Some(l),
-            None => var("REGINALD_LOG_LEVEL")
-                .map(|s| {
-                    let name = "REGINALD_LOG_LEVEL";
-                    let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
-                        name,
-                        reason: format!("value {s:?} is not valid Unicode"),
-                    })?;
-                    logger::filter_from_str(s)
-                        .map_err(|reason| Error::EnvironmentVariableValue { name, reason })
-                })
-                .transpose()?,
-        };
-
         Ok(Self {
             config_file,
-            log_level_filter: level_filter,
             working_directories: wd,
         })
     }
@@ -267,6 +289,10 @@ fn search_paths(var: impl Fn(&str) -> Option<OsString>, home: Option<PathBuf>) -
     unique
 }
 
+const fn default_log_level() -> LevelFilter {
+    LevelFilter::Warn
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -303,7 +329,6 @@ mod tests {
         let inv = invocation(&[], &[]).unwrap();
         assert!(inv.working_directories.is_empty());
         assert_eq!(inv.config_file, None);
-        assert_eq!(inv.log_level_filter, None);
     }
 
     #[test]
@@ -333,32 +358,74 @@ mod tests {
 
     #[test]
     fn empty_env_values_are_ignored() {
-        let vars = [
-            ("REGINALD_CHDIR", ""),
-            ("REGINALD_CONFIG_FILE", ""),
-            ("REGINALD_LOG_LEVEL", ""),
-        ];
+        let vars = [("REGINALD_CHDIR", ""), ("REGINALD_CONFIG_FILE", "")];
         let inv = invocation(&[], &vars).unwrap();
         assert!(inv.working_directories.is_empty());
         assert_eq!(inv.config_file, None);
-        assert_eq!(inv.log_level_filter, None);
+    }
+
+    fn config(data: &str, args: &[&str], vars: &[(&str, &str)]) -> Result<Config> {
+        Config::new(data, Path::new("reginald.toml"), &cli(args), fake_env(vars))
+    }
+
+    fn log_level(data: &str, args: &[&str], vars: &[(&str, &str)]) -> LevelFilter {
+        config(data, args, vars).unwrap().log_level
+    }
+
+    const DEBUG_FILE: &str = r#"log-level = "debug""#;
+
+    #[test]
+    fn log_level_defaults_to_warn() {
+        assert_eq!(log_level("", &[], &[]), LevelFilter::Warn);
     }
 
     #[test]
-    fn log_level_env_is_used_without_flags() {
-        let inv = invocation(&[], &[("REGINALD_LOG_LEVEL", "debug")]).unwrap();
-        assert_eq!(inv.log_level_filter, Some(LevelFilter::Debug));
+    fn log_level_is_read_from_file() {
+        assert_eq!(log_level(DEBUG_FILE, &[], &[]), LevelFilter::Debug);
     }
 
     #[test]
-    fn log_level_flag_overrides_env() {
-        let inv = invocation(&["--log-level", "info"], &[("REGINALD_LOG_LEVEL", "debug")]).unwrap();
-        assert_eq!(inv.log_level_filter, Some(LevelFilter::Info));
+    fn invalid_log_level_in_file_is_a_parse_error() {
+        for data in [r#"log-level = "loud""#, r#"log-level = "DEBUG""#] {
+            let err = config(data, &[], &[]).unwrap_err();
+            assert!(matches!(err, Error::Parse { .. }), "{data}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn log_level_env_overrides_file() {
+        let vars = [("REGINALD_LOG_LEVEL", "info")];
+        assert_eq!(log_level(DEBUG_FILE, &[], &vars), LevelFilter::Info);
+    }
+
+    #[test]
+    fn empty_log_level_env_is_ignored() {
+        let vars = [("REGINALD_LOG_LEVEL", "")];
+        assert_eq!(log_level(DEBUG_FILE, &[], &vars), LevelFilter::Debug);
+    }
+
+    #[test]
+    fn log_level_flags_override_env_and_file() {
+        let vars = [("REGINALD_LOG_LEVEL", "off")];
+        for (args, level) in [
+            (&["--log-level", "info"][..], LevelFilter::Info),
+            (&["-q"], LevelFilter::Error),
+            (&["-v"], LevelFilter::Info),
+            (&["-vv"], LevelFilter::Debug),
+            (&["-vvv"], LevelFilter::Trace),
+        ] {
+            assert_eq!(log_level(DEBUG_FILE, args, &vars), level, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn verbose_count_saturates_at_trace() {
+        assert_eq!(log_level("", &["-vvvvv"], &[]), LevelFilter::Trace);
     }
 
     #[test]
     fn invalid_log_level_env_is_an_error() {
-        let err = invocation(&[], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap_err();
+        let err = config("", &[], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap_err();
         assert!(matches!(
             err,
             Error::EnvironmentVariableValue {
@@ -370,8 +437,8 @@ mod tests {
 
     #[test]
     fn invalid_log_level_env_is_ignored_when_flag_is_given() {
-        let inv = invocation(&["--log-level", "info"], &[("REGINALD_LOG_LEVEL", "loud")]).unwrap();
-        assert_eq!(inv.log_level_filter, Some(LevelFilter::Info));
+        let vars = [("REGINALD_LOG_LEVEL", "loud")];
+        assert_eq!(log_level("", &["-v"], &vars), LevelFilter::Info);
     }
 
     #[cfg(unix)]
@@ -382,7 +449,7 @@ mod tests {
         let var = |name: &str| {
             (name == "REGINALD_LOG_LEVEL").then(|| OsString::from_vec(b"de\xffbug".to_vec()))
         };
-        let err = Invocation::with_env(&cli(&[]), var).unwrap_err();
+        let err = Config::new("", Path::new("reginald.toml"), &cli(&[]), var).unwrap_err();
         assert!(matches!(
             err,
             Error::EnvironmentVariableValue {
