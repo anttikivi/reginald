@@ -10,7 +10,8 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Path to the config file. Default is to search from the default paths.
+    /// Path to the config file. Resolved after applying `--chdir`. Default is
+    /// to search from the default paths.
     #[arg(short, long = "config", global = true, value_name = "FILE")]
     pub config_file: Option<PathBuf>,
 
