@@ -10,7 +10,7 @@ use std::{env, process::ExitCode};
 use clap::Parser;
 use log::{debug, info, warn};
 
-use crate::{cli::Cli, config::Config, error::Error};
+use crate::{cli::Cli, config::Config, error::Error, plugin::collect};
 
 fn main() -> ExitCode {
     logger::init();
@@ -74,6 +74,8 @@ fn run() -> Result<(), Error> {
     logger::set_level(config.log_level);
 
     logger::finish_buffering();
+
+    collect(&config);
 
     Ok(())
 }
