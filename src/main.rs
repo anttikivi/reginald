@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod error;
 mod logger;
+mod plugin;
 mod version;
 
 use std::{env, process::ExitCode};
@@ -29,6 +30,12 @@ fn run() -> Result<(), Error> {
     let cli = Cli::parse();
 
     debug!("parsed arguments: {cli:#?}");
+
+    // Set the level early so that the buffered messages are printed at the
+    // requested level even if reading the config file fails.
+    if let Some(level) = config::log_level_override(&cli, |s| env::var_os(s))? {
+        logger::set_level(level);
+    }
 
     if cli.version {
         return version::print(cli.verbose > 0).map_err(Error::Write);

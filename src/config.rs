@@ -48,32 +48,11 @@ impl Config {
             source: e,
         })?;
 
-        let var = |name: &str| var(name).filter(|v| !v.is_empty());
-
-        if cli.quiet {
-            config.log_level = LevelFilter::Error;
-        } else if let Some(l) = match cli.verbose {
-            0 => cli.log_level,
-            1 => Some(LevelFilter::Info),
-            2 => Some(LevelFilter::Debug),
-            _ => Some(LevelFilter::Trace),
-        } {
+        if let Some(l) = log_level_override(cli, &var)? {
             config.log_level = l;
-        } else {
-            let name = "REGINALD_LOG_LEVEL";
-            if let Some(s) = var(name) {
-                #[expect(
-                    clippy::unnecessary_debug_formatting,
-                    reason = "`Debug` escapes the invalid bytes, `display` would hide them"
-                )]
-                let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
-                    name,
-                    reason: format!("value {s:?} is not valid Unicode"),
-                })?;
-                config.log_level = logger::parse_level_filter(s)
-                    .map_err(|reason| Error::EnvironmentVariableValue { name, reason })?;
-            }
         }
+
+        let var = |name: &str| var(name).filter(|v| !v.is_empty());
 
         if let Some(d) = &cli.plugin_path {
             config.plugin_path = Some(d.to_owned());
@@ -140,6 +119,49 @@ pub fn file(cli: &Cli, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     })
+}
+
+/// Resolves the log level set by the command-line flags or the environment.
+/// Returns `None` if neither sets it, in which case the level from the config
+/// file or the default level should be used.
+///
+/// The flags take precedence over the environment, and the environment
+/// variable is not read at all if a flag sets the level.
+pub fn log_level_override(
+    cli: &Cli,
+    var: impl Fn(&str) -> Option<OsString>,
+) -> Result<Option<LevelFilter>> {
+    if cli.quiet {
+        return Ok(Some(LevelFilter::Error));
+    }
+
+    let flag = match cli.verbose {
+        0 => cli.log_level,
+        1 => Some(LevelFilter::Info),
+        2 => Some(LevelFilter::Debug),
+        _ => Some(LevelFilter::Trace),
+    };
+    if flag.is_some() {
+        return Ok(flag);
+    }
+
+    let name = "REGINALD_LOG_LEVEL";
+    let Some(s) = var(name).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+
+    #[expect(
+        clippy::unnecessary_debug_formatting,
+        reason = "`Debug` escapes the invalid bytes, `display` would hide them"
+    )]
+    let s = s.to_str().ok_or_else(|| Error::EnvironmentVariableValue {
+        name,
+        reason: format!("value {s:?} is not valid Unicode"),
+    })?;
+
+    logger::parse_level_filter(s)
+        .map(Some)
+        .map_err(|reason| Error::EnvironmentVariableValue { name, reason })
 }
 
 /// Reads the configuration file data as a string from the first valid
