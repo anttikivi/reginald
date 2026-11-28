@@ -1,6 +1,8 @@
 mod cli;
 mod config;
 mod error;
+#[cfg(windows)]
+mod known_folder;
 mod logger;
 mod plugin;
 mod version;

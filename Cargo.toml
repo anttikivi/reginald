@@ -31,6 +31,13 @@ semver = "1.0.28"
 serde_json = "1.0.154"
 versolve = "0.4.1"
 
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Shell",
+] }
+
 [lints]
 workspace = true
 
@@ -38,7 +45,7 @@ workspace = true
 members = [".", "xtask"]
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 missing_docs = "allow"    # "warn" if we add a library for some reason
 unused_must_use = "warn"
 unreachable_pub = "allow" # "warn" if we add a library for some reason
@@ -69,6 +76,7 @@ str_to_string = "warn"
 todo = "warn"
 undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
+unnecessary_safety_comment = "warn"
 unwrap_in_result = "warn"
 unwrap_used = "warn"
 verbose_file_reads = "warn"

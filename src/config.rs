@@ -14,11 +14,31 @@ use log::{LevelFilter, info, trace, warn};
 use serde::Deserialize;
 use thiserror::Error;
 
+#[cfg(windows)]
+use crate::known_folder::{self, Folder};
 use crate::{cli::Cli, logger};
 
 const DIRECTORY_NAME: &str = "reginald";
+#[cfg(not(windows))]
 const FILE_NAME: &str = "reginald.toml";
 const IN_DIRECTORY_FILE_NAME: &str = "config.toml";
+const PLUGINS_DIRECTORY_NAME: &str = "plugins";
+
+#[cfg(not(windows))]
+const XDG_CONFIG: Xdg = Xdg {
+    home_var: "XDG_CONFIG_HOME",
+    home_default: ".config",
+    dirs_var: "XDG_CONFIG_DIRS",
+    dirs_default: &["/etc/xdg"],
+};
+
+#[cfg(not(windows))]
+const XDG_DATA: Xdg = Xdg {
+    home_var: "XDG_DATA_HOME",
+    home_default: ".local/share",
+    dirs_var: "XDG_DATA_DIRS",
+    dirs_default: &["/usr/local/share", "/usr/share"],
+};
 
 type Result<T> = result::Result<T, Error>;
 
@@ -59,7 +79,11 @@ impl Config {
         } else if let Some(d) = var("REGINALD_PLUGIN_PATH") {
             config.plugin_path = Some(env::split_paths(&d).collect());
         } else if config.plugin_path.is_none() {
-            config.plugin_path = Some(default_plugin_path(var, env::home_dir()));
+            #[cfg(windows)]
+            let paths = default_plugin_path(known_folder::path);
+            #[cfg(not(windows))]
+            let paths = default_plugin_path(var, env::home_dir());
+            config.plugin_path = Some(paths);
         }
 
         Ok(config)
@@ -96,6 +120,55 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+}
+
+/// A kind of XDG base directory and its defaults as defined by the XDG Base
+/// Directory Specification.
+#[cfg(not(windows))]
+struct Xdg {
+    home_var: &'static str,
+    home_default: &'static str,
+    dirs_var: &'static str,
+    dirs_default: &'static [&'static str],
+}
+
+#[cfg(not(windows))]
+impl Xdg {
+    /// Returns the user directory followed by the system directories, in order
+    /// of precedence.
+    ///
+    /// The spec requires every path to be absolute. A relative `*_HOME` value
+    /// is ignored like an unset one, so the default under `home` is used
+    /// instead. The default can only be used if `home` is absolute, too.
+    ///
+    /// The `*_DIRS` defaults are only used if the variable is unset or empty.
+    /// Relative entries in the list are skipped one by one, so a list without
+    /// any valid entries means that there are no system directories.
+    fn dirs(&self, var: impl Fn(&str) -> Option<OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+
+        let user = var(self.home_var)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| {
+                home.filter(|h| h.is_absolute())
+                    .map(|h| h.join(self.home_default))
+            });
+        match user {
+            Some(d) => dirs.push(d),
+            None => warn!(
+                "cannot determine the user directory, set {} or HOME to an absolute path",
+                self.home_var
+            ),
+        }
+
+        match var(self.dirs_var).filter(|v| !v.is_empty()) {
+            Some(s) => dirs.extend(env::split_paths(&s).filter(|p| p.is_absolute())),
+            None => dirs.extend(self.dirs_default.iter().map(PathBuf::from)),
+        }
+
+        dirs
+    }
 }
 
 /// Returns the directories to change into, in order: the `-C` flags, or
@@ -189,7 +262,12 @@ pub fn read_file(path: Option<PathBuf>) -> Result<(String, PathBuf)> {
         };
     }
 
-    read_first(search_paths(|name| env::var_os(name), env::home_dir()))
+    #[cfg(windows)]
+    let paths = search_paths(known_folder::path);
+    #[cfg(not(windows))]
+    let paths = search_paths(|name| env::var_os(name), env::home_dir());
+
+    read_first(paths)
 }
 
 /// Reads the first readable file in `paths`, warning about the other existing
@@ -249,113 +327,77 @@ fn read_first(paths: Vec<PathBuf>) -> Result<(String, PathBuf)> {
     Ok((s, path.clone()))
 }
 
-/// Creates a [`Vec`] of the default paths to look for the config file.
+/// Returns the default config file candidates, in order of precedence.
 ///
-/// Currently assumes that everything that is not a Windows platform should
-/// behave like a Linux or Unix platform, except macOS that is allowed to use
-/// `~/Library/Application Support` in addition to the "standard" directories.
+/// The machine-local folder comes first so that it overrides the roaming one,
+/// and the folder shared by all users comes last.
+#[cfg(windows)]
+fn search_paths(folder: impl Fn(Folder) -> Option<PathBuf>) -> Vec<PathBuf> {
+    unique(
+        [
+            Folder::LocalAppData,
+            Folder::RoamingAppData,
+            Folder::ProgramData,
+        ]
+        .into_iter()
+        .filter_map(folder)
+        .map(|p| p.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME)),
+    )
+}
+
+/// Returns the default config file candidates, in order of precedence.
+///
+/// Follows the XDG Base Directory Specification: the user config directory
+/// comes first, then the system config directories.
+#[cfg(not(windows))]
 fn search_paths(var: impl Fn(&str) -> Option<OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    // Directories from the environment must be absolute. Otherwise an empty or
-    // relative value would make us search relative to the current directory.
-    let absolute_dir = |name: &str| var(name).map(PathBuf::from).filter(|p| p.is_absolute());
-
-    // XDG_CONFIG_HOME is given highest precedence and must also be absolute
-    // according to the spec.
-    if let Some(d) = absolute_dir("XDG_CONFIG_HOME") {
-        paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
-        paths.push(d.join(FILE_NAME));
-    }
-
-    // The platform-specific directories are next. It feels like the logical
-    // choice.
-    if cfg!(windows) {
-        if let Some(d) = absolute_dir("LOCALAPPDATA") {
-            paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
-        }
-
-        if let Some(d) = absolute_dir("APPDATA") {
-            paths.push(d.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME));
-        }
-    } else if cfg!(target_os = "macos")
-        && let Some(d) = &home
-    {
-        paths.push(
-            d.join("Library")
-                .join("Application Support")
-                .join(DIRECTORY_NAME)
-                .join(IN_DIRECTORY_FILE_NAME),
-        );
-    }
-
-    // The final default is to look from the home directory. It conveniently
-    // resolves to `%USERPROFILE%` on Windows, so we can use the same paths on
-    // every platform.
-    if let Some(d) = home {
-        paths.push(
-            d.join(".config")
-                .join(DIRECTORY_NAME)
-                .join(IN_DIRECTORY_FILE_NAME),
-        );
-        paths.push(d.join(".config").join(FILE_NAME));
-        paths.push(d.join(".reginald.toml"));
-    }
-
-    let mut unique = Vec::with_capacity(paths.len());
-    for p in paths {
-        if !unique.contains(&p) {
-            unique.push(p);
-        }
-    }
-
-    unique
+    unique(XDG_CONFIG.dirs(var, home).into_iter().flat_map(|p| {
+        [
+            p.join(DIRECTORY_NAME).join(IN_DIRECTORY_FILE_NAME),
+            p.join(FILE_NAME),
+        ]
+    }))
 }
 
 const fn default_log_level() -> LevelFilter {
     LevelFilter::Warn
 }
 
+/// Returns the default plugin directories, in order of precedence.
+///
+/// Plugins are installed software, so they are not looked up from the roaming
+/// folder.
+#[cfg(windows)]
+fn default_plugin_path(folder: impl Fn(Folder) -> Option<PathBuf>) -> Vec<PathBuf> {
+    unique(
+        [Folder::LocalAppData, Folder::ProgramData]
+            .into_iter()
+            .filter_map(folder)
+            .map(|p| p.join(DIRECTORY_NAME).join(PLUGINS_DIRECTORY_NAME)),
+    )
+}
+
+/// Returns the default plugin directories, in order of precedence.
+///
+/// Follows the XDG Base Directory Specification: the user data directory comes
+/// first, then the system data directories.
+#[cfg(not(windows))]
 fn default_plugin_path(
     var: impl Fn(&str) -> Option<OsString>,
     home: Option<PathBuf>,
 ) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
+    unique(
+        XDG_DATA
+            .dirs(var, home)
+            .into_iter()
+            .map(|p| p.join(DIRECTORY_NAME).join(PLUGINS_DIRECTORY_NAME)),
+    )
+}
 
-    let absolute_dir = |name: &str| var(name).map(PathBuf::from).filter(|p| p.is_absolute());
-
-    if let Some(d) = absolute_dir("XDG_DATA_HOME") {
-        dirs.push(d.join(DIRECTORY_NAME).join("plugins"));
-    }
-
-    if cfg!(windows) {
-        if let Some(d) = absolute_dir("LOCALAPPDATA") {
-            dirs.push(d.join(DIRECTORY_NAME).join("plugins"));
-        }
-    } else if cfg!(target_os = "macos")
-        && let Some(d) = &home
-    {
-        dirs.push(
-            d.join("Library")
-                .join("Application Support")
-                .join(DIRECTORY_NAME)
-                .join("plugins"),
-        );
-    }
-
-    if !cfg!(windows)
-        && let Some(d) = home
-    {
-        dirs.push(
-            d.join(".local")
-                .join("share")
-                .join(DIRECTORY_NAME)
-                .join("plugins"),
-        );
-    }
-
-    let mut unique = Vec::with_capacity(dirs.len());
-    for p in dirs {
+/// Removes the duplicates from `paths`, keeping the first occurrences.
+fn unique(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+    for p in paths {
         if !unique.contains(&p) {
             unique.push(p);
         }
@@ -544,201 +586,30 @@ mod tests {
         ));
     }
 
-    /// The paths that are searched in the home directory, in order, including
-    /// the platform-specific ones.
-    fn home_paths(home: &Path) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-        if cfg!(target_os = "macos") {
-            paths.push(home.join("Library/Application Support/reginald/config.toml"));
-        }
-        paths.extend([
-            home.join(".config/reginald/config.toml"),
-            home.join(".config/reginald.toml"),
-            home.join(".reginald.toml"),
-        ]);
-        paths
-    }
-
-    fn absolute(path: &str) -> PathBuf {
-        if cfg!(windows) {
-            PathBuf::from(format!("C:{path}"))
-        } else {
-            PathBuf::from(path)
-        }
-    }
-
-    #[test]
-    fn search_paths_without_home_or_env_is_empty() {
-        assert_eq!(search_paths(fake_env(&[]), None), Vec::<PathBuf>::new());
-    }
-
-    #[test]
-    fn search_paths_use_home() {
-        let home = absolute("/home/u");
-        assert_eq!(
-            search_paths(fake_env(&[]), Some(home.clone())),
-            home_paths(&home)
-        );
-    }
-
-    #[test]
-    fn search_paths_put_xdg_config_home_first() {
-        let home = absolute("/home/u");
-        let xdg = absolute("/xdg");
-        let vars = [("XDG_CONFIG_HOME", xdg.to_str().unwrap())];
-
-        let mut expected = vec![xdg.join("reginald/config.toml"), xdg.join("reginald.toml")];
-        expected.extend(home_paths(&home));
-        assert_eq!(search_paths(fake_env(&vars), Some(home)), expected);
-    }
-
-    #[test]
-    fn search_paths_ignore_relative_xdg_config_home() {
-        let home = absolute("/home/u");
-        let vars = [("XDG_CONFIG_HOME", "relative")];
-        assert_eq!(
-            search_paths(fake_env(&vars), Some(home.clone())),
-            home_paths(&home)
-        );
-    }
-
-    #[test]
-    fn search_paths_are_unique() {
-        let home = absolute("/home/u");
-        let xdg = home.join(".config");
-        let vars = [("XDG_CONFIG_HOME", xdg.to_str().unwrap())];
-
-        let mut expected = vec![
-            home.join(".config/reginald/config.toml"),
-            home.join(".config/reginald.toml"),
-        ];
-        if cfg!(target_os = "macos") {
-            expected.push(home.join("Library/Application Support/reginald/config.toml"));
-        }
-        expected.push(home.join(".reginald.toml"));
-        assert_eq!(search_paths(fake_env(&vars), Some(home)), expected);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn search_paths_use_app_data_on_windows() {
-        let vars = [("LOCALAPPDATA", r"C:\local"), ("APPDATA", r"C:\roaming")];
-        assert_eq!(
-            search_paths(fake_env(&vars), None),
-            [
-                PathBuf::from(r"C:\local\reginald\config.toml"),
-                PathBuf::from(r"C:\roaming\reginald\config.toml"),
-            ]
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn search_paths_ignore_empty_and_relative_app_data_on_windows() {
-        for vars in [
-            [("LOCALAPPDATA", ""), ("APPDATA", "")],
-            [("LOCALAPPDATA", "local"), ("APPDATA", "roaming")],
-        ] {
-            assert!(search_paths(fake_env(&vars), None).is_empty(), "{vars:?}");
-        }
-    }
-
-    fn home_plugin_path(home: &Path) -> Vec<PathBuf> {
-        let mut dirs = Vec::new();
-        if cfg!(target_os = "macos") {
-            dirs.push(home.join("Library/Application Support/reginald/plugins"));
-        }
-        dirs.push(home.join(".local/share/reginald/plugins"));
-        dirs
-    }
-
-    #[test]
-    fn default_plugin_path_without_home_or_env_is_empty() {
-        assert_eq!(
-            default_plugin_path(fake_env(&[]), None),
-            Vec::<PathBuf>::new()
-        );
-    }
-
-    #[test]
-    fn default_plugin_path_use_home() {
-        let home = absolute("/home/u");
-        assert_eq!(
-            default_plugin_path(fake_env(&[]), Some(home.clone())),
-            home_plugin_path(&home)
-        );
-    }
-
-    #[test]
-    fn default_plugin_path_put_xdg_data_home_first() {
-        let home = absolute("/home/u");
-        let xdg = absolute("/xdg");
-        let vars = [("XDG_DATA_HOME", xdg.to_str().unwrap())];
-
-        let mut expected = vec![xdg.join("reginald/plugins")];
-        expected.extend(home_plugin_path(&home));
-        assert_eq!(default_plugin_path(fake_env(&vars), Some(home)), expected);
-    }
-
-    #[test]
-    fn default_plugin_path_ignore_relative_xdg_data_home() {
-        let home = absolute("/home/u");
-        let vars = [("XDG_DATA_HOME", "relative")];
-        assert_eq!(
-            default_plugin_path(fake_env(&vars), Some(home.clone())),
-            home_plugin_path(&home)
-        );
-    }
-
-    #[test]
-    fn default_plugin_path_are_unique() {
-        let home = absolute("/home/u");
-        let xdg = home.join(".local/share");
-        let vars = [("XDG_DATA_HOME", xdg.to_str().unwrap())];
-
-        let mut expected = vec![home.join(".local/share/reginald/plugins")];
-        if cfg!(target_os = "macos") {
-            expected.push(home.join("Library/Application Support/reginald/plugins"));
-        }
-        assert_eq!(default_plugin_path(fake_env(&vars), Some(home)), expected);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn default_plugin_path_use_local_app_data_on_windows() {
-        let vars = [("LOCALAPPDATA", r"C:\local")];
-        assert_eq!(
-            default_plugin_path(fake_env(&vars), None),
-            [PathBuf::from(r"C:\local\reginald\plugins")]
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn default_plugin_path_ignore_empty_and_relative_local_app_data_on_windows() {
-        for vars in [[("LOCALAPPDATA", "")], [("LOCALAPPDATA", "local")]] {
-            assert!(
-                default_plugin_path(fake_env(&vars), None).is_empty(),
-                "{vars:?}"
-            );
-        }
-    }
-
     fn plugin_path(data: &str, args: &[&str], vars: &[(&str, &str)]) -> Vec<PathBuf> {
         config(data, args, vars).unwrap().plugin_path.unwrap()
     }
 
     const PLUGIN_PATH_FILE: &str = r#"plugin-path = ["file"]"#;
 
+    #[cfg(not(windows))]
     #[test]
     fn plugin_path_default_to_platform_dirs() {
-        let xdg = absolute("/xdg");
-        let vars = [("XDG_DATA_HOME", xdg.to_str().unwrap())];
-        assert_eq!(
-            plugin_path("", &[], &vars),
-            default_plugin_path(fake_env(&vars), env::home_dir())
+        let vars = [("XDG_DATA_HOME", "/xdg")];
+        let dirs = plugin_path("", &[], &vars);
+        assert_eq!(dirs, default_plugin_path(fake_env(&vars), env::home_dir()));
+        assert_eq!(dirs.first(), Some(&PathBuf::from("/xdg/reginald/plugins")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn plugin_path_default_to_platform_dirs() {
+        let dirs = plugin_path("", &[], &[]);
+        assert_eq!(dirs, default_plugin_path(known_folder::path));
+        assert!(
+            !dirs.is_empty(),
+            "expected at least one default plugin directory"
         );
-        assert_eq!(plugin_path("", &[], &vars)[0], xdg.join("reginald/plugins"));
     }
 
     #[test]
@@ -884,6 +755,263 @@ mod tests {
         match read_file(Some(dir.path().to_path_buf())) {
             Err(Error::Read { path, .. }) => assert_eq!(path, dir.path()),
             r => panic!("unexpected result: {r:?}"),
+        }
+    }
+
+    #[cfg(not(windows))]
+    mod xdg {
+        use super::*;
+
+        const HOME: &str = "/home/u";
+
+        fn search(vars: &[(&str, &str)], home: Option<&str>) -> Vec<PathBuf> {
+            search_paths(fake_env(vars), home.map(PathBuf::from))
+        }
+
+        fn plugins(vars: &[(&str, &str)], home: Option<&str>) -> Vec<PathBuf> {
+            default_plugin_path(fake_env(vars), home.map(PathBuf::from))
+        }
+
+        /// The config file candidates in `dirs`, in order.
+        fn config_files(dirs: &[&str]) -> Vec<PathBuf> {
+            dirs.iter()
+                .flat_map(|d| {
+                    let d = Path::new(d);
+                    [d.join("reginald/config.toml"), d.join("reginald.toml")]
+                })
+                .collect()
+        }
+
+        fn plugin_dirs(dirs: &[&str]) -> Vec<PathBuf> {
+            dirs.iter()
+                .map(|d| Path::new(d).join("reginald/plugins"))
+                .collect()
+        }
+
+        #[test]
+        fn search_paths_default_to_home_and_etc_xdg() {
+            assert_eq!(
+                search(&[], Some(HOME)),
+                config_files(&["/home/u/.config", "/etc/xdg"])
+            );
+        }
+
+        #[test]
+        fn search_paths_use_xdg_config_home_instead_of_home() {
+            let vars = [("XDG_CONFIG_HOME", "/xdg")];
+            assert_eq!(
+                search(&vars, Some(HOME)),
+                config_files(&["/xdg", "/etc/xdg"])
+            );
+        }
+
+        #[test]
+        fn search_paths_ignore_empty_and_relative_xdg_config_home() {
+            for value in ["", "relative"] {
+                let vars = [("XDG_CONFIG_HOME", value)];
+                assert_eq!(
+                    search(&vars, Some(HOME)),
+                    config_files(&["/home/u/.config", "/etc/xdg"]),
+                    "{value:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn search_paths_without_valid_home_use_only_system_dirs() {
+            for home in [None, Some(""), Some("relative")] {
+                assert_eq!(search(&[], home), config_files(&["/etc/xdg"]), "{home:?}");
+            }
+        }
+
+        #[test]
+        fn search_paths_use_xdg_config_dirs_in_order() {
+            let vars = [("XDG_CONFIG_DIRS", "/a:/b")];
+            assert_eq!(
+                search(&vars, Some(HOME)),
+                config_files(&["/home/u/.config", "/a", "/b"])
+            );
+        }
+
+        #[test]
+        fn search_paths_skip_invalid_xdg_config_dirs_entries() {
+            let vars = [("XDG_CONFIG_DIRS", "/a:relative::/b")];
+            assert_eq!(
+                search(&vars, Some(HOME)),
+                config_files(&["/home/u/.config", "/a", "/b"])
+            );
+        }
+
+        #[test]
+        fn search_paths_use_empty_xdg_config_dirs_default() {
+            let vars = [("XDG_CONFIG_DIRS", "")];
+            assert_eq!(
+                search(&vars, Some(HOME)),
+                config_files(&["/home/u/.config", "/etc/xdg"])
+            );
+        }
+
+        #[test]
+        fn search_paths_have_no_system_dirs_if_no_xdg_config_dirs_entry_is_valid() {
+            let vars = [("XDG_CONFIG_DIRS", "relative")];
+            assert_eq!(
+                search(&vars, Some(HOME)),
+                config_files(&["/home/u/.config"])
+            );
+        }
+
+        #[test]
+        fn search_paths_are_unique() {
+            let vars = [("XDG_CONFIG_DIRS", "/home/u/.config:/etc/xdg:/etc/xdg")];
+            assert_eq!(
+                search(&vars, Some(HOME)),
+                config_files(&["/home/u/.config", "/etc/xdg"])
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_default_to_home_and_usr() {
+            assert_eq!(
+                plugins(&[], Some(HOME)),
+                plugin_dirs(&["/home/u/.local/share", "/usr/local/share", "/usr/share"])
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_use_xdg_data_home_instead_of_home() {
+            let vars = [("XDG_DATA_HOME", "/xdg")];
+            assert_eq!(
+                plugins(&vars, Some(HOME)),
+                plugin_dirs(&["/xdg", "/usr/local/share", "/usr/share"])
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_ignore_empty_and_relative_xdg_data_home() {
+            for value in ["", "relative"] {
+                let vars = [("XDG_DATA_HOME", value)];
+                assert_eq!(
+                    plugins(&vars, Some(HOME)),
+                    plugin_dirs(&["/home/u/.local/share", "/usr/local/share", "/usr/share"]),
+                    "{value:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn default_plugin_path_without_valid_home_use_only_system_dirs() {
+            for home in [None, Some(""), Some("relative")] {
+                assert_eq!(
+                    plugins(&[], home),
+                    plugin_dirs(&["/usr/local/share", "/usr/share"]),
+                    "{home:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn default_plugin_path_use_xdg_data_dirs_in_order() {
+            let vars = [("XDG_DATA_DIRS", "/a:relative::/b")];
+            assert_eq!(
+                plugins(&vars, Some(HOME)),
+                plugin_dirs(&["/home/u/.local/share", "/a", "/b"])
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_have_no_system_dirs_if_no_xdg_data_dirs_entry_is_valid() {
+            let vars = [("XDG_DATA_DIRS", "relative")];
+            assert_eq!(
+                plugins(&vars, Some(HOME)),
+                plugin_dirs(&["/home/u/.local/share"])
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_are_unique() {
+            let vars = [(
+                "XDG_DATA_DIRS",
+                "/home/u/.local/share:/usr/share:/usr/share",
+            )];
+            assert_eq!(
+                plugins(&vars, Some(HOME)),
+                plugin_dirs(&["/home/u/.local/share", "/usr/share"])
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    mod windows {
+        use super::*;
+
+        fn all_folders(folder: Folder) -> PathBuf {
+            let path = match folder {
+                Folder::LocalAppData => r"C:\local",
+                Folder::RoamingAppData => r"C:\roaming",
+                Folder::ProgramData => r"C:\ProgramData",
+            };
+            PathBuf::from(path)
+        }
+
+        #[test]
+        fn search_paths_use_known_folders_in_order() {
+            assert_eq!(
+                search_paths(|f| Some(all_folders(f))),
+                [
+                    PathBuf::from(r"C:\local\reginald\config.toml"),
+                    PathBuf::from(r"C:\roaming\reginald\config.toml"),
+                    PathBuf::from(r"C:\ProgramData\reginald\config.toml"),
+                ]
+            );
+        }
+
+        #[test]
+        fn search_paths_skip_missing_known_folders() {
+            let folder =
+                |f| matches!(f, Folder::RoamingAppData).then(|| PathBuf::from(r"C:\roaming"));
+            assert_eq!(
+                search_paths(folder),
+                [PathBuf::from(r"C:\roaming\reginald\config.toml")]
+            );
+        }
+
+        #[test]
+        fn search_paths_are_unique() {
+            let folder = |_| Some(PathBuf::from(r"C:\shared"));
+            assert_eq!(
+                search_paths(folder),
+                [PathBuf::from(r"C:\shared\reginald\config.toml")]
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_use_local_and_shared_known_folders() {
+            assert_eq!(
+                default_plugin_path(|f| Some(all_folders(f))),
+                [
+                    PathBuf::from(r"C:\local\reginald\plugins"),
+                    PathBuf::from(r"C:\ProgramData\reginald\plugins"),
+                ]
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_skip_missing_known_folders() {
+            let folder =
+                |f| matches!(f, Folder::ProgramData).then(|| PathBuf::from(r"C:\ProgramData"));
+            assert_eq!(
+                default_plugin_path(folder),
+                [PathBuf::from(r"C:\ProgramData\reginald\plugins")]
+            );
+        }
+
+        #[test]
+        fn default_plugin_path_are_unique() {
+            let folder = |_| Some(PathBuf::from(r"C:\shared"));
+            assert_eq!(
+                default_plugin_path(folder),
+                [PathBuf::from(r"C:\shared\reginald\plugins")]
+            );
         }
     }
 }

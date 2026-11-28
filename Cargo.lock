@@ -389,6 +389,7 @@ dependencies = [
  "thiserror",
  "toml",
  "versolve",
+ "windows-sys",
 ]
 
 [[package]]
