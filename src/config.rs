@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     env,
     ffi::OsString,
     fmt::Write as _,
@@ -29,8 +30,11 @@ pub struct Config {
         deserialize_with = "logger::deserialize_level_filter"
     )]
     pub log_level: LevelFilter,
-    // #[serde(default)]
-    // pub plugin_paths: Vec<PathBuf>,
+    #[serde(default)]
+    #[expect(dead_code, reason = "will be used later")]
+    pub plugins: BTreeMap<String, Plugin>,
+    #[serde(default)]
+    pub plugin_dirs: Option<Vec<PathBuf>>,
 }
 
 impl Config {
@@ -72,8 +76,25 @@ impl Config {
             }
         }
 
+        if let Some(d) = &cli.plugin_dirs {
+            config.plugin_dirs = Some(d.to_owned());
+        } else if let Some(d) = var("REGINALD_PLUGIN_DIR") {
+            // TODO: Allow adding multiple values by splitting at the platform's
+            // PATH separators.
+            config.plugin_dirs = Some(vec![d.into()]);
+        } else if config.plugin_dirs.is_none() {
+            config.plugin_dirs = Some(default_plugin_dirs(|s| env::var_os(s), env::home_dir()));
+        }
+
         Ok(config)
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Plugin {
+    #[serde(default)]
+    #[expect(dead_code, reason = "will be used later")]
+    path: Option<PathBuf>,
 }
 
 #[derive(Error, Debug)]
@@ -275,6 +296,52 @@ fn search_paths(var: impl Fn(&str) -> Option<OsString>, home: Option<PathBuf>) -
 
 const fn default_log_level() -> LevelFilter {
     LevelFilter::Warn
+}
+
+fn default_plugin_dirs(
+    var: impl Fn(&str) -> Option<OsString>,
+    home: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    let absolute_dir = |name: &str| var(name).map(PathBuf::from).filter(|p| p.is_absolute());
+
+    if let Some(d) = absolute_dir("XDG_DATA_HOME") {
+        dirs.push(d.join(DIRECTORY_NAME).join("plugins"));
+    }
+
+    if cfg!(windows) {
+        if let Some(d) = absolute_dir("LOCALAPPDATA") {
+            dirs.push(d.join(DIRECTORY_NAME).join("plugins"));
+        }
+    } else if cfg!(target_os = "macos")
+        && let Some(d) = &home
+    {
+        dirs.push(
+            d.join("Library")
+                .join("Application Support")
+                .join(DIRECTORY_NAME)
+                .join("plugins"),
+        );
+    }
+
+    if let Some(d) = home {
+        dirs.push(
+            d.join(".local")
+                .join("share")
+                .join(DIRECTORY_NAME)
+                .join("plugins"),
+        );
+    }
+
+    let mut unique = Vec::with_capacity(dirs.len());
+    for p in dirs {
+        if !unique.contains(&p) {
+            unique.push(p);
+        }
+    }
+
+    unique
 }
 
 fn path_list<P>(paths: impl IntoIterator<Item = P>) -> String
