@@ -33,8 +33,7 @@ pub struct Config {
     #[serde(default)]
     #[expect(dead_code, reason = "will be used later")]
     pub plugins: BTreeMap<String, Plugin>,
-    #[serde(default)]
-    pub plugin_dirs: Option<Vec<PathBuf>>,
+    pub plugin_path: Option<Vec<PathBuf>>,
 }
 
 impl Config {
@@ -76,14 +75,12 @@ impl Config {
             }
         }
 
-        if let Some(d) = &cli.plugin_dirs {
-            config.plugin_dirs = Some(d.to_owned());
-        } else if let Some(d) = var("REGINALD_PLUGIN_DIR") {
-            // TODO: Allow adding multiple values by splitting at the platform's
-            // PATH separators.
-            config.plugin_dirs = Some(vec![d.into()]);
-        } else if config.plugin_dirs.is_none() {
-            config.plugin_dirs = Some(default_plugin_dirs(|s| env::var_os(s), env::home_dir()));
+        if let Some(d) = &cli.plugin_path {
+            config.plugin_path = Some(d.to_owned());
+        } else if let Some(d) = var("REGINALD_PLUGIN_PATH") {
+            config.plugin_path = Some(env::split_paths(&d).collect());
+        } else if config.plugin_path.is_none() {
+            config.plugin_path = Some(default_plugin_path(var, env::home_dir()));
         }
 
         Ok(config)
@@ -92,7 +89,6 @@ impl Config {
 
 #[derive(Debug, Deserialize)]
 pub struct Plugin {
-    #[serde(default)]
     #[expect(dead_code, reason = "will be used later")]
     path: Option<PathBuf>,
 }
@@ -298,7 +294,7 @@ const fn default_log_level() -> LevelFilter {
     LevelFilter::Warn
 }
 
-fn default_plugin_dirs(
+fn default_plugin_path(
     var: impl Fn(&str) -> Option<OsString>,
     home: Option<PathBuf>,
 ) -> Vec<PathBuf> {
@@ -325,7 +321,9 @@ fn default_plugin_dirs(
         );
     }
 
-    if let Some(d) = home {
+    if !cfg!(windows)
+        && let Some(d) = home
+    {
         dirs.push(
             d.join(".local")
                 .join("share")
@@ -621,6 +619,166 @@ mod tests {
         ] {
             assert!(search_paths(fake_env(&vars), None).is_empty(), "{vars:?}");
         }
+    }
+
+    fn home_plugin_path(home: &Path) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        if cfg!(target_os = "macos") {
+            dirs.push(home.join("Library/Application Support/reginald/plugins"));
+        }
+        dirs.push(home.join(".local/share/reginald/plugins"));
+        dirs
+    }
+
+    #[test]
+    fn default_plugin_path_without_home_or_env_is_empty() {
+        assert_eq!(
+            default_plugin_path(fake_env(&[]), None),
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn default_plugin_path_use_home() {
+        let home = absolute("/home/u");
+        assert_eq!(
+            default_plugin_path(fake_env(&[]), Some(home.clone())),
+            home_plugin_path(&home)
+        );
+    }
+
+    #[test]
+    fn default_plugin_path_put_xdg_data_home_first() {
+        let home = absolute("/home/u");
+        let xdg = absolute("/xdg");
+        let vars = [("XDG_DATA_HOME", xdg.to_str().unwrap())];
+
+        let mut expected = vec![xdg.join("reginald/plugins")];
+        expected.extend(home_plugin_path(&home));
+        assert_eq!(default_plugin_path(fake_env(&vars), Some(home)), expected);
+    }
+
+    #[test]
+    fn default_plugin_path_ignore_relative_xdg_data_home() {
+        let home = absolute("/home/u");
+        let vars = [("XDG_DATA_HOME", "relative")];
+        assert_eq!(
+            default_plugin_path(fake_env(&vars), Some(home.clone())),
+            home_plugin_path(&home)
+        );
+    }
+
+    #[test]
+    fn default_plugin_path_are_unique() {
+        let home = absolute("/home/u");
+        let xdg = home.join(".local/share");
+        let vars = [("XDG_DATA_HOME", xdg.to_str().unwrap())];
+
+        let mut expected = vec![home.join(".local/share/reginald/plugins")];
+        if cfg!(target_os = "macos") {
+            expected.push(home.join("Library/Application Support/reginald/plugins"));
+        }
+        assert_eq!(default_plugin_path(fake_env(&vars), Some(home)), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_plugin_path_use_local_app_data_on_windows() {
+        let vars = [("LOCALAPPDATA", r"C:\local")];
+        assert_eq!(
+            default_plugin_path(fake_env(&vars), None),
+            [PathBuf::from(r"C:\local\reginald\plugins")]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_plugin_path_ignore_empty_and_relative_local_app_data_on_windows() {
+        for vars in [[("LOCALAPPDATA", "")], [("LOCALAPPDATA", "local")]] {
+            assert!(
+                default_plugin_path(fake_env(&vars), None).is_empty(),
+                "{vars:?}"
+            );
+        }
+    }
+
+    fn plugin_path(data: &str, args: &[&str], vars: &[(&str, &str)]) -> Vec<PathBuf> {
+        config(data, args, vars).unwrap().plugin_path.unwrap()
+    }
+
+    const PLUGIN_PATH_FILE: &str = r#"plugin-path = ["file"]"#;
+
+    #[test]
+    fn plugin_path_default_to_platform_dirs() {
+        let xdg = absolute("/xdg");
+        let vars = [("XDG_DATA_HOME", xdg.to_str().unwrap())];
+        assert_eq!(
+            plugin_path("", &[], &vars),
+            default_plugin_path(fake_env(&vars), env::home_dir())
+        );
+        assert_eq!(plugin_path("", &[], &vars)[0], xdg.join("reginald/plugins"));
+    }
+
+    #[test]
+    fn plugin_path_are_read_from_file() {
+        assert_eq!(
+            plugin_path(PLUGIN_PATH_FILE, &[], &[]),
+            [PathBuf::from("file")]
+        );
+    }
+
+    #[test]
+    fn empty_plugin_path_in_file_are_kept() {
+        assert_eq!(
+            plugin_path("plugin-path = []", &[], &[]),
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn plugin_path_env_overrides_file() {
+        let vars = [("REGINALD_PLUGIN_PATH", "env")];
+        assert_eq!(
+            plugin_path(PLUGIN_PATH_FILE, &[], &vars),
+            [PathBuf::from("env")]
+        );
+    }
+
+    #[test]
+    fn plugin_path_env_is_split_at_path_separators() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let value = format!("a{sep}b");
+        let vars = [("REGINALD_PLUGIN_PATH", value.as_str())];
+        assert_eq!(
+            plugin_path("", &[], &vars),
+            [PathBuf::from("a"), PathBuf::from("b")]
+        );
+    }
+
+    #[test]
+    fn empty_plugin_path_env_is_ignored() {
+        let vars = [("REGINALD_PLUGIN_PATH", "")];
+        assert_eq!(
+            plugin_path(PLUGIN_PATH_FILE, &[], &vars),
+            [PathBuf::from("file")]
+        );
+    }
+
+    #[test]
+    fn plugin_path_flag_overrides_env_and_file() {
+        let vars = [("REGINALD_PLUGIN_PATH", "env")];
+        assert_eq!(
+            plugin_path(PLUGIN_PATH_FILE, &["-P", "flag"], &vars),
+            [PathBuf::from("flag")]
+        );
+    }
+
+    #[test]
+    fn plugin_path_flag_can_be_repeated() {
+        assert_eq!(
+            plugin_path("", &["-P", "a", "--plugin-path", "b"], &[]),
+            [PathBuf::from("a"), PathBuf::from("b")]
+        );
     }
 
     #[test]

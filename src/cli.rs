@@ -19,8 +19,9 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "LEVEL", value_parser = logger::level_filter_parser(), conflicts_with_all = ["quiet", "verbose"])]
     pub log_level: Option<LevelFilter>,
 
-    #[arg(short = 'P', long, global = true, value_name = "DIR", action = ArgAction::Append)]
-    pub plugin_dirs: Option<Vec<PathBuf>>,
+    /// Search for plugin from this path. Can be specified multiple times.
+    #[arg(short = 'P', long, global = true, value_name = "PATH", action = ArgAction::Append)]
+    pub plugin_path: Option<Vec<PathBuf>>,
 
     /// Only log errors.
     #[arg(short, long, global = true, conflicts_with = "verbose")]
